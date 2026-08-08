@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "kubby",
+  "outputfilename": "kubby",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "HuyNQ263",
+    "email": "huynq263@fpt.com"
+  },
+  "info": {
+    "companyName": "HuyNQ263",
+    "productName": "Kubby",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright (c) 2026 HuyNQ263",
+    "comments": "Personal Kubernetes cluster manager - load a kubeconfig and operate the cluster from a GUI."
+  }
+}

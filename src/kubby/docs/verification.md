@@ -1,0 +1,204 @@
+# Verification & dev environment
+
+← [Architecture skeleton](../ARCHITECTURE.md)
+
+How to check that a change works. Read this before claiming something is done.
+
+## The test suite
+
+```powershell
+go test ./...        # ~35 tests across four files
+```
+
+| File | Pins |
+|---|---|
+| `diagnostics_test.go` | the diagnostics report shape, and that it cannot carry the AI API key |
+| `internal/k8sclient/apply_test.go` | missing-`---` detection, document splitting, diff-noise stripping, the pending-namespace explanation |
+| `internal/k8sclient/access_test.go` | **unknown permission == allowed**, explicit deny respected, pod subresources probed separately |
+| `internal/k8sclient/rightsizing_test.go` | unset never rendered as zero, threshold floors, severity order, quota parsing, advice grammar |
+
+None of them need a cluster. Everything else is still verified through
+`cmd/kubby-cli` against a real one — **that is a gap, not a design choice** — see
+*Worth adding* at the bottom.
+
+## Version & diagnostics
+
+Every bug report starts with "which build". `internal/buildinfo` is the single
+answer for both binaries:
+
+```powershell
+go run ./cmd/kubby-cli --version        # Kubby 0.1.0-dev go1.26.5 windows/amd64
+go run ./cmd/kubby-cli diagnostics      # + the connected cluster's capabilities
+```
+
+In the app: **Settings → About** shows the same line, and **Copy diagnostics** puts
+a full report on the clipboard (`App.Diagnostics` in `diagnostics.go`, cluster
+probing in `internal/k8sclient/diagnostics.go`).
+
+- `buildinfo.Version` is the checked-in source of truth, carrying a `-dev` suffix
+  so an unreleased build is never mistaken for a release. A release overrides it:
+  `-ldflags "-X kubby/internal/buildinfo.Version=1.2.0"`.
+- Commit and date come from **Go's embedded VCS stamps** automatically once this
+  directory is a git checkout — no ldflags needed. Until then the report says
+  `(not built from a git checkout)` rather than showing a blank field.
+- `wails.json` carries the `info` block (`productVersion`, `companyName`,
+  `copyright`), which is what fills the Windows exe's file-properties metadata.
+  **Bump it together with `buildinfo.Version`** — nothing enforces that they match.
+
+> **The report must never carry a secret.** It reads AI provider and model from
+> `GetAIStatus()`, which does not return the key. It includes the API-server
+> endpoint and context name because they are usually essential to a diagnosis, and
+> is headed "review before sharing" so that stays the user's call. A test asserts
+> the key is absent. Keep it that way when you add a field.
+
+Every probe in `Diagnose` is best-effort: a forbidden or missing capability is
+*information*, not a failure. The report is produced even from a half-working
+connection — which is exactly when it is wanted.
+
+## `kubby-cli` is the harness
+
+It shares `internal/k8sclient` with the app, so a CLI check exercises the same code
+the GUI does. Every backend feature here was verified this way.
+
+```powershell
+# reads
+go run ./cmd/kubby-cli get pods -n default
+go run ./cmd/kubby-cli yaml <Kind[.group]> <name> -n <ns>
+go run ./cmd/kubby-cli events Pod <name> -n <ns>
+go run ./cmd/kubby-cli logs <pod> -n <ns> --tail 100
+go run ./cmd/kubby-cli node-pods <node>
+go run ./cmd/kubby-cli ns-summary <namespace>
+go run ./cmd/kubby-cli search <query>
+go run ./cmd/kubby-cli counts [-n <ns>] [--cluster=false]     # timed — the perf path
+go run ./cmd/kubby-cli custom-kinds
+go run ./cmd/kubby-cli list-custom <Kind.group> [-n <ns>]
+go run ./cmd/kubby-cli netflows [-n <ns>]
+go run ./cmd/kubby-cli diff -f <file>                         # dry-run: what would change, writes nothing
+go run ./cmd/kubby-cli can-i <Kind[.group]> [-n <ns>]         # what this token may do
+go run ./cmd/kubby-cli sizing [-n <ns>]                       # requests/limits vs usage
+go run ./cmd/kubby-cli diag <Kind[.group]> <name> -n <ns>     # the exact AI evidence
+go run ./cmd/kubby-cli helm-search <query>
+go run ./cmd/kubby-cli --version
+go run ./cmd/kubby-cli diagnostics                            # build + cluster capabilities
+
+# writes
+go run ./cmd/kubby-cli apply -f <file>
+go run ./cmd/kubby-cli scale <deployment> -n <ns> --replicas N
+go run ./cmd/kubby-cli restart <deployment> -n <ns>
+go run ./cmd/kubby-cli rollout <deployment> -n <ns>
+go run ./cmd/kubby-cli cordon <node> | uncordon <node>
+go run ./cmd/kubby-cli port-forward <pod> -n <ns> --remote 8080 --local 0 --hold 30
+go run ./cmd/kubby-cli exec <pod> -n <ns> -- "ls -la /"
+```
+
+Defaults to `$KUBECONFIG` or `~/.kube/config`; override with
+`--kubeconfig <path> --context <name>`.
+
+**Adding a feature means adding its CLI command.** A backend feature with no CLI
+entry point cannot be checked without a human driving the GUI.
+
+## Build checks
+
+```powershell
+go build ./... ; go vet ./...        # fast, no frontend step
+go test ./...                        # the one test file
+gofmt -l internal/ cmd/ *.go         # note: some pre-existing files are unformatted
+cd frontend ; npx esbuild src/main.js --bundle --outfile=NUL   # JS syntax + imports
+wails build                          # full — regenerates frontend/wailsjs bindings
+```
+
+**`go build` here is slow** (tens of seconds, sometimes over two minutes) because a
+corporate security agent scans each newly linked binary. When running several CLI
+checks, build once and reuse the binary:
+
+```powershell
+go build -o kcli.exe ./cmd/kubby-cli
+./kcli.exe counts --kubeconfig <path> --context <ctx>
+```
+
+A `go run` that seems to hang is usually still linking.
+
+## GUI verification is not reliable from a headless session
+
+Screenshot automation works for a passively-rendered window, but
+`SetForegroundWindow` / `ShowWindow` / `MoveWindow` have triggered WebView2
+focus-handling crashes and stale repaints here.
+
+**Prefer verifying the backend through `kubby-cli`, and ask the user to confirm GUI
+behaviour visually.** Do not try to automate clicks through native dialogs.
+
+Mechanical frontend checks that *do* work: the esbuild bundle above, and a script
+cross-checking every `$('id')` reference in `main.js` against the ids in
+`index.html`.
+
+## This machine
+
+- **Windows native** has Go, Node.js, the Wails CLI and WebView2. This is where the
+  app is built and run (`wails build` / `wails dev`) — Wails' WebView is
+  Windows-native.
+- **WSL2 (Ubuntu-22.04)** runs Docker + kind for the local test cluster
+  (`kind-kubby-dev`). WSL2's localhost forwarding makes the cluster's API server
+  (`https://127.0.0.1:<port>`) reachable from the Windows-side app. Export its
+  kubeconfig with `kind get kubeconfig --name kubby-dev` and point Kubby at that
+  file.
+- **The corporate proxy blocks image pulls** from `registry.k8s.io` / `docker.io` on
+  the kind node, so demo pods may sit in `ImagePullBackOff`. Useful to test
+  against; not a bug.
+- **metrics-server *is* installed** on the current kind cluster (`kubby-cli
+  diagnostics` reports `metrics: available`). The nil-safety rule for
+  `Cluster.Metrics` still stands — plenty of clusters lack it, and
+  `NodeMetrics` returning `(nil, nil)` is a supported state — but do not assume
+  the local cluster is one of them when testing the "no metrics" hint. Force that
+  path by scaling metrics-server to zero rather than by hoping.
+- **First connect takes 15–30 s** for the security-agent reason above. Expected.
+
+### Making a restricted token (to test permission gating)
+
+As cluster-admin every `can-i` answers `yes`, which proves nothing. Create a
+ServiceAccount whose Role grants only `get/list/watch` on pods in one namespace,
+mint a token for it, and point `kubby-cli` at a kubeconfig using that token:
+
+```bash
+# in WSL, against the kind cluster
+kubectl create sa kubby-ro -n nexus
+kubectl create role kubby-ro -n nexus --verb=get,list,watch --resource=pods
+kubectl create rolebinding kubby-ro -n nexus --role=kubby-ro --serviceaccount=nexus:kubby-ro
+TOKEN=$(kubectl create token kubby-ro -n nexus --duration=2h)
+
+kind get kubeconfig --name kubby-dev > /tmp/ro.yaml
+KUBECONFIG=/tmp/ro.yaml kubectl config set-credentials kubby-ro --token="$TOKEN"
+KUBECONFIG=/tmp/ro.yaml kubectl config set-context ro --cluster=kind-kubby-dev --user=kubby-ro --namespace=nexus
+KUBECONFIG=/tmp/ro.yaml kubectl config use-context ro
+```
+
+Then `kcli.exe --kubeconfig /path/to/ro.yaml can-i Pod -n nexus` must show
+`get`/`list` yes and everything else — including **`logs`**, since the Role grants
+`pods` but not `pods/log` — no. Generate the file **inside WSL and copy it out**;
+piping it through PowerShell's `Out-File` adds a BOM that client-go cannot parse.
+
+### Testing a feature without the real thing installed
+
+CRD-based features can be exercised offline by applying **minimal CRDs** — the
+group, kind, plural, scope, and a schema of
+`x-kubernetes-preserve-unknown-fields: true`. The Istio Traffic view was fully
+verified this way with no Istio control plane: two CRDs, a fake ingress-gateway Pod
+carrying `istio: ingressgateway`, a Service in front of it, and the real Gateway /
+VirtualService manifests.
+
+## Worth adding
+
+The highest-value missing piece is **actual tests**. The code has a lot of pure
+logic that needs no cluster:
+
+Still untested: `openAIBaseURL`, `splitKindGroup`, `titleFor`, `isFullyReady`,
+`readyCondition`, `destinationService` (Istio host parsing), `podStatus`.
+(`checkMissingSeparator` and `splitYAMLDocuments` are now covered.)
+
+The frontend has no tests at all, and it now holds logic worth pinning:
+`documentStarts` and `parseApplyFailures` in `editor.js`, and `collapseDiff` in
+`main.js`. There is no JS test runner configured.
+
+And above that, `k8s.io/client-go/kubernetes/fake` + `dynamic/fake` +
+`metadata/fake` would let `SidebarCounts`, `NetworkTopology`, `istioFlows` and
+`ApplyYAML` be tested against synthetic clusters — including the cases that
+currently require hand-building CRDs on a kind cluster.

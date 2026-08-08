@@ -1,0 +1,179 @@
+Bug log — add one line per issue. Resolved items move to the bottom.
+
+## Open
+
+(none)
+
+## Fixed
+
+- [2026-07-30] Right-sizing hero had no left inset and overflowed the card on the right
+  ("3% of the cluster's 15.4Gi" cut off by the border, meter touching both edges).
+  Cause: `.card` has NO padding of its own — a table inside a card is deliberately
+  full-bleed and takes its inset from th/td, so content placed directly in a card gets
+  zero. Fix: a reusable `.card-body { padding: 0 1.25rem 1.1rem }` wrapper, plus
+  `min-width: 0` on the grid items so a long share label cannot widen its column past
+  the card. Recorded in docs/frontend.md — the next new card will hit this otherwise.
+- [2026-07-30] The Quota cell stayed clipped to "5 quota · …" after a fix that looked
+  correct.
+  Cause: CSS specificity. `:not()` carries the specificity of its ARGUMENT, and the
+  global rule is `.view:not(#view-overview) td` whose argument is an id — so it scores
+  (1,1,1), id-strength. The override `.sz-table td` at (0,1,1) lost silently. Fix:
+  `#view-sizing table.sz-table td` (1,1,2), which wins outright and does not depend on
+  source order.
+- [2026-07-30] Right-sizing showed the same fact as two different numbers: a tile said
+  "12% of cluster" two lines above advice saying "reserve 11% of the cluster's CPU".
+  Cause: the share of allocatable was derived twice — Go's advice with integer
+  division (1150*100/10000 = 11, truncated from 11.5) and the frontend with
+  Math.round (12). Fix: SizingReport carries CPUReservedPct / CPUUsedPct /
+  MemReservedPct / MemUsedPct, computed once; advice and the tiles both read them.
+- [2026-07-30] Right-sizing: the "requested" bar read as an empty track, so the hero
+  looked like a bar that had not loaded.
+  Cause: requested and used were drawn as two fills on a shared scale, with requested
+  in a muted colour — which is exactly the visual language of an unfilled track.
+  Cause behind the cause: wrong FORM. Per the dataviz guidance, a ratio against a
+  limit is a meter — the limit is the TRACK, the value is the FILL. Fix: one meter per
+  resource (track = reserved, fill = used) inside a stat tile whose headline is the
+  consequence ("935m reserved and sitting idle"), in an auto-fit grid so a tile is
+  never a lone graphic stretched across the window. Third layout for this card; the
+  two rejected ones are recorded in docs/right-sizing.md so they are not retried.
+- [2026-07-30] Right-sizing Quota column truncated to "5 quota · …".
+  Cause: a global `.view:not(#view-overview) td { max-width: 360px; overflow: hidden;
+  text-overflow: ellipsis }` in app.css clips every table cell in every view. Fix:
+  `.sz-table td` opts out — those cells wrap by design.
+- [2026-07-30] Right-sizing: the hero bars were ~97% empty and told the reader nothing.
+  Cause: the bars were scaled to the cluster's *allocatable* capacity. On a 10-core
+  cluster using 282m, both requested (11%) and used (2%) landed inside the leftmost
+  sliver of a 1500px bar, so the requested-vs-used comparison — the entire point of
+  the view — was invisible. Fix: two bars per resource sharing a LOCAL scale of
+  max(requested, used), so they fill the width and the ratio is the shape; the
+  cluster percentages moved to the right-hand column as context. A verdict line now
+  states the conclusion in words ("reserving 4.8× what it uses").
+- [2026-07-30] Right-sizing table showed "9Mi of 0Mi" and "34m of 1m".
+  Cause: the cell always printed "used of requested", including when nothing was
+  requested — a ratio against zero, presented as a fact. Fix: "9Mi used · no request"
+  when there is no request, "—" when there is neither request nor usage, and
+  "35m used · 1m req" otherwise. Also the Quota column was truncating to
+  "5 quota lines · ..."; it is now two chips that wrap.
+- [2026-07-30] Right-sizing: header row shifted one column off its data, and the whole
+  page grew a horizontal scrollbar.
+  Cause: two selectors in main.js decorate every table under `#content .view` with a
+  bulk-select column plus Age + Actions, excluding specific view *ids*. The new view
+  was not in either exclusion list, so both its tables got three phantom header
+  cells — the header shifted left of the body and the extra width overflowed the
+  window. Same root cause as the ResourceQuotas column shift below; an id-based
+  opt-out means every new non-list view must remember to edit two selectors.
+  Fix: opt out by markup instead — `table.plain` is skipped, and both selectors now
+  say `table:not(.plain)`. Recorded as an invariant in ARCHITECTURE.md, because the
+  next new view will hit it otherwise. Also: sizing tables are `table-layout: fixed`
+  with percentage column widths inside an `overflow-x: auto` wrapper, so a long
+  finding scrolls the table rather than the page.
+- [2026-07-30] Right-sizing showed "NOT DECLARED 45" on a cluster with 22 containers.
+  Cause: the tile summed noCpuRequest + noMemRequest + noMemLimit. Those overlap —
+  one container declaring nothing counts in all three — so the sum can exceed the
+  number of containers and means nothing. Fix: NamespaceSizing.Undeclared counts
+  containers missing at least ONE of the three, displayed as "18 of 22"; the three
+  individual counts stay only in the advice lines, where each names a specific fix.
+  The view was also redesigned in the same pass: six equal number tiles replaced by
+  one bar per resource (fill = used, tick = requested, full width = allocatable),
+  because the comparison is the content and the tiles made the reader do the
+  arithmetic themselves.
+- [2026-07-29] Every diff rendered double-spaced — a blank line between each line of
+  the diff, so it was twice as tall and needed twice the scrolling.
+  Cause: the line spans are `display: block` (so they already break), but the code
+  joined them with '\n' AND the containers (.yaml-diff, .pv-diff, .diff-view) are
+  `white-space: pre|pre-wrap`, which preserves that newline as its own empty line.
+  Pre-existing in the drawer's YAML → Diff tab and in all three Helm diffs; only
+  noticed when the dry-run preview made diffs long enough to be obvious. Fix: join
+  with '' in both renderers, with the reason recorded next to the code — the block
+  display and the empty separator have to stay together.
+  Also: .pv switched from `height: 52vh` to `max-height`, so an all-unchanged preview
+  no longer sits in a half-empty box.
+- [2026-07-29] Editing YAML: Tab jumped out of the box instead of indenting, and a
+  failed apply said "document 3 failed" with no way to find document 3.
+  Cause: the editor was a plain <textarea>. A textarea cannot indent (Tab is focus
+  navigation), has no line numbers, and gives no syntax feedback — for indentation-
+  sensitive text that is a functional gap, not a cosmetic one. Fix: one shared
+  CodeMirror editor (frontend/src/editor.js) behind every YAML box, with a gutter
+  marker placed on the failing document's first line after an apply error.
+  Two regressions came with it and were fixed in the same change, both from the same
+  root fact — CodeMirror's editable element is a contenteditable <div>, not a
+  <textarea>: (a) the global Enter handler excluded only TEXTAREA, so Enter inside the
+  Import YAML editor would have submitted the modal and applied a half-typed manifest;
+  (b) Escape closed the modal even when CodeMirror needed it (its search panel). The
+  handler now excludes .cm-editor and returns early on e.defaultPrevented.
+- [2026-07-29] "+ Create" on a name that already existed silently updated the object,
+  with nothing to distinguish that from creating it.
+  Cause: Create and Import YAML both end in a server-side apply, which is
+  create-or-update by design — correct behaviour, but invisible before the fact.
+  Fix: a dry-run Preview (DryRun: All, diffed against the live object) on both flows,
+  labelling each document create / update / unchanged before anything is written.
+  Worth knowing: the preview immediately exposed a second surprise nobody would have
+  predicted client-side — changing a Service's port from 8081 to 9090 does not replace
+  the port, because the ports list merges by port+protocol, so the object ends up with
+  both.
+- [2026-07-29] Actions the connected token could not perform were offered anyway: you
+  clicked Delete, confirmed the dialog, and only then got a 403.
+  Cause: nothing ever asked the cluster what the identity was allowed to do.
+  Fix: SelfSubjectAccessReview per kind+namespace (internal/k8sclient/access.go),
+  cached per connection, disabling (not hiding) what is not permitted and putting the
+  reason in the tooltip. Pod subresources are probed separately because a role granting
+  `pods` says nothing about `pods/log` or `pods/exec`. Deliberate design point recorded
+  because it is easy to "fix" the wrong way: an unanswerable probe counts as ALLOWED —
+  greying out the UI of a user who does have access would be worse than the 403 this
+  replaced, and the apiserver is still the real enforcer.
+- [2026-07-28] The app stalled for a second or more on every namespace change.
+  Three compounding causes. (1) client-go's default client-side rate limiter is QPS 5 /
+  Burst 10, so past the burst every further request *sleeps* — one sidebar refresh fans
+  out to ~25 lists, and client-go was logging "Waited for 1.1s due to client-side
+  throttling". (2) Counts were one bound call per kind, ~25 Wails round-trips, each
+  serialising every object of that kind just so JS could take `.length` (a cluster-wide
+  Secret list transfers every value to report a number). (3) All of them were refired on
+  a namespace change, including cluster-scoped kinds whose counts cannot change.
+  Fix: QPS 50 / Burst 100; one `SidebarCounts` call fanning out concurrently in Go with
+  metadata-only lists where only a number is shown; `includeCluster=false` on a namespace
+  change; and a request-generation guard so a slow reply can't repaint over a newer one.
+  Measured on a one-node kind cluster: 930ms → 73ms. NamespaceSummary (the namespace
+  drawer) got the same treatment.
+- [2026-07-28] Command palette found nothing for "virtualservice" on an Istio cluster.
+  Cause: the palette offers "Go to <section>" for each entry in PAGE_TITLES, and sections
+  existed only for hard-coded built-in kinds. Global search had the same gap plus more —
+  it covered 10 kinds and missed Jobs, CronJobs, PVCs, ServiceAccounts, PVs,
+  StorageClasses, all of RBAC, quotas and every custom resource.
+  Fix: `custom.go` turns each CRD-defined kind into a real section (registered in
+  PAGE_TITLES, so the palette picks it up for free) with a generic list table that opens
+  the usual drawer; `SearchResources` now covers every kind the UI has a section for,
+  custom resources included, fanned out concurrently with metadata-only lists — broader
+  *and* faster than the old sequential version. Matched Pods get their error flag
+  resolved afterwards, which metadata lists cannot supply.
+- [2026-07-28] Overview → Node usage rendered as blank white lines, no bars visible.
+  Cause: `.nm-bar` / `.nm-bar-fill` were inline `<span>`s. The grid blockified the track,
+  but the fill kept `display:inline`, so `height:100%` and `width:N%` were both ignored
+  and it painted nothing. Fix: every bar element is explicitly `display:block`; the panel
+  was also redesigned (responsive card grid, cluster totals in the header, thresholds at
+  70/90%, clickable node names, cores/GiB instead of raw milli/Mi).
+- [2026-07-28] "Import YAML" refused Istio manifests, reporting a missing/unsupported kind.
+  Two separate causes. (1) The manifest had two documents with no `---` between them, so
+  YAML parsed it as one document with duplicate keys and kept only the last — the Gateway
+  vanished silently, with no error. (2) Kind→resource mapping came from a static
+  `gvrByKind` table listing only built-in kinds, so any CRD kind was rejected outright.
+  Fix: `apiindex.go` resolves apiVersion+kind against live API discovery (cached, refreshed
+  once on a miss so a newly installed CRD is found), and `checkMissingSeparator` names the
+  missing-`---` case instead of applying half the file. Apply is now a server-side apply
+  with a per-document report, and strips server-owned metadata so `kubectl get -o yaml`
+  output can be pasted as-is.
+- [2026-07-28] Traffic flow was empty on an Istio cluster (no Ingress objects exist there).
+  Fix: `istioflow.go` renders Istio Gateway + VirtualService in the same Route→Service→Pods
+  lanes, badged `Gateway`, with the VirtualService named on each route it created. Adds two
+  Istio-specific checks: a Gateway selector matching no ingress-gateway Pod, and a
+  `credentialName` TLS secret missing from the ingress gateway's namespace (not the app's).
+- [2026-07-27] Traffic flow: a deleted Ingress kept showing.
+  Cause: an Ingress held by a finalizer stays in the API with a deletionTimestamp,
+  and NetworkTopology listed it as live routing. Fix: netflow.go skips objects with
+  a DeletionTimestamp; loadTraffic() also drops responses from superseded requests
+  so a slow reply can't repaint stale topology.
+- [2026-07-27] ResourceQuotas / LimitRanges: the Age and Actions columns were broken.
+  Cause: main.js appends Age + Actions headers to every list table, but those two
+  cellsFns (and CRDs) never emitted an age cell, so every column shifted one left.
+  Fix: emit the age cell; padRowToHeader() backfills short rows as a safety net.
+  Also: the quota summary was built by ranging a Go map, so its order reshuffled on
+  every refresh — now sorted, and rendered as chips that flag any resource at its limit.

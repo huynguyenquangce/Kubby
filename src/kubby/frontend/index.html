@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Kubby</title>
+</head>
+<body>
+<div id="app">
+
+    <!-- ============ SVG icon sprite (line icons, stroke=currentColor) ============ -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="i-overview" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+            <symbol id="i-nodes" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+            <symbol id="i-namespaces" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2.5"/><path d="M3 9h18M9 21V9"/></symbol>
+            <symbol id="i-pods" viewBox="0 0 24 24"><path d="M20 7 12 2 4 7v10l8 5 8-5V7z"/><path d="m4 7 8 5 8-5M12 22V12"/></symbol>
+            <symbol id="i-deployments" viewBox="0 0 24 24"><path d="m12 2 9 5-9 5-9-5 9-5z"/><path d="m3 12 9 5 9-5M3 17l9 5 9-5"/></symbol>
+            <symbol id="i-statefulsets" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></symbol>
+            <symbol id="i-daemonsets" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></symbol>
+            <symbol id="i-jobs" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2.5"/><path d="m8 12 3 3 5-6"/></symbol>
+            <symbol id="i-cronjobs" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></symbol>
+            <symbol id="i-services" viewBox="0 0 24 24"><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 10.8 15.8 7.2M8.2 13.2 15.8 16.8"/></symbol>
+            <symbol id="i-ingresses" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.5 3.6 6 3.6 9s-1.1 6.5-3.6 9c-2.5-2.5-3.6-6-3.6-9s1.1-6.5 3.6-9z"/></symbol>
+            <symbol id="i-configmaps" viewBox="0 0 24 24"><path d="M4 6h9M19 6h1M4 12h1M11 12h9M4 18h7M17 18h3"/><circle cx="16" cy="6" r="2.2"/><circle cx="8" cy="12" r="2.2"/><circle cx="14" cy="18" r="2.2"/></symbol>
+            <symbol id="i-secrets" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 15v2"/></symbol>
+            <symbol id="i-pvcs" viewBox="0 0 24 24"><rect x="3" y="12" width="18" height="8" rx="2"/><path d="m5 12 2.4-6.4A2 2 0 0 1 9.3 4h5.4a2 2 0 0 1 1.9 1.6L19 12"/><path d="M7 16h.01M17 16h.01"/></symbol>
+            <symbol id="i-pvs" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.66 3.58 3 8 3s8-1.34 8-3V6"/></symbol>
+            <symbol id="i-storageclasses" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v3M12 18v3"/></symbol>
+            <symbol id="i-serviceaccounts" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5c0-4 3.4-6 7.5-6s7.5 2 7.5 6"/></symbol>
+            <symbol id="i-roles" viewBox="0 0 24 24"><circle cx="8" cy="8" r="4.2"/><path d="m10.9 10.9 8.1 8.1M17 15l2 2M14 18l2 2"/></symbol>
+            <symbol id="i-rolebindings" viewBox="0 0 24 24"><path d="M9.5 14.5 14.5 9.5"/><path d="M10.5 6.5 12 5a4 4 0 0 1 5.7 5.7l-1.5 1.5"/><path d="M13.5 17.5 12 19a4 4 0 0 1-5.7-5.7l1.5-1.5"/></symbol>
+            <symbol id="i-clusterroles" viewBox="0 0 24 24"><path d="M12 3 4 6v5c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V6l-8-3z"/><circle cx="12" cy="10" r="2"/><path d="M12 12v3"/></symbol>
+            <symbol id="i-clusterrolebindings" viewBox="0 0 24 24"><path d="M12 3 4 6v5c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V6l-8-3z"/><path d="M10.5 11.5 13.5 8.5M9.8 9.2 11 8a2.2 2.2 0 0 1 3.1 3.1l-1.2 1.2M12.9 14.8 11.7 16a2.2 2.2 0 0 1-3.1-3.1l1.2-1.2"/></symbol>
+            <symbol id="i-crds" viewBox="0 0 24 24"><path d="M13.5 4.5a1.5 1.5 0 1 0-3 0V6H7.5A1.5 1.5 0 0 0 6 7.5V10H4.5a1.5 1.5 0 1 0 0 4H6v2.5A1.5 1.5 0 0 0 7.5 18h2.5v1.5a1.5 1.5 0 1 1 3 0V18h3.5a1.5 1.5 0 0 0 1.5-1.5V14h1.5a1.5 1.5 0 1 0 0-4H19V7.5A1.5 1.5 0 0 0 17.5 6H13.5V4.5z"/></symbol>
+            <symbol id="i-helm" viewBox="0 0 24 24"><circle cx="12" cy="4.5" r="2.5"/><path d="M12 7v14M5 12a7 7 0 0 0 14 0M2 12h3M19 12h3M8 9h8"/></symbol>
+            <symbol id="i-helmrepos" viewBox="0 0 24 24"><path d="m21 8-9-5-9 5v8l9 5 9-5V8z"/><path d="m3 8 9 5 9-5M12 13v8M7.5 5.5l9 5"/></symbol>
+            <symbol id="i-resourcequotas" viewBox="0 0 24 24"><path d="M4 16a8 8 0 1 1 16 0"/><path d="m12 16 4-4"/><circle cx="12" cy="16" r="1.2"/></symbol>
+            <symbol id="i-limitranges" viewBox="0 0 24 24"><rect x="2.5" y="8.5" width="19" height="7" rx="1.5"/><path d="M6.5 8.5v3M10.5 8.5v4M14.5 8.5v3M18.5 8.5v4"/></symbol>
+            <!-- Right-sizing: two bars of different length — asked-for vs used. -->
+            <symbol id="i-sizing" viewBox="0 0 24 24"><path d="M4 7h15M4 12h9M4 17h12"/><path d="M4 4v16"/></symbol>
+            <!-- topbar / ui -->
+            <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+            <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V3M7.5 7.5 12 3l4.5 4.5"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></symbol>
+            <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></symbol>
+            <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 4.5v15M16 4.5v15"/></symbol>
+            <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-.8 4.5"/><path d="M20 4v5h-5"/></symbol>
+            <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.6 6.6 0 0 0 9.8 9.8z"/></symbol>
+            <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.4 1.4M17.6 17.6 19 19M19 5l-1.4 1.4M6.4 17.6 5 19"/></symbol>
+            <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></symbol>
+            <symbol id="i-caret" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+            <symbol id="i-traffic" viewBox="0 0 24 24"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 6h4a4 4 0 0 1 4 4v0M7 18h4a4 4 0 0 0 4-4v0"/></symbol>
+            <!-- A cog, not a sun. The previous drawing was a circle with eight
+                 radiating lines — identical to #i-sun — so the Settings button
+                 read as the light half of the theme toggle beside it. -->
+            <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+            <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M11 3.5 12.7 8 17 9.7 12.7 11.4 11 16l-1.7-4.6L5 9.7 9.3 8z"/><path d="M18 14.5 18.8 17 21 17.8 18.8 18.6 18 21l-.8-2.4-2.2-.8 2.2-.8z"/></symbol>
+        </defs>
+    </svg>
+
+    <!-- ============ WELCOME SCREEN ============ -->
+    <div id="welcome" class="welcome">
+        <div class="welcome-card">
+            <div class="welcome-brand">
+                <span class="brand-logo">⎈</span>
+                <h1>Kubby</h1>
+            </div>
+            <p class="welcome-sub">A personal Kubernetes cluster manager. Load a kubeconfig to get started.</p>
+
+            <div class="tabs">
+                <button class="tab active" data-tab="file">Select file</button>
+                <button class="tab" data-tab="paste">Paste kubeconfig</button>
+            </div>
+
+            <div id="tab-file" class="tab-panel">
+                <button id="btn-pick-kubeconfig" class="btn btn-secondary btn-block">Browse for kubeconfig file…</button>
+                <p id="picked-path" class="picked-path" hidden></p>
+            </div>
+
+            <div id="tab-paste" class="tab-panel" hidden>
+                <textarea id="paste-area" class="paste-area" placeholder="apiVersion: v1&#10;kind: Config&#10;clusters:&#10;- ..."></textarea>
+                <button id="btn-load-paste" class="btn btn-secondary btn-block">Load pasted config</button>
+            </div>
+
+            <div id="context-row" class="context-row" hidden>
+                <label>Context
+                    <select id="context-select"></select>
+                </label>
+                <button id="btn-connect" class="btn btn-primary">Connect</button>
+            </div>
+
+            <p id="welcome-error" class="error" hidden></p>
+
+            <div id="recent-box" class="recent-box" hidden>
+                <div class="recent-title">Recent connections</div>
+                <div id="recent-list" class="recent-list"></div>
+            </div>
+        </div>
+
+        <div id="connecting-overlay" class="connecting-overlay" hidden>
+            <div class="spinner"></div>
+            <p class="connecting-title">Connecting…</p>
+            <p class="connecting-note">The first connection can take up to ~30s if a security agent inspects it. Later ones are instant.</p>
+        </div>
+    </div>
+
+    <!-- ============ DASHBOARD ============ -->
+    <div id="dashboard" class="dashboard" hidden>
+        <aside class="sidebar">
+            <div class="brand">
+                <span class="brand-logo">⎈</span>
+                <span class="brand-name">Kubby</span>
+            </div>
+
+            <div class="ns-picker">
+                <label>Namespace</label>
+                <select id="namespace-select"></select>
+            </div>
+
+            <nav class="nav">
+                <div class="nav-section" data-section="cluster">
+                    <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Cluster</span></button>
+                    <div class="nav-items">
+                        <button class="nav-item active" data-view="overview"><svg class="ico"><use href="#i-overview"/></svg><span class="nav-label">Overview</span></button>
+                        <button class="nav-item" data-view="nodes"><svg class="ico"><use href="#i-nodes"/></svg><span class="nav-label">Nodes</span></button>
+                        <button class="nav-item" data-view="namespaces"><svg class="ico"><use href="#i-namespaces"/></svg><span class="nav-label">Namespaces</span></button>
+                        <button class="nav-item" data-view="sizing"><svg class="ico"><use href="#i-sizing"/></svg><span class="nav-label">Right-sizing</span></button>
+                    </div>
+                </div>
+                <div class="nav-section" data-section="workloads">
+                    <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Workloads</span></button>
+                    <div class="nav-items">
+                        <button class="nav-item" data-view="pods"><svg class="ico"><use href="#i-pods"/></svg><span class="nav-label">Pods</span></button>
+                        <button class="nav-item" data-view="deployments"><svg class="ico"><use href="#i-deployments"/></svg><span class="nav-label">Deployments</span></button>
+                        <button class="nav-item" data-view="statefulsets"><svg class="ico"><use href="#i-statefulsets"/></svg><span class="nav-label">StatefulSets</span></button>
+                        <button class="nav-item" data-view="daemonsets"><svg class="ico"><use href="#i-daemonsets"/></svg><span class="nav-label">DaemonSets</span></button>
+                        <button class="nav-item" data-view="jobs"><svg class="ico"><use href="#i-jobs"/></svg><span class="nav-label">Jobs</span></button>
+                        <button class="nav-item" data-view="cronjobs"><svg class="ico"><use href="#i-cronjobs"/></svg><span class="nav-label">CronJobs</span></button>
+                    </div>
+                </div>
+                <div class="nav-section" data-section="network">
+                    <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Network</span></button>
+                    <div class="nav-items">
+                        <button class="nav-item" data-view="services"><svg class="ico"><use href="#i-services"/></svg><span class="nav-label">Services</span></button>
+                        <button class="nav-item" data-view="ingresses"><svg class="ico"><use href="#i-ingresses"/></svg><span class="nav-label">Ingresses</span></button>
+                        <button class="nav-item" data-view="traffic"><svg class="ico"><use href="#i-traffic"/></svg><span class="nav-label">Traffic flow</span></button>
+                    </div>
+                </div>
+                <div class="nav-section" data-section="config">
+                    <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Config</span></button>
+                    <div class="nav-items">
+                        <button class="nav-item" data-view="configmaps"><svg class="ico"><use href="#i-configmaps"/></svg><span class="nav-label">ConfigMaps</span></button>
+                        <button class="nav-item" data-view="secrets"><svg class="ico"><use href="#i-secrets"/></svg><span class="nav-label">Secrets</span></button>
+                    </div>
+                </div>
+                <div class="nav-section" data-section="storage">
+                    <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Storage</span></button>
+                    <div class="nav-items">
+                        <button class="nav-item" data-view="pvcs"><svg class="ico"><use href="#i-pvcs"/></svg><span class="nav-label">PVCs</span></button>
+                        <button class="nav-item" data-view="pvs"><svg class="ico"><use href="#i-pvs"/></svg><span class="nav-label">PersistentVolumes</span></button>
+                        <button class="nav-item" data-view="storageclasses"><svg class="ico"><use href="#i-storageclasses"/></svg><span class="nav-label">StorageClasses</span></button>
+                    </div>
+                </div>
+                <div class="nav-section" data-section="access">
+                    <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Access</span></button>
+                    <div class="nav-items">
+                        <button class="nav-item" data-view="serviceaccounts"><svg class="ico"><use href="#i-serviceaccounts"/></svg><span class="nav-label">ServiceAccounts</span></button>
+                        <button class="nav-item" data-view="roles"><svg class="ico"><use href="#i-roles"/></svg><span class="nav-label">Roles</span></button>
+                        <button class="nav-item" data-view="rolebindings"><svg class="ico"><use href="#i-rolebindings"/></svg><span class="nav-label">RoleBindings</span></button>
+                        <button class="nav-item" data-view="clusterroles"><svg class="ico"><use href="#i-clusterroles"/></svg><span class="nav-label">ClusterRoles</span></button>
+                        <button class="nav-item" data-view="clusterrolebindings"><svg class="ico"><use href="#i-clusterrolebindings"/></svg><span class="nav-label">ClusterRoleBindings</span></button>
+                    </div>
+                </div>
+                <div class="nav-section" data-section="ecosystem">
+                    <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Ecosystem</span></button>
+                    <div class="nav-items">
+                        <button class="nav-item" data-view="crds"><svg class="ico"><use href="#i-crds"/></svg><span class="nav-label">CRDs</span></button>
+                        <button class="nav-item" data-view="helm"><svg class="ico"><use href="#i-helm"/></svg><span class="nav-label">Helm Releases</span></button>
+                        <button class="nav-item" data-view="helmrepos"><svg class="ico"><use href="#i-helmrepos"/></svg><span class="nav-label">Helm Repos</span></button>
+                        <button class="nav-item" data-view="resourcequotas"><svg class="ico"><use href="#i-resourcequotas"/></svg><span class="nav-label">ResourceQuotas</span></button>
+                        <button class="nav-item" data-view="limitranges"><svg class="ico"><use href="#i-limitranges"/></svg><span class="nav-label">LimitRanges</span></button>
+                    </div>
+                </div>
+                <!-- Built at connect time from the cluster's CRDs (Istio, cert-manager,
+                     Argo…). Stays hidden when the cluster defines none. -->
+                <div class="nav-section collapsed" data-section="custom" id="nav-section-custom" hidden>
+                    <button class="nav-group" aria-expanded="false"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Custom Resources</span><span class="nav-group-count" id="nav-custom-count"></span></button>
+                    <div class="nav-items" id="nav-custom-items"></div>
+                </div>
+            </nav>
+
+            <div class="sidebar-footer">
+                <label class="cluster-switch-label">Active cluster</label>
+                <div class="cluster-switch">
+                    <span class="dot connected"></span>
+                    <select id="cluster-select" class="cluster-select"></select>
+                </div>
+                <div class="cluster-footer-actions">
+                    <button id="btn-add-cluster" class="btn-link">+ Add cluster</button>
+                    <button id="btn-disconnect" class="btn-link">Disconnect</button>
+                </div>
+            </div>
+        </aside>
+
+        <div class="main">
+            <header class="topbar">
+                <div class="topbar-left">
+                    <h1 id="page-title">Overview</h1>
+                    <span id="ns-scope" class="ns-scope"></span>
+                </div>
+                <div class="topbar-actions">
+                    <div id="view-search" class="view-search" hidden>
+                        <svg class="view-search-ico"><use href="#i-search"/></svg>
+                        <input id="view-filter" type="text" placeholder="Filter…" autocomplete="off" spellcheck="false">
+                        <span id="view-count" class="view-count"></span>
+                    </div>
+                    <button id="btn-create" class="btn btn-primary btn-sm btn-icon"><svg class="btn-ico"><use href="#i-plus"/></svg>Create</button>
+                    <button id="btn-import" class="btn btn-secondary btn-sm btn-icon"><svg class="btn-ico"><use href="#i-upload"/></svg>Import</button>
+                    <span class="topbar-sep"></span>
+                    <button id="btn-live" class="icon-btn" title="Auto-refresh (Live)" aria-label="Toggle auto-refresh"><svg class="btn-ico live-play"><use href="#i-play"/></svg><svg class="btn-ico live-pause"><use href="#i-pause"/></svg></button>
+                    <button id="btn-refresh" class="icon-btn" title="Refresh" aria-label="Refresh"><svg class="btn-ico"><use href="#i-refresh"/></svg></button>
+                    <button id="btn-theme" class="icon-btn" title="Toggle light/dark" aria-label="Toggle light or dark theme"><svg class="btn-ico theme-moon"><use href="#i-moon"/></svg><svg class="btn-ico theme-sun"><use href="#i-sun"/></svg></button>
+                    <span class="topbar-sep"></span>
+                    <button id="btn-settings" class="icon-btn" title="Settings — AI provider, About, diagnostics" aria-label="Settings"><svg class="btn-ico"><use href="#i-settings"/></svg></button>
+                </div>
+            </header>
+
+            <p id="dash-error" class="error" hidden></p>
+
+            <main id="content" class="content">
+                <!-- Overview -->
+                <section id="view-overview" class="view">
+                    <div class="stat-cards">
+                        <div class="stat-card"><div class="stat-value" id="stat-nodes">–</div><div class="stat-label">Nodes</div></div>
+                        <div class="stat-card"><div class="stat-value" id="stat-namespaces">–</div><div class="stat-label">Namespaces</div></div>
+                        <div class="stat-card"><div class="stat-value" id="stat-pods">–</div><div class="stat-label">Pods</div></div>
+                        <div class="stat-card"><div class="stat-value" id="stat-deployments">–</div><div class="stat-label">Deployments</div></div>
+                        <div class="stat-card stat-card-error"><div class="stat-value" id="stat-errors">–</div><div class="stat-label">Pods with errors</div></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-head"><h3>Node usage</h3><span class="nm-total" id="node-metrics-total"></span></div>
+                        <div id="node-metrics" class="node-metrics"></div>
+                        <p class="empty-inline" id="node-metrics-hint" hidden>metrics-server is not installed — install it to see live CPU/memory usage.</p>
+                    </div>
+
+                    <div class="overview-grid">
+                        <div class="card">
+                            <div class="card-head"><h3>Pods with errors</h3></div>
+                            <table><thead><tr><th>Namespace</th><th>Pod</th><th>Status</th><th>Restarts</th></tr></thead>
+                                <tbody id="overview-errors-body"></tbody></table>
+                            <p class="empty-inline" id="overview-errors-empty" hidden>No pods are currently failing 🎉</p>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-head"><h3>Top pods by CPU</h3></div>
+                            <table><thead><tr><th>Namespace</th><th>Pod</th><th>CPU</th><th>Memory</th></tr></thead>
+                                <tbody id="overview-toppods-body"></tbody></table>
+                            <p class="empty-inline" id="overview-toppods-empty" hidden>metrics-server is not installed — no usage data.</p>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-head"><h3>Recent events</h3></div>
+                        <table><thead><tr><th>Type</th><th>Object</th><th>Reason</th><th>Age</th><th>Message</th></tr></thead>
+                            <tbody id="overview-events-body"></tbody></table>
+                        <p class="empty-inline" id="overview-events-empty" hidden>No recent events.</p>
+                    </div>
+                </section>
+
+                <!-- Nodes -->
+                <section id="view-nodes" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Name</th><th>Status</th><th>Role</th><th>Version</th></tr></thead>
+                            <tbody id="nodes-body"></tbody></table>
+                    </div>
+                </section>
+
+                <!-- Namespaces -->
+                <section id="view-namespaces" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Name</th><th>Status</th></tr></thead>
+                            <tbody id="namespaces-body"></tbody></table>
+                    </div>
+                </section>
+
+                <!-- Pods -->
+                <section id="view-pods" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Name</th><th>Namespace</th><th>Ready</th><th>Status</th><th>Restarts</th><th>CPU</th><th>Memory</th><th>IP</th><th>Node</th><th>Age</th><th class="no-sort col-actions">Actions</th></tr></thead>
+                            <tbody id="pods-body"></tbody></table>
+                        <p class="empty-inline" id="pods-empty" hidden>No pods in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- Deployments -->
+                <section id="view-deployments" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Ready</th><th>Up-to-date</th><th>Available</th></tr></thead>
+                            <tbody id="deployments-body"></tbody></table>
+                        <p class="empty-inline" id="deployments-empty" hidden>No deployments in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- Services -->
+                <section id="view-services" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Type</th><th>Cluster IP</th><th>Ports</th></tr></thead>
+                            <tbody id="services-body"></tbody></table>
+                        <p class="empty-inline" id="services-empty" hidden>No services in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- ConfigMaps -->
+                <section id="view-configmaps" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Keys</th></tr></thead>
+                            <tbody id="configmaps-body"></tbody></table>
+                        <p class="empty-inline" id="configmaps-empty" hidden>No config maps in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- Secrets -->
+                <section id="view-secrets" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Type</th><th>Keys</th></tr></thead>
+                            <tbody id="secrets-body"></tbody></table>
+                        <p class="empty-inline" id="secrets-empty" hidden>No secrets in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- StatefulSets -->
+                <section id="view-statefulsets" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Ready</th></tr></thead>
+                            <tbody id="statefulsets-body"></tbody></table>
+                        <p class="empty-inline" id="statefulsets-empty" hidden>No stateful sets in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- DaemonSets -->
+                <section id="view-daemonsets" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Desired</th><th>Ready</th><th>Available</th></tr></thead>
+                            <tbody id="daemonsets-body"></tbody></table>
+                        <p class="empty-inline" id="daemonsets-empty" hidden>No daemon sets in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- Jobs -->
+                <section id="view-jobs" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Completions</th><th>Active</th></tr></thead>
+                            <tbody id="jobs-body"></tbody></table>
+                        <p class="empty-inline" id="jobs-empty" hidden>No jobs in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- CronJobs -->
+                <section id="view-cronjobs" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Schedule</th><th>Suspend</th><th>Active</th></tr></thead>
+                            <tbody id="cronjobs-body"></tbody></table>
+                        <p class="empty-inline" id="cronjobs-empty" hidden>No cron jobs in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- Ingresses -->
+                <section id="view-ingresses" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Class</th><th>Hosts</th></tr></thead>
+                            <tbody id="ingresses-body"></tbody></table>
+                        <p class="empty-inline" id="ingresses-empty" hidden>No ingresses in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- PVCs -->
+                <section id="view-pvcs" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Status</th><th>Capacity</th><th>Storage Class</th></tr></thead>
+                            <tbody id="pvcs-body"></tbody></table>
+                        <p class="empty-inline" id="pvcs-empty" hidden>No persistent volume claims in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- ServiceAccounts -->
+                <section id="view-serviceaccounts" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Secrets</th></tr></thead>
+                            <tbody id="serviceaccounts-body"></tbody></table>
+                        <p class="empty-inline" id="serviceaccounts-empty" hidden>No service accounts in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- PersistentVolumes -->
+                <section id="view-pvs" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Name</th><th>Capacity</th><th>Access</th><th>Status</th><th>Claim</th><th>Storage Class</th></tr></thead>
+                            <tbody id="pvs-body"></tbody></table>
+                        <p class="empty-inline" id="pvs-empty" hidden>No persistent volumes in this cluster.</p>
+                    </div>
+                </section>
+
+                <!-- StorageClasses -->
+                <section id="view-storageclasses" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Name</th><th>Provisioner</th><th>Reclaim</th><th>Default</th></tr></thead>
+                            <tbody id="storageclasses-body"></tbody></table>
+                        <p class="empty-inline" id="storageclasses-empty" hidden>No storage classes in this cluster.</p>
+                    </div>
+                </section>
+
+                <!-- Roles -->
+                <section id="view-roles" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Rules</th></tr></thead>
+                            <tbody id="roles-body"></tbody></table>
+                        <p class="empty-inline" id="roles-empty" hidden>No roles in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- RoleBindings -->
+                <section id="view-rolebindings" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Role Ref</th><th>Subjects</th></tr></thead>
+                            <tbody id="rolebindings-body"></tbody></table>
+                        <p class="empty-inline" id="rolebindings-empty" hidden>No role bindings in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- ClusterRoles -->
+                <section id="view-clusterroles" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Name</th><th>Rules</th></tr></thead>
+                            <tbody id="clusterroles-body"></tbody></table>
+                        <p class="empty-inline" id="clusterroles-empty" hidden>No cluster roles.</p>
+                    </div>
+                </section>
+
+                <!-- ClusterRoleBindings -->
+                <section id="view-clusterrolebindings" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Name</th><th>Role Ref</th><th>Subjects</th></tr></thead>
+                            <tbody id="clusterrolebindings-body"></tbody></table>
+                        <p class="empty-inline" id="clusterrolebindings-empty" hidden>No cluster role bindings.</p>
+                    </div>
+                </section>
+
+                <!-- CRDs -->
+                <section id="view-crds" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Name</th><th>Group</th><th>Kind</th><th>Scope</th><th>Versions</th></tr></thead>
+                            <tbody id="crds-body"></tbody></table>
+                        <p class="empty-inline" id="crds-empty" hidden>No CustomResourceDefinitions in this cluster.</p>
+                    </div>
+                </section>
+
+                <!-- Traffic flow (Ingress → Service → Pod topology) -->
+                <section id="view-traffic" class="view" hidden>
+                    <div class="flow-summary" id="flow-summary"></div>
+
+                    <div class="flow-toolbar">
+                        <div class="flow-search">
+                            <svg class="ico"><use href="#i-search"/></svg>
+                            <input type="text" id="flow-filter" class="no-enter-submit"
+                                   placeholder="Filter by entry point, host, service or pod…">
+                        </div>
+                        <label class="flow-toggle">
+                            <input type="checkbox" id="flow-only-problems">
+                            <span>Only show broken paths</span>
+                        </label>
+                        <span class="flow-updated" id="flow-updated"></span>
+                    </div>
+
+                    <p class="flow-empty" id="flow-nomatch" hidden></p>
+
+                    <section class="flow-section">
+                        <header class="flow-section-head">
+                            <h3>From outside the cluster</h3>
+                            <span class="flow-legend">Ingress / Gateway<i></i>Service<i></i>Pod</span>
+                            <span class="section-count" id="flow-ing-count"></span>
+                        </header>
+                        <div id="traffic-ingress" class="flow-stack"></div>
+                        <p class="flow-empty" id="traffic-ingress-empty" hidden>
+                            <strong>Nothing is exposed outside the cluster.</strong>
+                            No Ingress and no Istio Gateway exists in this scope — services below are still reachable from inside.
+                        </p>
+                    </section>
+
+                    <section class="flow-section">
+                        <header class="flow-section-head">
+                            <h3>Inside the cluster</h3>
+                            <span class="flow-legend">Service<i></i>Pod</span>
+                            <span class="section-count" id="traffic-svc-count"></span>
+                        </header>
+                        <div id="traffic-services" class="flow-stack flow-stack-flat"></div>
+                        <p class="flow-empty" id="traffic-services-empty" hidden>
+                            <strong>No Services in this scope.</strong>
+                            Every Service here is already fronted by an Ingress above, or the namespace has none.
+                        </p>
+                    </section>
+                </section>
+
+                <!-- Right-sizing — what containers asked for vs what they use.
+                     Read-only and entirely derived (rightsizing.go); the advice list
+                     carries the aggregate conclusions, the table the individual ones. -->
+                <section id="view-sizing" class="view" hidden>
+                    <!-- Reserved vs used, as two bars against cluster capacity. The
+                         comparison IS the content, so it is drawn rather than left
+                         for the reader to work out from separate numbers. -->
+                    <div class="card">
+                        <div class="card-head">
+                            <h3>Reserved vs actually used</h3>
+                            <span class="nm-total" id="sz-scope"></span>
+                        </div>
+                        <!-- .card-body because .card has no padding of its own -->
+                        <div class="card-body">
+                            <div id="sz-bars"></div>
+                            <p class="sz-note" id="sz-note" hidden></p>
+                        </div>
+                    </div>
+
+                    <div class="card" id="sz-advice-card" hidden>
+                        <div class="card-head"><h3>Worth changing</h3></div>
+                        <ul class="sz-advice" id="sz-advice"></ul>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-head">
+                            <h3>By namespace</h3>
+                            <span class="nm-total" id="sz-ns-total"></span>
+                        </div>
+                        <!-- class="plain": not a resource list, so it must not be given
+                             bulk-select / Age / Actions columns. See main.js. -->
+                        <div class="sz-scroll">
+                            <table class="plain sz-table sz-ns-cols"><thead><tr>
+                                <th>Namespace</th>
+                                <th class="sz-num">Pods</th>
+                                <th>CPU &nbsp;<span class="sz-th-sub">used of requested</span></th>
+                                <th>Memory &nbsp;<span class="sz-th-sub">used of requested</span></th>
+                                <th class="sz-num">Undeclared</th>
+                                <th>Quota</th>
+                            </tr></thead>
+                                <tbody id="sz-ns-body"></tbody></table>
+                        </div>
+                        <p class="empty-inline" id="sz-ns-empty" hidden>No running pods in scope.</p>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-head">
+                            <h3>Containers worth a look</h3>
+                            <label class="flow-toggle">
+                                <input type="checkbox" id="sz-only-serious">
+                                <span>Only OOMKills and near-limit memory</span>
+                            </label>
+                            <span class="section-count" id="sz-cont-count"></span>
+                        </div>
+                        <div class="sz-scroll">
+                            <table class="plain sz-table sz-cont-cols"><thead><tr>
+                                <th>Container</th>
+                                <th>QoS</th>
+                                <th>CPU</th>
+                                <th>Memory</th>
+                                <th>What is wrong</th>
+                            </tr></thead>
+                                <tbody id="sz-cont-body"></tbody></table>
+                        </div>
+                        <p class="empty-inline" id="sz-cont-empty" hidden>Nothing to flag.</p>
+                    </div>
+                </section>
+
+                <!-- Custom resources — one generic table shared by every CRD-defined
+                     kind (the kind being shown lives in currentView: "custom:<Kind.group>"). -->
+                <section id="view-custom" class="view" hidden>
+                    <div class="card">
+                        <div class="card-head"><h3 id="custom-title">Custom resource</h3><span class="nm-total" id="custom-api"></span></div>
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Status</th></tr></thead>
+                            <tbody id="custom-body"></tbody></table>
+                        <p class="empty-inline" id="custom-empty" hidden>No objects of this kind.</p>
+                    </div>
+                </section>
+
+                <!-- Helm Releases -->
+                <section id="view-helm" class="view" hidden>
+                    <div class="view-toolbar">
+                        <button id="btn-helm-search" class="btn btn-primary btn-sm">🔍 Search &amp; install charts</button>
+                    </div>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Revision</th><th>Status</th></tr></thead>
+                            <tbody id="helm-body"></tbody></table>
+                        <p class="empty-inline" id="helm-empty" hidden>No Helm releases found (Helm 3 stores them as Secrets).</p>
+                    </div>
+                </section>
+
+                <!-- Helm Repositories -->
+                <section id="view-helmrepos" class="view" hidden>
+                    <div class="view-toolbar">
+                        <button id="btn-repo-add" class="btn btn-primary btn-sm">+ Add repo</button>
+                        <button id="btn-repo-update" class="btn btn-secondary btn-sm">↻ Update all</button>
+                    </div>
+                    <div class="card">
+                        <table><thead><tr><th>Name</th><th>URL</th><th>Actions</th></tr></thead>
+                            <tbody id="helmrepos-body"></tbody></table>
+                        <p class="empty-inline" id="helmrepos-empty" hidden>No repositories yet. Click “+ Add repo” (e.g. bitnami → https://charts.bitnami.com/bitnami).</p>
+                    </div>
+                </section>
+
+                <!-- ResourceQuotas -->
+                <section id="view-resourcequotas" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th class="no-sort">Usage vs. hard limit</th></tr></thead>
+                            <tbody id="resourcequotas-body"></tbody></table>
+                        <p class="empty-inline" id="resourcequotas-empty" hidden>No resource quotas in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- LimitRanges -->
+                <section id="view-limitranges" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Rules</th><th>Applies to</th></tr></thead>
+                            <tbody id="limitranges-body"></tbody></table>
+                        <p class="empty-inline" id="limitranges-empty" hidden>No limit ranges in this namespace.</p>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <!-- ============ Detail drawer ============ -->
+        <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+        <aside id="drawer" class="drawer" hidden>
+            <header class="drawer-head">
+                <div class="drawer-title">
+                    <span id="drawer-kind" class="drawer-kind"></span>
+                    <h2 id="drawer-name"></h2>
+                    <span id="drawer-ns" class="drawer-ns"></span>
+                </div>
+                <div class="drawer-head-actions">
+                    <button id="btn-scale" class="btn btn-secondary btn-sm" title="Scale" hidden>Scale</button>
+                    <button id="btn-restart" class="btn btn-secondary btn-sm" title="Restart" hidden>Restart</button>
+                    <button id="btn-delete" class="btn btn-danger btn-sm" title="Delete">Delete</button>
+                    <button id="drawer-close" class="icon-btn" title="Close" aria-label="Close the detail panel">✕</button>
+                </div>
+            </header>
+
+            <div class="drawer-tabs">
+                <button class="drawer-tab active" data-dtab="details">Details</button>
+                <button class="drawer-tab" data-dtab="yaml">YAML</button>
+                <button class="drawer-tab" id="drawer-tab-logs" data-dtab="logs" hidden>Logs</button>
+                <button class="drawer-tab" id="drawer-tab-terminal" data-dtab="terminal" hidden>Terminal</button>
+                <button class="drawer-tab" id="drawer-tab-forward" data-dtab="forward" hidden>Port Forward</button>
+                <button class="drawer-tab drawer-tab-ai" data-dtab="ai">
+                    <svg class="ico"><use href="#i-sparkle"/></svg>Ask AI
+                </button>
+            </div>
+
+            <!-- Details panel -->
+            <div id="dpanel-details" class="drawer-panel drawer-panel-scroll">
+                <div id="detail-meta"></div>
+                <div id="detail-relations"></div>
+                <h4 class="detail-section-title">Events</h4>
+                <table class="detail-events"><thead><tr><th>Type</th><th>Reason</th><th>Age</th><th>Message</th></tr></thead>
+                    <tbody id="detail-events-body"></tbody></table>
+                <p class="empty-inline" id="detail-events-empty" hidden>No events for this resource.</p>
+            </div>
+
+            <!-- YAML panel -->
+            <div id="dpanel-yaml" class="drawer-panel" hidden>
+                <div class="drawer-toolbar">
+                    <button id="btn-yaml-reload" class="btn btn-secondary btn-sm">↻ Reload</button>
+                    <button id="btn-yaml-diff" class="btn btn-secondary btn-sm">Diff</button>
+                    <button id="btn-yaml-save" class="btn btn-primary btn-sm">Save changes</button>
+                    <span id="yaml-status" class="save-status"></span>
+                </div>
+                <!-- CodeMirror mounts into this host; it is not a textarea, so read
+                     and write it through the editor handle in main.js, not .value -->
+                <div id="yaml-editor" class="yaml-host yaml-host-fill"></div>
+                <pre id="yaml-diff" class="yaml-diff" hidden></pre>
+            </div>
+
+            <!-- Logs panel -->
+            <div id="dpanel-logs" class="drawer-panel" hidden>
+                <div class="drawer-toolbar">
+                    <label class="logs-container-label">Container
+                        <select id="logs-container"></select>
+                    </label>
+                    <label class="logs-follow-label"><input type="checkbox" id="logs-follow"> Follow</label>
+                    <input type="text" id="logs-search" class="logs-search" placeholder="Filter lines…">
+                    <button id="btn-logs-reload" class="btn btn-secondary btn-sm">↻ Reload</button>
+                    <button id="btn-logs-download" class="btn btn-secondary btn-sm">⬇ Download</button>
+                </div>
+                <pre id="logs-view" class="logs-view"></pre>
+            </div>
+
+            <!-- Terminal panel (Pod) -->
+            <div id="dpanel-terminal" class="drawer-panel" hidden>
+                <div class="drawer-toolbar">
+                    <label class="logs-container-label">Container
+                        <select id="term-container"></select>
+                    </label>
+                    <label class="logs-container-label">Shell
+                        <select id="term-shell">
+                            <option value="/bin/sh">/bin/sh</option>
+                            <option value="/bin/bash">/bin/bash</option>
+                            <option value="/bin/ash">/bin/ash</option>
+                        </select>
+                    </label>
+                    <button id="btn-term-start" class="btn btn-primary btn-sm">Connect</button>
+                    <button id="btn-term-stop" class="btn btn-secondary btn-sm" hidden>Disconnect</button>
+                    <span id="term-status" class="save-status"></span>
+                </div>
+                <pre id="term-view" class="logs-view term-view"></pre>
+                <div class="term-input-row">
+                    <span class="term-prompt">$</span>
+                    <input type="text" id="term-input" class="term-input" placeholder="Type a command and press Enter…" autocomplete="off" spellcheck="false" disabled>
+                </div>
+            </div>
+
+            <!-- Port Forward panel (Pod/Service) -->
+            <div id="dpanel-forward" class="drawer-panel drawer-panel-scroll">
+                <div class="pf-form">
+                    <label>Remote port
+                        <input type="number" id="pf-remote" class="pf-input" placeholder="e.g. 80" min="1" max="65535">
+                    </label>
+                    <label>Local port <span class="pf-hint">(0 = auto)</span>
+                        <input type="number" id="pf-local" class="pf-input" value="0" min="0" max="65535">
+                    </label>
+                    <button id="btn-pf-start" class="btn btn-primary btn-sm">Start forward</button>
+                </div>
+                <p id="pf-error" class="error" hidden></p>
+                <h4 class="detail-section-title">Active forwards</h4>
+                <div id="pf-list" class="pf-list"></div>
+                <p class="empty-inline" id="pf-empty" hidden>No active port forwards for this resource.</p>
+            </div>
+
+            <!-- Ask AI panel — a conversation grounded in this resource's live state -->
+            <div id="dpanel-ai" class="drawer-panel ai-panel" hidden>
+                <header class="ai-head">
+                    <div class="ai-head-main">
+                        <span class="ai-head-title">Grounded in this resource's live state</span>
+                        <div class="ai-context-chips" id="ai-context-chips"></div>
+                    </div>
+                    <div class="ai-head-side">
+                        <span class="ai-provider" id="ai-provider-badge"></span>
+                        <button id="btn-ai-settings" class="icon-btn" title="AI settings" aria-label="Open AI settings">
+                            <svg class="ico"><use href="#i-settings"/></svg>
+                        </button>
+                    </div>
+                </header>
+
+                <div id="ai-thread" class="ai-thread"></div>
+
+                <form id="ai-composer" class="ai-composer">
+                    <textarea id="ai-input" class="ai-input no-enter-submit" rows="1"
+                              placeholder="Ask about this resource…" spellcheck="false"></textarea>
+                    <div class="ai-composer-side">
+                        <button type="submit" id="btn-ai-send" class="btn btn-primary btn-sm">Ask</button>
+                        <button type="button" id="btn-ai-reset" class="btn btn-secondary btn-sm" hidden>New chat</button>
+                    </div>
+                    <p class="ai-composer-hint">
+                        <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line ·
+                        answers can be wrong — verify before acting
+                    </p>
+                </form>
+            </div>
+        </aside>
+
+        <!-- ============ Bulk action bar ============ -->
+        <div id="bulk-bar" class="bulk-bar" hidden>
+            <span id="bulk-count" class="bulk-count">0 selected</span>
+            <button id="bulk-delete" class="btn btn-danger btn-sm">Delete selected</button>
+            <button id="bulk-clear" class="btn btn-secondary btn-sm">Clear</button>
+        </div>
+
+        <!-- ============ Row actions menu ============ -->
+        <div id="row-menu" class="row-menu" hidden></div>
+
+        <!-- ============ Command palette (Ctrl+K) ============ -->
+        <div id="palette-backdrop" class="palette-backdrop" hidden></div>
+        <div id="palette" class="palette" hidden role="dialog" aria-modal="true">
+            <div class="palette-search">
+                <span class="palette-ico">⌘</span>
+                <input id="palette-input" class="palette-input" type="text" placeholder="Jump to a resource, namespace, cluster, or action…" autocomplete="off" spellcheck="false">
+                <span class="palette-esc">Esc</span>
+            </div>
+            <div id="palette-list" class="palette-list"></div>
+            <p id="palette-empty" class="palette-empty" hidden>No matches.</p>
+        </div>
+
+        <!-- ============ Generic modal (scale / create / import) ============ -->
+        <div id="modal-backdrop" class="modal-backdrop" hidden></div>
+        <div id="modal" class="modal" hidden role="dialog" aria-modal="true">
+            <header class="modal-head">
+                <h2 id="modal-title">Modal</h2>
+                <button id="modal-close" class="icon-btn" title="Close" aria-label="Close this dialog">✕</button>
+            </header>
+            <div id="modal-body" class="modal-body"></div>
+            <p id="modal-error" class="error" hidden></p>
+            <footer class="modal-foot">
+                <button id="modal-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+                <!-- Optional secondary action, e.g. Import YAML's dry-run Preview.
+                     Shown only when openModal() is given an extra action. -->
+                <button id="modal-extra" class="btn btn-secondary btn-sm" hidden></button>
+                <button id="modal-ok" class="btn btn-primary btn-sm">OK</button>
+            </footer>
+        </div>
+
+        <!-- ============ Stackable alert/confirm dialog (replaces native alert/confirm) ============ -->
+        <div id="dialog-backdrop" class="dialog-backdrop" hidden></div>
+        <div id="dialog" class="dialog" hidden role="alertdialog" aria-modal="true">
+            <header class="dialog-head">
+                <span id="dialog-icon" class="dialog-icon">💬</span>
+                <h2 id="dialog-title">Notice</h2>
+            </header>
+            <div id="dialog-message" class="dialog-message"></div>
+            <footer class="dialog-foot">
+                <button id="dialog-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+                <button id="dialog-ok" class="btn btn-primary btn-sm">OK</button>
+            </footer>
+        </div>
+    </div>
+</div>
+<script src="./src/main.js" type="module"></script>
+</body>
+</html>
