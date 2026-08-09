@@ -106,6 +106,25 @@
 
     <!-- ============ DASHBOARD ============ -->
     <div id="dashboard" class="dashboard" hidden>
+        <nav class="app-rail" aria-label="Primary navigation">
+            <div class="rail-brand" aria-label="Kubby">
+                <span class="rail-brand-mark">K</span>
+            </div>
+            <div class="rail-nav">
+                <button class="rail-button active" data-rail-view="overview" title="Overview" aria-label="Overview"><svg class="ico"><use href="#i-overview"/></svg></button>
+                <button class="rail-button" data-rail-view="pods" title="Workloads" aria-label="Workloads"><svg class="ico"><use href="#i-pods"/></svg></button>
+                <button class="rail-button" data-rail-view="traffic" title="Network" aria-label="Network"><svg class="ico"><use href="#i-traffic"/></svg></button>
+                <button class="rail-button" data-rail-view="configmaps" title="Configuration" aria-label="Configuration"><svg class="ico"><use href="#i-configmaps"/></svg></button>
+                <button class="rail-button" data-rail-view="pvs" title="Storage" aria-label="Storage"><svg class="ico"><use href="#i-pvs"/></svg></button>
+                <button class="rail-button" data-rail-view="roles" title="Access" aria-label="Access"><svg class="ico"><use href="#i-roles"/></svg></button>
+                <button class="rail-button" data-rail-view="helm" title="Ecosystem" aria-label="Ecosystem"><svg class="ico"><use href="#i-helm"/></svg></button>
+            </div>
+            <div class="rail-bottom">
+                <button class="rail-button" data-rail-action="theme" title="Toggle light or dark theme" aria-label="Toggle light or dark theme"><svg class="ico theme-moon"><use href="#i-moon"/></svg><svg class="ico theme-sun"><use href="#i-sun"/></svg></button>
+                <button class="rail-button" data-rail-action="settings" title="Settings" aria-label="Settings"><svg class="ico"><use href="#i-settings"/></svg></button>
+            </div>
+        </nav>
+
         <aside class="sidebar">
             <div class="brand">
                 <span class="brand-logo">⎈</span>
@@ -204,20 +223,16 @@
 
         <div class="main">
             <header class="topbar">
-                <div class="topbar-left">
-                    <h1 id="page-title">Overview</h1>
-                    <span id="ns-scope" class="ns-scope"></span>
-                </div>
+                <button id="btn-command-palette" class="command-search" type="button">
+                    <svg class="view-search-ico"><use href="#i-search"/></svg>
+                    <span>Search resources, actions, or commands</span>
+                    <kbd>Ctrl K</kbd>
+                </button>
                 <div class="topbar-actions">
-                    <div id="view-search" class="view-search" hidden>
-                        <svg class="view-search-ico"><use href="#i-search"/></svg>
-                        <input id="view-filter" type="text" placeholder="Filter…" autocomplete="off" spellcheck="false">
-                        <span id="view-count" class="view-count"></span>
-                    </div>
                     <button id="btn-create" class="btn btn-primary btn-sm btn-icon"><svg class="btn-ico"><use href="#i-plus"/></svg>Create</button>
-                    <button id="btn-import" class="btn btn-secondary btn-sm btn-icon"><svg class="btn-ico"><use href="#i-upload"/></svg>Import</button>
+                    <button id="btn-import" class="btn btn-secondary btn-sm btn-icon"><svg class="btn-ico"><use href="#i-upload"/></svg>Import YAML</button>
                     <span class="topbar-sep"></span>
-                    <button id="btn-live" class="icon-btn" title="Auto-refresh (Live)" aria-label="Toggle auto-refresh"><svg class="btn-ico live-play"><use href="#i-play"/></svg><svg class="btn-ico live-pause"><use href="#i-pause"/></svg></button>
+                    <button id="btn-live" class="icon-btn live-button" title="Auto-refresh (Live)" aria-label="Toggle auto-refresh"><svg class="btn-ico live-play"><use href="#i-play"/></svg><svg class="btn-ico live-pause"><use href="#i-pause"/></svg><span>Live</span></button>
                     <button id="btn-refresh" class="icon-btn" title="Refresh" aria-label="Refresh"><svg class="btn-ico"><use href="#i-refresh"/></svg></button>
                     <button id="btn-theme" class="icon-btn" title="Toggle light/dark" aria-label="Toggle light or dark theme"><svg class="btn-ico theme-moon"><use href="#i-moon"/></svg><svg class="btn-ico theme-sun"><use href="#i-sun"/></svg></button>
                     <span class="topbar-sep"></span>
@@ -225,17 +240,84 @@
                 </div>
             </header>
 
+            <section class="page-heading" aria-labelledby="page-title">
+                <div class="page-heading-copy">
+                    <span id="page-eyebrow" class="page-eyebrow">Workspace</span>
+                    <div class="page-title-row">
+                        <h1 id="page-title">Overview</h1>
+                        <span id="ns-scope" class="ns-scope"></span>
+                    </div>
+                    <p id="page-subtitle">Live health and capacity across the connected cluster.</p>
+                </div>
+                <div id="view-search" class="view-search" hidden>
+                    <svg class="view-search-ico"><use href="#i-search"/></svg>
+                    <input id="view-filter" type="text" placeholder="Filter this view…" autocomplete="off" spellcheck="false">
+                    <span id="view-count" class="view-count"></span>
+                </div>
+            </section>
+
             <p id="dash-error" class="error" hidden></p>
 
             <main id="content" class="content">
                 <!-- Overview -->
                 <section id="view-overview" class="view">
+                    <div class="overview-hero">
+                        <article class="health-card">
+                            <div class="health-card-head">
+                                <div>
+                                    <span class="card-kicker">Live workload health</span>
+                                    <h2>Cluster health</h2>
+                                </div>
+                                <span id="cluster-health-badge" class="health-state">Checking…</span>
+                            </div>
+                            <div class="health-card-body">
+                                <div class="health-score-wrap">
+                                    <strong id="cluster-health-score" class="health-score">–</strong><span>%</span>
+                                    <p id="cluster-health-summary">Loading pod status…</p>
+                                </div>
+                                <div class="health-progress-wrap">
+                                    <div class="health-progress-meta">
+                                        <span>Healthy pods</span>
+                                        <strong id="cluster-health-ratio">– / –</strong>
+                                    </div>
+                                    <div class="health-progress" aria-hidden="true"><span id="cluster-health-fill"></span></div>
+                                    <p id="cluster-health-note">Calculated from the current pod status returned by the cluster.</p>
+                                </div>
+                            </div>
+                        </article>
+
+                        <article class="capacity-card">
+                            <div class="health-card-head">
+                                <div>
+                                    <span class="card-kicker">Current utilization</span>
+                                    <h2>Capacity</h2>
+                                </div>
+                                <span id="capacity-node-count" class="capacity-node-count">Loading…</span>
+                            </div>
+                            <div class="capacity-rings">
+                                <div class="capacity-metric">
+                                    <div id="capacity-cpu-ring" class="capacity-ring" style="--value:0">
+                                        <span>CPU</span><strong id="capacity-cpu-pct">–%</strong>
+                                    </div>
+                                    <small id="capacity-cpu-value">Waiting for metrics</small>
+                                </div>
+                                <div class="capacity-metric">
+                                    <div id="capacity-memory-ring" class="capacity-ring" style="--value:0">
+                                        <span>Memory</span><strong id="capacity-memory-pct">–%</strong>
+                                    </div>
+                                    <small id="capacity-memory-value">Waiting for metrics</small>
+                                </div>
+                            </div>
+                            <p id="capacity-hint" class="capacity-hint" hidden>Metrics Server is unavailable. Resource browsing still works normally.</p>
+                        </article>
+                    </div>
+
                     <div class="stat-cards">
-                        <div class="stat-card"><div class="stat-value" id="stat-nodes">–</div><div class="stat-label">Nodes</div></div>
-                        <div class="stat-card"><div class="stat-value" id="stat-namespaces">–</div><div class="stat-label">Namespaces</div></div>
-                        <div class="stat-card"><div class="stat-value" id="stat-pods">–</div><div class="stat-label">Pods</div></div>
-                        <div class="stat-card"><div class="stat-value" id="stat-deployments">–</div><div class="stat-label">Deployments</div></div>
-                        <div class="stat-card stat-card-error"><div class="stat-value" id="stat-errors">–</div><div class="stat-label">Pods with errors</div></div>
+                        <div class="stat-card"><span class="stat-icon stat-icon-blue"><svg class="ico"><use href="#i-nodes"/></svg></span><div><div class="stat-label">Nodes</div><div class="stat-value" id="stat-nodes">–</div><div class="stat-meta">Cluster capacity</div></div></div>
+                        <div class="stat-card"><span class="stat-icon stat-icon-purple"><svg class="ico"><use href="#i-namespaces"/></svg></span><div><div class="stat-label">Namespaces</div><div class="stat-value" id="stat-namespaces">–</div><div class="stat-meta">Logical scopes</div></div></div>
+                        <div class="stat-card"><span class="stat-icon stat-icon-teal"><svg class="ico"><use href="#i-pods"/></svg></span><div><div class="stat-label">Pods</div><div class="stat-value" id="stat-pods">–</div><div class="stat-meta">Across all namespaces</div></div></div>
+                        <div class="stat-card"><span class="stat-icon stat-icon-indigo"><svg class="ico"><use href="#i-deployments"/></svg></span><div><div class="stat-label">Deployments</div><div class="stat-value" id="stat-deployments">–</div><div class="stat-meta">Managed workloads</div></div></div>
+                        <div class="stat-card stat-card-error"><span class="stat-icon stat-icon-error">!</span><div><div class="stat-label">Errors</div><div class="stat-value" id="stat-errors">–</div><div class="stat-meta">Requires attention</div></div></div>
                     </div>
                     <div class="card">
                         <div class="card-head"><h3>Node usage</h3><span class="nm-total" id="node-metrics-total"></span></div>
@@ -245,7 +327,7 @@
 
                     <div class="overview-grid">
                         <div class="card">
-                            <div class="card-head"><h3>Pods with errors</h3></div>
+                            <div class="card-head"><div><span class="card-kicker">Actionable now</span><h3>Attention needed</h3></div><button id="overview-ai-diagnose" class="btn btn-ai btn-sm" hidden><svg class="btn-ico"><use href="#i-sparkle"/></svg>Diagnose with AI</button></div>
                             <table><thead><tr><th>Namespace</th><th>Pod</th><th>Status</th><th>Restarts</th></tr></thead>
                                 <tbody id="overview-errors-body"></tbody></table>
                             <p class="empty-inline" id="overview-errors-empty" hidden>No pods are currently failing 🎉</p>

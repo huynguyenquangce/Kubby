@@ -1,5 +1,6 @@
 import './style.css';
 import './app.css';
+import './option-b.css';
 
 import { createYamlEditor, parseApplyFailures } from './editor.js';
 
@@ -141,6 +142,37 @@ const PAGE_TITLES = {
     helmrepos: 'Helm Repositories',
     resourcequotas: 'ResourceQuotas',
     limitranges: 'LimitRanges',
+};
+
+const PAGE_SUBTITLES = {
+    overview: 'Live health and capacity across the connected cluster.',
+    nodes: 'Inspect cluster machines, readiness, versions, and scheduled workloads.',
+    namespaces: 'Browse logical scopes and the resources running inside them.',
+    sizing: 'Compare requested resources with live usage and find waste or risk.',
+    pods: 'Monitor workload health, resource usage, logs, terminals, and events.',
+    deployments: 'Review rollout health and safely scale, restart, pause, or roll back.',
+    services: 'Inspect stable network endpoints and the workloads behind them.',
+    traffic: 'Trace ingress and service paths through to their backing pods.',
+    configmaps: 'Browse application configuration stored in the cluster.',
+    secrets: 'Inspect secret metadata and reveal values only when explicitly requested.',
+    statefulsets: 'Monitor ordered, stateful workloads and rolling restarts.',
+    daemonsets: 'Review node-wide workloads and their rollout health.',
+    jobs: 'Track one-time workloads and completion status.',
+    cronjobs: 'Inspect schedules, suspension state, and trigger jobs safely.',
+    ingresses: 'Review external routes, hosts, and ingress configuration.',
+    pvcs: 'Inspect namespaced storage claims and their binding state.',
+    serviceaccounts: 'Review workload identities in the selected scope.',
+    pvs: 'Inspect cluster-wide volumes, claims, and storage classes.',
+    storageclasses: 'Review dynamic provisioning and reclaim policies.',
+    roles: 'Inspect namespaced access rules.',
+    rolebindings: 'See which subjects receive namespaced permissions.',
+    clusterroles: 'Inspect cluster-wide access rules.',
+    clusterrolebindings: 'See which subjects receive cluster-wide permissions.',
+    crds: 'Browse the custom APIs installed in this cluster.',
+    helm: 'Manage releases, values, history, tests, and upgrades.',
+    helmrepos: 'Manage chart repositories and browse available packages.',
+    resourcequotas: 'Review namespace resource limits and current usage.',
+    limitranges: 'Inspect default and enforced container resource policies.',
 };
 
 const NAMESPACED_VIEWS = new Set([
@@ -349,6 +381,13 @@ document.querySelectorAll('.nav-item').forEach((btn) => {
     btn.appendChild(span);
 });
 
+document.querySelectorAll('[data-rail-view]').forEach((btn) => {
+    btn.addEventListener('click', () => selectView(btn.dataset.railView));
+});
+document.querySelector('[data-rail-action="theme"]')?.addEventListener('click', () => $('btn-theme').click());
+document.querySelector('[data-rail-action="settings"]')?.addEventListener('click', () => $('btn-settings').click());
+$('btn-command-palette').addEventListener('click', openPalette);
+
 // ---- Collapsible sidebar groups (accordion) ----
 const NAV_COLLAPSE_KEY = 'kubby-nav-collapsed';
 
@@ -510,8 +549,13 @@ function selectView(view) {
     revealNavSection(view);
     const sectionId = viewSectionId(view);
     document.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+    updateRailActive(view);
     document.querySelectorAll('.view').forEach((v) => (v.hidden = v.id !== sectionId));
     $('page-title').textContent = PAGE_TITLES[view] ?? view;
+    $('page-subtitle').textContent = PAGE_SUBTITLES[view]
+        ?? (String(view).startsWith('custom:') ? 'Browse this custom API and inspect its live resources.' : 'Browse and manage live cluster resources.');
+    const navItem = document.querySelector(`.nav-item[data-view="${view}"]`);
+    $('page-eyebrow').textContent = navItem?.closest('.nav-section')?.querySelector('.nav-group span')?.textContent ?? 'Workspace';
     const createKind = VIEW_KIND[view];
     $('btn-create').hidden = !createKind;
     // Warm the permission probe for this view's kind — the row menus opened from
@@ -532,6 +576,15 @@ function selectView(view) {
     $('view-filter').value = '';
     updateNsScope();
     refreshCurrentView();
+}
+
+function updateRailActive(view) {
+    const section = document.querySelector(`.nav-item[data-view="${view}"]`)?.closest('.nav-section')?.dataset.section;
+    const railView = ({ cluster: 'overview', workloads: 'pods', network: 'traffic', config: 'configmaps', storage: 'pvs', access: 'roles', ecosystem: 'helm', custom: 'helm' })[section]
+        ?? 'overview';
+    document.querySelectorAll('[data-rail-view]').forEach((button) => {
+        button.classList.toggle('active', button.dataset.railView === railView);
+    });
 }
 
 function updateNsScope() {
@@ -747,6 +800,7 @@ function loadOverview() {
             $('stat-pods').textContent = pods?.length ?? 0;
             $('stat-deployments').textContent = deployments?.length ?? 0;
             $('stat-errors').textContent = errored.length;
+            updateClusterHealth(pods ?? [], errored);
 
             const body = $('overview-errors-body');
             body.innerHTML = '';
@@ -757,8 +811,44 @@ function loadOverview() {
                     { isError: true, actions: false, ref: { kind: 'Pod', namespace: p.namespace, name: p.name, isPod: true } },
                 ));
             }
+            const diagnose = $('overview-ai-diagnose');
+            diagnose.hidden = errored.length === 0;
+            diagnose.onclick = errored.length === 0 ? null : () => {
+                const pod = errored[0];
+                openDrawer({ kind: 'Pod', namespace: pod.namespace, name: pod.name, isPod: true, tab: 'ai' });
+            };
         })
-        .catch(showDashError);
+        .catch((err) => { updateClusterHealth(null, []); showDashError(err); });
+}
+
+function updateClusterHealth(pods, errored) {
+    const score = $('cluster-health-score');
+    const badgeEl = $('cluster-health-badge');
+    const fill = $('cluster-health-fill');
+    const total = pods?.length ?? 0;
+    if (!pods) {
+        score.textContent = '–';
+        $('cluster-health-summary').textContent = 'Cluster health could not be loaded.';
+        $('cluster-health-ratio').textContent = '– / –';
+        fill.style.width = '0%';
+        badgeEl.textContent = 'Unavailable';
+        badgeEl.className = 'health-state health-state-warn';
+        return;
+    }
+    const unhealthy = errored?.length ?? 0;
+    const healthy = Math.max(total - unhealthy, 0);
+    const percent = total > 0 ? Math.round((healthy / total) * 100) : 100;
+    score.textContent = String(percent);
+    $('cluster-health-summary').textContent = total > 0
+        ? `${healthy} of ${total} pods are healthy`
+        : 'No pods are running in the cluster yet';
+    $('cluster-health-ratio').textContent = `${healthy} / ${total}`;
+    fill.style.width = `${percent}%`;
+    $('cluster-health-note').textContent = unhealthy > 0
+        ? `${unhealthy} pod${unhealthy === 1 ? '' : 's'} need attention. Open a row below for live evidence.`
+        : 'Calculated from live pod status returned by the connected cluster.';
+    badgeEl.textContent = unhealthy === 0 ? 'Healthy' : (percent >= 90 ? `${unhealthy} warning${unhealthy === 1 ? '' : 's'}` : 'Needs attention');
+    badgeEl.className = `health-state ${unhealthy === 0 ? 'health-state-ok' : (percent >= 90 ? 'health-state-warn' : 'health-state-error')}`;
 }
 
 function loadTopPods() {
@@ -804,6 +894,7 @@ function loadNodeMetrics() {
                 box.innerHTML = '';
                 total.textContent = '';
                 hint.hidden = false;
+                updateCapacitySummary(null);
                 return;
             }
             hint.hidden = true;
@@ -814,6 +905,7 @@ function loadNodeMetrics() {
                 cpu: a.cpu + (m.cpuMilli || 0), cpuCap: a.cpuCap + (m.cpuCapacity || 0),
                 mem: a.mem + (m.memMi || 0), memCap: a.memCap + (m.memCapacity || 0),
             }), { cpu: 0, cpuCap: 0, mem: 0, memCap: 0 });
+            updateCapacitySummary(metrics, sum);
             total.textContent = `${metrics.length} nodes · CPU ${pct(sum.cpu, sum.cpuCap)}% of ${fmtCores(sum.cpuCap)} cores`
                 + ` · Memory ${pct(sum.mem, sum.memCap)}% of ${fmtMem(sum.memCap)}`;
 
@@ -826,7 +918,33 @@ function loadNodeMetrics() {
             $('node-metrics').innerHTML = '';
             $('node-metrics-total').textContent = '';
             $('node-metrics-hint').hidden = false;
+            updateCapacitySummary(null);
         });
+}
+
+function updateCapacitySummary(metrics, sum) {
+    const hint = $('capacity-hint');
+    if (!metrics || !sum) {
+        $('capacity-node-count').textContent = 'Metrics unavailable';
+        $('capacity-cpu-pct').textContent = '–%';
+        $('capacity-memory-pct').textContent = '–%';
+        $('capacity-cpu-value').textContent = 'Install Metrics Server for live usage';
+        $('capacity-memory-value').textContent = 'Resource capacity is still available per node';
+        $('capacity-cpu-ring').style.setProperty('--value', 0);
+        $('capacity-memory-ring').style.setProperty('--value', 0);
+        hint.hidden = false;
+        return;
+    }
+    const cpuPercent = pct(sum.cpu, sum.cpuCap);
+    const memoryPercent = pct(sum.mem, sum.memCap);
+    $('capacity-node-count').textContent = `${metrics.length} node${metrics.length === 1 ? '' : 's'}`;
+    $('capacity-cpu-pct').textContent = `${cpuPercent}%`;
+    $('capacity-memory-pct').textContent = `${memoryPercent}%`;
+    $('capacity-cpu-value').textContent = `${fmtCores(sum.cpu)} of ${fmtCores(sum.cpuCap)} cores`;
+    $('capacity-memory-value').textContent = `${fmtMem(sum.mem)} of ${fmtMem(sum.memCap)}`;
+    $('capacity-cpu-ring').style.setProperty('--value', Math.min(cpuPercent, 100));
+    $('capacity-memory-ring').style.setProperty('--value', Math.min(memoryPercent, 100));
+    hint.hidden = true;
 }
 
 function nodeUsageCard(m) {
