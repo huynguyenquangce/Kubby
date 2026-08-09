@@ -698,6 +698,17 @@ tbody tr.selected:hover { background: #e0ebff; }
 .install-form { display: flex; gap: 0.75rem; flex-wrap: wrap; }
 .install-form label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.8rem; color: var(--muted); }
 
+/* Settings modal (AI provider config): fixed-width .pf-input is too narrow
+   here (placeholders like "leave blank for the default" clip), so this form
+   gets its own responsive grid instead of the .install-form flex-wrap row. */
+.settings-ai-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem 1rem; }
+.settings-ai-form label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.8rem; color: var(--muted); }
+.settings-ai-form .pf-input { width: 100%; }
+.settings-ai-form .settings-field-full { grid-column: 1 / -1; }
+@media (max-width: 480px) {
+    .settings-ai-form { grid-template-columns: 1fr; }
+}
+
 /* Clickable external link (opens system browser via Wails runtime) */
 .ext-link { color: var(--blue); cursor: pointer; word-break: break-all; }
 .ext-link:hover { text-decoration: underline; }

@@ -3951,7 +3951,7 @@ function openSettingsModal() {
                 to the provider you pick here — and nothing else. Your key is stored only on this machine, in
                 <code>%AppData%/kubby/ai.json</code>.
             </p>
-            <div class="install-form" style="margin-top:0.7rem">
+            <div class="settings-ai-form" style="margin-top:0.7rem">
                 <label>Provider
                     <select id="ai-provider" class="pf-input">
                         <option value="">— Choose one —</option>
@@ -3963,7 +3963,7 @@ function openSettingsModal() {
                 <label>Model <input type="text" id="ai-model" class="pf-input no-enter-submit" placeholder="leave blank for the default"></label>
                 <label id="ai-endpoint-wrap">Endpoint <input type="text" id="ai-endpoint" class="pf-input no-enter-submit" placeholder="leave blank for the default"></label>
                 <label id="ai-key-wrap">API key <input type="password" id="ai-key" class="pf-input no-enter-submit" autocomplete="off" placeholder="stored locally, never shown again"></label>
-                <label>Answer language
+                <label class="settings-field-full">Answer language
                     <select id="ai-language" class="pf-input">
                         <option value="auto">Match the question</option>
                         <option value="en">Always English</option>
