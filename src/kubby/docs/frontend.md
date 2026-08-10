@@ -171,6 +171,14 @@ came out double-spaced. Both diff renderers now join with `''` — see the comme
 Icons are a single inline **SVG sprite** in `index.html`, referenced with
 `<use href="#i-…">`.
 
+## Brand assets
+
+`frontend/src/assets/images/kubby-mark.svg` is the canonical K-Cube brand mark
+used by the Welcome screen, app rail, sidebar, development favicon, and root
+README. Keep the mark vector-based in the UI; `build/appicon.png` and
+`build/windows/icon.ico` are generated raster derivatives for Wails packaging.
+Do not replace the mark with the concept-board raster or the old Wails logo.
+
 ## Chrome
 
 - Sidebar groups are an **accordion**, collapsed state persisted in `localStorage`.

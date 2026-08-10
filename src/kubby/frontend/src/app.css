@@ -204,7 +204,7 @@ select:focus, textarea:focus { outline: 2px solid var(--blue); outline-offset: -
     justify-content: center;
 }
 .welcome-brand h1 { margin: 0; font-size: 1.7rem; letter-spacing: -0.02em; }
-.brand-logo { color: var(--blue); font-size: 1.6rem; }
+.brand-logo { display: block; object-fit: contain; }
 
 .welcome-sub {
     text-align: center;

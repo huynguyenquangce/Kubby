@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="src/kubby/frontend/src/assets/images/kubby-mark.svg" alt="Kubby K-Cube logo" width="104">
+
 # Kubby
 
 ### A personal Kubernetes desktop app that helps you see, understand, and operate your cluster.
