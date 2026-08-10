@@ -97,26 +97,16 @@ Defaults to `$KUBECONFIG` or `~/.kube/config`; override with
 **Adding a feature means adding its CLI command.** A backend feature with no CLI
 entry point cannot be checked without a human driving the GUI.
 
-## Build checks
+## Build and environment
 
-```powershell
-go build ./... ; go vet ./...        # fast, no frontend step
-go test ./...                        # the one test file
-gofmt -l internal/ cmd/ *.go         # note: some pre-existing files are unformatted
-cd frontend ; npx esbuild src/main.js --bundle --outfile=NUL   # JS syntax + imports
-wails build                          # full — regenerates frontend/wailsjs bindings
-```
+Environment preparation, dependency installation, source checks, full Wails
+builds, artifact verification, and stale-binary cleanup are owned by the
+repository-level **[build guide](../../../docs/BUILD.md)**. Do not duplicate
+those commands here.
 
-**`go build` here is slow** (tens of seconds, sometimes over two minutes) because a
-corporate security agent scans each newly linked binary. When running several CLI
-checks, build once and reuse the binary:
-
-```powershell
-go build -o kcli.exe ./cmd/kubby-cli
-./kcli.exe counts --kubeconfig <path> --context <ctx>
-```
-
-A `go run` that seems to hang is usually still linking.
+This document owns behavioural verification after the source can build:
+automated tests, version diagnostics, `kubby-cli` checks, real-cluster setup,
+and the manual GUI limits below.
 
 ## GUI verification is not reliable from a headless session
 
@@ -133,10 +123,10 @@ cross-checking every `$('id')` reference in `main.js` against the ids in
 
 ## This machine
 
-- **Windows native** has Go, Node.js, the Wails CLI and WebView2. This is where the
-  app is built and run (`wails build` / `wails dev`) — Wails' WebView is
-  Windows-native.
-- **WSL2 (Ubuntu-22.04)** runs Docker + kind for the local test cluster
+- **Windows native:** probe Go, Node.js, Wails CLI and WebView2 before selecting
+  it as the build host; do not rely on a stale machine note.
+- **WSL2:** supports full Linux Wails builds when GTK/WebKit development packages
+  are installed, and runs Docker + kind for the local test cluster
   (`kind-kubby-dev`). WSL2's localhost forwarding makes the cluster's API server
   (`https://127.0.0.1:<port>`) reachable from the Windows-side app. Export its
   kubeconfig with `kind get kubeconfig --name kubby-dev` and point Kubby at that

@@ -8,3 +8,8 @@ to keep current.
 
 Each branch is self-contained: what it owns, the decisions behind it, the traps that
 have already caused bugs, and how to verify a change to it.
+
+Repository-level product and workflow documents deliberately stay in the root
+[`docs/`](../../../docs/) directory. In particular,
+[`docs/BUILD.md`](../../../docs/BUILD.md) is the only build procedure; feature
+branches should link to it rather than copy dependency or build commands.

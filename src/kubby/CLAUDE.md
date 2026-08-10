@@ -30,19 +30,15 @@ the source of truth, and this file deliberately does not repeat it.
 
 ## Commands
 
-Run from `k8s/application/src/kubby/` on **native Windows** (not WSL):
+Use [`../../docs/BUILD.md`](../../docs/BUILD.md) as the only source for
+dependencies, host selection, test/build commands, Wails targets, artifact
+verification, and cleanup. Do not reconstruct or duplicate the build sequence
+in this file. After that environment is prepared, `wails dev` starts the local
+hot-reload loop.
 
-```powershell
-wails doctor                    # verify Go/Node/WebView2
-wails dev                       # hot-reload dev mode
-wails build                     # production build → build/bin/kubby.exe (regenerates bindings)
-go build ./... ; go vet ./...   # fast backend-only compile check
-go test ./...                   # ~35 tests: diagnostics, apply, access, right-sizing
-```
-
-The test suite is **one file**. Verification is `cmd/kubby-cli` against a real cluster —
-full command list, the local kind setup, and this machine's quirks (slow first
-build, blocked image pulls, unreliable GUI screenshots) are in
+Verification uses `cmd/kubby-cli` against a real cluster — the full command list,
+local kind setup, and this machine's quirks (slow linking, blocked image pulls,
+unreliable GUI screenshots) are in
 [`docs/verification.md`](docs/verification.md). **Read that before claiming a change
 works.**
 

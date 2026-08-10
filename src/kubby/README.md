@@ -14,35 +14,15 @@ A **personal Kubernetes desktop app**: open it, load a `kubeconfig`, and immedia
 
 ---
 
-## Requirements
+## Development and build
 
-| Tool | Purpose |
-|---|---|
-| [Go](https://go.dev) | Backend logic + Wails build |
-| [Node.js](https://nodejs.org) + npm | Frontend build (Vite) |
-| [Wails CLI](https://wails.io) v2 | `go install github.com/wailsapp/wails/v2/cmd/wails@latest` |
-| WebView2 Runtime | Pre-installed on Windows 11; verify with `wails doctor` |
+The canonical dependency and full-build procedure is maintained at the
+repository level in [`../../docs/BUILD.md`](../../docs/BUILD.md). It covers
+native PowerShell, WSL/Linux, Windows cross-builds, verification, and artifact
+cleanup. Build commands are intentionally not duplicated here.
 
-Check your environment:
-
-```bash
-wails doctor
-```
-
-## Run & build
-
-From `src/kubby/`:
-
-```bash
-wails dev      # hot-reload dev window (frontend reloads on save; restart for Go changes)
-wails build    # production build → build/bin/kubby.exe (double-click to run)
-```
-
-Backend-only compile check (fast, no frontend/npm step):
-
-```bash
-go build ./... && go vet ./...
-```
+After preparing the environment from that guide, use `wails dev` for the local
+hot-reload development loop.
 
 ## First use
 

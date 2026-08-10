@@ -7,7 +7,8 @@ Read this file, then **open only the branch you are working in**. That is the
 point of the split: a change to the Traffic view should not require loading the
 Helm or AI documentation into your head (or into a model's context).
 
-- *How to run and build* → [README.md](README.md)
+- *Build dependencies and commands* → [`../../docs/BUILD.md`](../../docs/BUILD.md)
+- *How to use the application* → [README.md](README.md)
 - *Why the project exists and what it must do* → [`../../docs/SPECIFICATION.md`](../../docs/SPECIFICATION.md)
 - *Commands and the working loop* → [CLAUDE.md](CLAUDE.md)
 
@@ -89,7 +90,7 @@ These are load-bearing everywhere. Each is explained in the branch that owns it.
 | [docs/helm.md](docs/helm.md) | Releases, repositories, Artifact Hub, dry-run previews | working on Helm |
 | [docs/frontend.md](docs/frontend.md) | View system, drawer, theme tokens, command palette, dialogs, CSS conventions | writing any UI |
 | [docs/performance.md](docs/performance.md) | The performance contract and how it was measured | adding anything that lists resources |
-| [docs/verification.md](docs/verification.md) | `kubby-cli`, the test file, **version & diagnostics**, the local kind cluster, this machine's environment quirks | about to check that your change works, or cutting a release |
+| [docs/verification.md](docs/verification.md) | `kubby-cli`, tests, **version & diagnostics**, the local kind cluster, and GUI verification limits | checking behaviour after the source builds |
 
 ## Directory map
 

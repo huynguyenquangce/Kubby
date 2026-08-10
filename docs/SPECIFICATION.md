@@ -1,7 +1,7 @@
 # Kubby — Product & Requirements Specification
 
 > **Status:** Living document · **Last reviewed:** July 2026
-> **Audience:** the project owner and any contributor. This document explains *why Kubby exists* and *what it must do*. For *how to run it* see [`../src/kubby/README.md`](../src/kubby/README.md); for *how it is built* see [`../src/kubby/ARCHITECTURE.md`](../src/kubby/ARCHITECTURE.md).
+> **Audience:** the project owner and any contributor. This document explains *why Kubby exists* and *what it must do*. Start at the repository [`README`](../README.md), use [`BUILD.md`](BUILD.md) for the canonical build procedure, and see [`../src/kubby/ARCHITECTURE.md`](../src/kubby/ARCHITECTURE.md) for implementation structure.
 
 ---
 
