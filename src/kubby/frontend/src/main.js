@@ -19,6 +19,7 @@ import { createRequestScopes } from './request-scope.js';
 import { createSerialWriter, validTerminalSize } from './terminal-io.js';
 import { createFrameScheduler, LineRingBuffer } from './log-buffer.js';
 import { lineDiff } from './line-diff.js';
+import { confirmedAction, summarizeLineChanges } from './confirmed-action.js';
 
 import {
     PickKubeconfigFile,
@@ -1925,7 +1926,7 @@ function exitDiffMode() {
     $('btn-yaml-diff').textContent = 'Diff';
 }
 
-$('btn-yaml-save').addEventListener('click', () => {
+$('btn-yaml-save').addEventListener('click', async () => {
     const scope = activeDrawerScope;
     const ref = scope?.ref;
     if (!scope || !ref || !isCurrentDrawerRequest(scope)
@@ -1937,17 +1938,35 @@ $('btn-yaml-save').addEventListener('click', () => {
     const text = drawerEditor().getValue();
     const ownerKey = yamlOwnerKey;
     const expectedCluster = $('cluster-select').value;
-    setYamlStatus('Saving…', '');
-    UpdateYAML(expectedCluster, ref.kind, ref.namespace, ref.name, text)
-        .then(() => {
-            if (!isCurrentDrawerRequest(scope) || yamlOwnerKey !== ownerKey) return;
-            setYamlStatus('Saved ✓', 'ok');
-            yamlOriginal = text;
-            refreshCurrentView();
-        })
-        .catch((err) => {
-            if (isCurrentDrawerRequest(scope) && yamlOwnerKey === ownerKey) setYamlStatus(errMsg(err), 'err');
-        });
+    const changed = summarizeLineChanges(lineDiff(yamlOriginal, text));
+    if (changed.added === 0 && changed.removed === 0) {
+        setYamlStatus('No changes', '');
+        return;
+    }
+    const where = ref.namespace ? ` in namespace “${ref.namespace}”` : '';
+    try {
+        await confirmedAction(
+            () => showConfirm(
+                `Update ${ref.kind} “${ref.name}”${where} on cluster “${expectedCluster}”?\n`
+                + `YAML diff: +${changed.added} / -${changed.removed} lines.`,
+                { title: `Save ${ref.kind} YAML`, icon: '✎', okText: 'Save' },
+            ),
+            async () => {
+                if (!isCurrentDrawerRequest(scope) || yamlOwnerKey !== ownerKey
+                    || $('cluster-select').value !== expectedCluster) {
+                    throw new Error('This YAML no longer belongs to the active cluster or resource. Reload it before saving.');
+                }
+                setYamlStatus('Saving…', '');
+                await UpdateYAML(expectedCluster, ref.kind, ref.namespace, ref.name, text);
+                if (!isCurrentDrawerRequest(scope) || yamlOwnerKey !== ownerKey) return;
+                setYamlStatus('Saved ✓', 'ok');
+                yamlOriginal = text;
+                refreshCurrentView();
+            },
+        );
+    } catch (err) {
+        if (isCurrentDrawerRequest(scope) && yamlOwnerKey === ownerKey) setYamlStatus(errMsg(err), 'err');
+    }
 });
 
 function setYamlStatus(text, cls) {
@@ -2509,10 +2528,10 @@ let activeModalScope = null;
 // and a CodeMirror instance left pointing at removed nodes leaks its listeners.
 let modalEditors = {};
 
-function mountModalEditor(id, { value = '', placeholder = '' } = {}) {
+function mountModalEditor(id, { value = '', placeholder = '', onChange } = {}) {
     const host = $(id);
     if (!host) return null;
-    const ed = createYamlEditor(host, { value, placeholder });
+    const ed = createYamlEditor(host, { value, placeholder, onChange });
     modalEditors[id] = ed;
     return ed;
 }
@@ -3270,14 +3289,36 @@ function deleteRef(ref) {
 }
 
 function pauseRef(ref, paused) {
-    SetDeploymentPaused(ref.namespace, ref.name, paused)
-        .then(() => refreshCurrentView())
+    const verb = paused ? 'Pause' : 'Resume';
+    const cluster = $('cluster-select').value;
+    confirmedAction(
+        () => showConfirm(
+            `${verb} rollout for Deployment “${ref.name}” in namespace “${ref.namespace}” on cluster “${cluster}”?`,
+            { title: `${verb} deployment`, icon: paused ? '⏸' : '▶', okText: verb },
+        ),
+        () => {
+            if ($('cluster-select').value !== cluster) throw new Error('The active cluster changed before the action started.');
+            return SetDeploymentPaused(ref.namespace, ref.name, paused);
+        },
+    )
+        .then((changed) => { if (changed) refreshCurrentView(); })
         .catch((err) => showError(errMsg(err)));
 }
 
 function nodeSchedule(ref, schedulable) {
-    SetNodeSchedulable(ref.name, schedulable)
-        .then(() => refreshCurrentView())
+    const verb = schedulable ? 'Uncordon' : 'Cordon';
+    const cluster = $('cluster-select').value;
+    confirmedAction(
+        () => showConfirm(
+            `${verb} Node “${ref.name}” on cluster “${cluster}”?`,
+            { title: `${verb} node`, icon: schedulable ? '🟢' : '🚫', okText: verb },
+        ),
+        () => {
+            if ($('cluster-select').value !== cluster) throw new Error('The active cluster changed before the action started.');
+            return SetNodeSchedulable(ref.name, schedulable);
+        },
+    )
+        .then((changed) => { if (changed) refreshCurrentView(); })
         .catch((err) => showError(errMsg(err)));
 }
 
@@ -3702,17 +3743,32 @@ function openHelmDetailModal(ref) {
     // Resources tab: live health of every object the release owns.
     loadHelmReleaseResources(ref, scope, resourcesBox);
 
-    runTestsButton.addEventListener('click', () => {
+    runTestsButton.addEventListener('click', async () => {
         const btn = runTestsButton;
-        btn.disabled = true; btn.textContent = 'Testing…';
-        HelmTest(ref.namespace, ref.name)
-            .then((out) => { if (isCurrentModalRequest(scope)) showAlert(out, { title: `Test results — ${ref.name}`, icon: '🧪' }); })
-            .catch((err) => { if (isCurrentModalRequest(scope)) showError(errMsg(err)); })
-            .finally(() => {
-                if (!isCurrentModalRequest(scope)) return;
-                btn.disabled = false;
-                btn.textContent = 'Run tests';
-            });
+        const cluster = $('cluster-select').value;
+        try {
+            await confirmedAction(
+                () => showConfirm(
+                    `Run Helm tests for release “${ref.name}” in namespace “${ref.namespace}” on cluster “${cluster}”?\n`
+                    + 'Test hooks may create or delete cluster resources.',
+                    { title: 'Run Helm tests', icon: '🧪', okText: 'Run tests' },
+                ),
+                async () => {
+                    if (!isCurrentModalRequest(scope) || $('cluster-select').value !== cluster) {
+                        throw new Error('The active cluster or release changed before the test started.');
+                    }
+                    btn.disabled = true; btn.textContent = 'Testing…';
+                    const out = await HelmTest(ref.namespace, ref.name);
+                    if (isCurrentModalRequest(scope)) showAlert(out, { title: `Test results — ${ref.name}`, icon: '🧪' });
+                },
+            );
+        } catch (err) {
+            if (isCurrentModalRequest(scope)) showError(errMsg(err));
+        } finally {
+            if (!isCurrentModalRequest(scope)) return;
+            btn.disabled = false;
+            btn.textContent = 'Run tests';
+        }
     });
 }
 
@@ -3967,10 +4023,19 @@ function openChartInstallModal(chart) {
     let valuesEditor = null;
     let defaultsLoading = false;
     let loadedDefaultsVersion = null;
+    let approvedPreview = null;
+    let okButton = null;
+    let statusBox = null;
+    const invalidatePreview = (message = '') => {
+        approvedPreview = null;
+        if (okButton) okButton.disabled = true;
+        if (message && statusBox) statusBox.textContent = message;
+    };
     const scope = openModal({
         title: `Install ${chart.name}`,
         ownerKey: modalOwner('chart-install', chart.repoURL, chartName),
         okText: 'Install',
+        okDisabled: true,
         bodyHtml: `<div class="install-form">
                 <label>Release name<input type="text" id="inst-name" class="pf-input" value="${esc(chartName)}"></label>
                 <label>Namespace<input type="text" id="inst-ns" class="pf-input" value="${esc(ns)}"></label>
@@ -3994,6 +4059,7 @@ function openChartInstallModal(chart) {
         onOpen: () => {
             valuesEditor = mountModalEditor('inst-values', {
                 placeholder: '# leave empty for chart defaults, or click “Load chart defaults”',
+                onChange: () => invalidatePreview('Values changed — preview again before installing.'),
             });
         },
         onOk: () => {
@@ -4004,7 +4070,11 @@ function openChartInstallModal(chart) {
             const ver = versionSelect.value.trim();
             const vals = valuesEditor.getValue();
             if (!name) return Promise.reject('Enter a release name.');
-            return HelmInstall(nsv, name, chart.repoURL, chartName, ver, vals)
+            if (!approvedPreview || approvedPreview.name !== name || approvedPreview.namespace !== nsv
+                || approvedPreview.version !== ver || approvedPreview.values !== vals) {
+                return Promise.reject('Preview this exact release, namespace, version, and values before installing.');
+            }
+            return HelmInstall(nsv, name, chart.repoURL, chartName, ver, vals, approvedPreview.digest)
                 .then(() => { selectView('helm'); loadSidebarCounts(); });
         },
     });
@@ -4017,9 +4087,9 @@ function openChartInstallModal(chart) {
     const valuesPane = $('inst-pane-values');
     const defaultsButton = $('inst-load-defaults');
     const previewButton = $('inst-preview');
-    const statusBox = $('inst-status');
+    statusBox = $('inst-status');
     const diffBox = $('inst-diff');
-    const okButton = $('modal-ok');
+    okButton = $('modal-ok');
     const installTabs = [...modalBody.querySelectorAll('.install-tab')];
 
     // Tabs: Values / README.
@@ -4042,7 +4112,7 @@ function openChartInstallModal(chart) {
         defaultsButton.disabled = false;
         defaultsButton.textContent = '↓ Load chart defaults';
         previewButton.disabled = false;
-        okButton.disabled = false;
+        invalidatePreview('Version changed — preview again before installing.');
         if (loadedDefaultsVersion !== null && loadedDefaultsVersion !== versionSelect.value.trim()) {
             valuesEditor.setValue('');
             loadedDefaultsVersion = null;
@@ -4075,12 +4145,14 @@ function openChartInstallModal(chart) {
             .finally(() => {
                 if (!isCurrentModalRequest(scope) || reqId !== defaultsReqId) return;
                 defaultsLoading = false;
-                okButton.disabled = false;
                 previewButton.disabled = false;
                 btn.disabled = false;
                 btn.textContent = '↓ Load chart defaults';
             });
     });
+
+    nameInput.addEventListener('input', () => invalidatePreview('Release name changed — preview again before installing.'));
+    namespaceInput.addEventListener('input', () => invalidatePreview('Namespace changed — preview again before installing.'));
 
     // Dry-run preview of the manifest this install would create (toggle on/off).
     let previewReqId = 0;
@@ -4095,14 +4167,31 @@ function openChartInstallModal(chart) {
             return;
         }
         const reqId = ++previewReqId;
+        approvedPreview = null;
+        okButton.disabled = true;
         pre.hidden = false; pre.textContent = 'Rendering (dry-run)…'; btn.textContent = '✕ Hide preview';
-        HelmInstallPreview(namespaceInput.value.trim() || 'default', nameInput.value.trim() || 'preview',
-            chart.repoURL, chartName, versionSelect.value.trim(), valuesEditor.getValue())
+        const previewInput = {
+            namespace: namespaceInput.value.trim() || 'default',
+            name: nameInput.value.trim() || 'preview',
+            version: versionSelect.value.trim(),
+            values: valuesEditor.getValue(),
+        };
+        HelmInstallPreview(previewInput.namespace, previewInput.name,
+            chart.repoURL, chartName, previewInput.version, previewInput.values)
             .then((diff) => {
-                if (isCurrentModalRequest(scope) && reqId === previewReqId) renderDiffInto(pre, diff.current, diff.proposed);
+                if (!isCurrentModalRequest(scope) || reqId !== previewReqId) return;
+                if (!diff.chartDigest) throw new Error('Preview did not return a chart digest.');
+                approvedPreview = { ...previewInput, digest: diff.chartDigest };
+                okButton.disabled = false;
+                statusBox.textContent = `Previewed exact chart ${diff.chartDigest.slice(0, 19)}…`;
+                renderDiffInto(pre, diff.current, diff.proposed);
             })
             .catch((err) => {
-                if (isCurrentModalRequest(scope) && reqId === previewReqId) pre.textContent = errMsg(err);
+                if (isCurrentModalRequest(scope) && reqId === previewReqId) {
+                    approvedPreview = null;
+                    okButton.disabled = true;
+                    pre.textContent = errMsg(err);
+                }
             });
     });
 
@@ -4541,6 +4630,8 @@ function renderMarkdownish(text) {
 $('btn-settings').addEventListener('click', openSettingsModal);
 
 function openSettingsModal() {
+    let configuredProvider = '';
+    let hasStoredKey = false;
     openModal({
         title: 'Settings',
         okText: 'Save',
@@ -4587,7 +4678,8 @@ function openSettingsModal() {
         onOk: () => {
             const provider = $('ai-provider').value;
             if (!provider) return Promise.reject('Pick a provider first.');
-            if (provider !== 'ollama' && !$('ai-key').value.trim()) {
+            if (provider !== 'ollama' && !$('ai-key').value.trim()
+                && !(hasStoredKey && provider === configuredProvider)) {
                 return Promise.reject('This provider needs an API key.');
             }
             return SaveAIConfig(
@@ -4613,9 +4705,14 @@ function openSettingsModal() {
     $('ai-provider').addEventListener('change', applyProviderUI);
 
     GetAIConfig().then((cfg) => {
+        configuredProvider = cfg.provider || '';
+        hasStoredKey = !!cfg.hasApiKey;
         $('ai-provider').value = cfg.provider || '';
         $('ai-endpoint').value = cfg.endpoint || '';
-        $('ai-key').value = cfg.apiKey || '';
+        $('ai-key').value = '';
+        $('ai-key').placeholder = hasStoredKey
+            ? 'saved key is hidden — leave blank to keep it'
+            : 'stored locally, never shown again';
         $('ai-model').value = cfg.model || '';
         $('ai-language').value = cfg.language || 'auto';
         applyProviderUI();

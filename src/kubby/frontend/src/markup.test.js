@@ -62,3 +62,18 @@ test('live logs use owned batches and a bounded buffer', () => {
     assert.match(mainJS, /batch\.streamId !== activeLogStreamID/);
     assert.doesNotMatch(mainJS, /EventsOn\('logline'/);
 });
+
+test('previously direct cluster writes cross the confirmation boundary', () => {
+    for (const binding of ['SetDeploymentPaused', 'SetNodeSchedulable', 'UpdateYAML', 'HelmTest']) {
+        const call = mainJS.lastIndexOf(`${binding}(`);
+        assert.notEqual(call, -1, `${binding} should remain wired`);
+        const nearby = mainJS.slice(Math.max(0, call - 1600), call + 500);
+        assert.match(nearby, /confirmedAction\(/, `${binding} must stay behind explicit confirmation`);
+    }
+});
+
+test('Helm install requires the digest from an exact successful preview', () => {
+    assert.match(mainJS, /approvedPreview\.digest/);
+    assert.match(mainJS, /diff\.chartDigest/);
+    assert.match(mainJS, /Preview this exact release, namespace, version, and values before installing/);
+});

@@ -3,7 +3,10 @@ package k8sclient
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
+
+	"sigs.k8s.io/yaml"
 )
 
 // AIContext is the evidence Kubby collects about one resource before asking an
@@ -25,6 +28,11 @@ const (
 	diagYAMLChars = 6000
 )
 
+var (
+	bearerSecretPattern   = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
+	keyValueSecretPattern = regexp.MustCompile(`(?i)\b(password|passwd|token|api[_-]?key|client[_-]?secret|authorization)\s*[:=]\s*("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)`)
+)
+
 // DiagnosticContext assembles a compact text blob (events + logs + YAML) about
 // one resource, to feed an LLM for a plain-language explanation of problems.
 func DiagnosticContext(ctx context.Context, c *Cluster, kind, namespace, name string) (*AIContext, error) {
@@ -41,7 +49,7 @@ func DiagnosticContext(ctx context.Context, c *Cluster, kind, namespace, name st
 		out.Events = len(events)
 		b.WriteString("## Events\n")
 		for _, e := range events {
-			fmt.Fprintf(&b, "- [%s] %s: %s (x%d, %s)\n", e.Type, e.Reason, e.Message, e.Count, e.Age)
+			fmt.Fprintf(&b, "- [%s] %s: %s (x%d, %s)\n", e.Type, e.Reason, redactSensitiveText(e.Message), e.Count, e.Age)
 		}
 		b.WriteString("\n")
 	}
@@ -54,7 +62,7 @@ func DiagnosticContext(ctx context.Context, c *Cluster, kind, namespace, name st
 				if err != nil || strings.TrimSpace(logs) == "" {
 					continue
 				}
-				trimmed := tailStr(logs, diagLogChars)
+				trimmed := tailStr(redactSensitiveText(logs), diagLogChars)
 				out.LogContainers++
 				out.LogLines += strings.Count(strings.TrimRight(trimmed, "\n"), "\n") + 1
 				fmt.Fprintf(&b, "## Logs — container %s (recent)\n```\n%s\n```\n\n", ct, trimmed)
@@ -65,12 +73,71 @@ func DiagnosticContext(ctx context.Context, c *Cluster, kind, namespace, name st
 	// The spec (from the top of the YAML) plus whatever fits.
 	if y, err := GetYAML(ctx, c, kind, namespace, name); err == nil {
 		out.HasYAML = true
-		fmt.Fprintf(&b, "## Manifest (YAML)\n```yaml\n%s\n```\n", headStr(y, diagYAMLChars))
+		fmt.Fprintf(&b, "## Manifest (YAML)\n```yaml\n%s\n```\n", headStr(redactDiagnosticYAML(y), diagYAMLChars))
 	}
 
 	out.Text = b.String()
 	out.Chars = len(out.Text)
 	return out, nil
+}
+
+func redactSensitiveText(text string) string {
+	text = bearerSecretPattern.ReplaceAllString(text, "Bearer [REDACTED]")
+	return keyValueSecretPattern.ReplaceAllStringFunc(text, func(match string) string {
+		separator := strings.IndexAny(match, ":=")
+		if separator < 0 {
+			return "[REDACTED]"
+		}
+		return strings.TrimSpace(match[:separator]) + "=" + "[REDACTED]"
+	})
+}
+
+func redactDiagnosticYAML(text string) string {
+	var doc map[string]interface{}
+	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
+		return redactSensitiveText(text)
+	}
+	if kind, _ := doc["kind"].(string); strings.EqualFold(kind, "Secret") {
+		for _, field := range []string{"data", "stringData"} {
+			if values, ok := doc[field].(map[string]interface{}); ok {
+				redacted := make(map[string]interface{}, len(values))
+				for key := range values {
+					redacted[key] = "[REDACTED]"
+				}
+				doc[field] = redacted
+			}
+		}
+	}
+	redactLiteralEnvValues(doc)
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return redactSensitiveText(text)
+	}
+	return string(out)
+}
+
+func redactLiteralEnvValues(value interface{}) {
+	switch node := value.(type) {
+	case map[string]interface{}:
+		for key, child := range node {
+			if key == "env" {
+				if entries, ok := child.([]interface{}); ok {
+					for _, entry := range entries {
+						if env, ok := entry.(map[string]interface{}); ok {
+							if _, present := env["value"]; present {
+								env["value"] = "[REDACTED]"
+							}
+						}
+					}
+				}
+			}
+			redactLiteralEnvValues(child)
+		}
+	case []interface{}:
+		for _, child := range node {
+			redactLiteralEnvValues(child)
+		}
+	}
 }
 
 func headStr(s string, max int) string {

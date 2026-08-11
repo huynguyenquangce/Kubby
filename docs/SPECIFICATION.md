@@ -144,12 +144,12 @@ Helm is implemented **in-process** via the Helm Go SDK — no `helm` binary and 
 |---|---|---|---|
 | NFR-1 | **Agent-less.** No components installed in the cluster; only a `kubeconfig`. | ✅ | Matches Lens/Headlamp/k9s. |
 | NFR-2 | **Local-only.** Runs on a personal Windows machine with no external infrastructure. | ✅ | The one optional outbound dependency is the user-configured AI provider and Artifact Hub for Helm search. |
-| NFR-3 | **Safety.** No write to a resource without explicit user confirmation. | ✅ | Every destructive action has a confirm dialog. |
-| NFR-4 | **Credential hygiene.** Never persist pasted kubeconfig content; store the AI API key with restrictive permissions. | ✅ | `recent.json` stores only file paths; `ai.json` is written mode 0600. |
+| NFR-3 | **Safety.** No write to a resource without explicit user confirmation. | ✅ | Every write path, including YAML Save, pause/resume, cordon/uncordon and Helm Test, crosses a tested confirmation boundary; stale resource/cluster ownership is rechecked before dispatch. |
+| NFR-4 | **Credential hygiene.** Never persist pasted kubeconfig content; store the AI API key with restrictive permissions. | ✅ | `recent.json` stores only file paths; `ai.json` is tightened to mode 0600, its key is write-only from the WebView, hosted-key endpoints require HTTPS, and AI evidence redacts Secret data/literal env values plus common credential shapes before preview/transmission. |
 | NFR-5 | **Responsiveness under a slow first connection.** The UI must not appear hung during a 15–30 s first TLS handshake. | ✅ | 30 s connect timeout + explanatory overlay. |
 | NFR-8 | **A problem must be reportable.** The running build must be identifiable, and its environment capturable, without the user knowing where to look. | ✅ | `internal/buildinfo` is the single version identity for both binaries (`-dev` suffix on unreleased builds; commit/date from Go's embedded VCS stamps once the source is a checkout). **Settings → About** shows it; **Copy diagnostics** captures version, platform, the connected cluster's Kubernetes version and capabilities, the AI provider, and the last error shown. From the CLI: `--version` and `diagnostics`. Every probe is best-effort so a half-working connection still produces a report. The report carries **no API key, no kubeconfig content and no resource data**, and is headed "review before sharing"; a test asserts the key cannot appear. |
 | NFR-7 | **A view or namespace change must feel immediate.** Refreshing the sidebar and the current view must not visibly stall the UI. | ✅ | Three rules, all easy to regress. The rest.Config runs at **QPS 50 / Burst 100** (client-go's controller-oriented default of 5/10 makes every request past the burst sleep, which dominated the lag). Fan-out happens **in Go**, concurrently, in one bound call per screen — not one bound call per kind from JavaScript. Anything that only needs a count or a name uses **metadata-only** lists, so counting Secrets does not transfer their values. A namespace change additionally skips cluster-scoped kinds, whose counts cannot have changed. Measured on a one-node kind cluster, filling the sidebar went from 930 ms to 73 ms. |
-| NFR-6 | **Open source with a clear license.** | ⬜ | License not yet chosen — see §11. |
+| NFR-6 | **Open source with a clear license.** | ✅ | The repository is released under the MIT License; the authoritative terms are in `LICENSE` at the repository root. |
 
 ## 9. Architecture summary
 
@@ -179,8 +179,7 @@ Full detail lives in the developer docs: [`../src/kubby/ARCHITECTURE.md`](../src
 
 ## 11. Open decisions
 
-1. **License** — MIT vs Apache-2.0 (NFR-6). Not yet chosen.
-2. **Frontend framework** — currently vanilla JS + Vite; migrate to a framework (React/Svelte) only if UI complexity demands it.
+1. **Frontend framework** — currently vanilla JS + Vite; migrate to a framework (React/Svelte) only if UI complexity demands it.
 
 ---
 

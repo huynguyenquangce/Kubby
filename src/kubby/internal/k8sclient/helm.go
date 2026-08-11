@@ -2,7 +2,10 @@ package k8sclient
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"fmt"
+	"os"
 	"strings"
 
 	"helm.sh/helm/v3/pkg/action"
@@ -190,22 +193,51 @@ func parseValues(valuesYAML string) (map[string]interface{}, error) {
 	return vals, nil
 }
 
-// locateAndLoadChart resolves a chart from a repo URL and loads it into memory.
-func locateAndLoadChart(inst *action.Install, repoURL, chartName, version string) (*chart.Chart, error) {
-	inst.ChartPathOptions.RepoURL = repoURL
-	inst.ChartPathOptions.Version = version
+// locateAndLoadChart resolves a chart from a repo URL, fingerprints the exact
+// archive bytes, and loads it into memory. The digest binds a preview to the
+// artifact that a later install is allowed to write.
+func locateAndLoadChart(inst *action.Install, repoURL, chartName, version string) (*chart.Chart, string, error) {
+	configureChartSource(&inst.ChartPathOptions, repoURL, version)
 	chartPath, err := inst.ChartPathOptions.LocateChart(chartName, cli.New())
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return loader.Load(chartPath)
+	archive, err := os.ReadFile(chartPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("read resolved chart archive: %w", err)
+	}
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(archive))
+	ch, err := loader.Load(chartPath)
+	return ch, digest, err
+}
+
+func configureChartSource(options *action.ChartPathOptions, repoURL, version string) {
+	options.RepoURL = repoURL
+	options.Version = version
+	// Kubby authenticates the exact previewed artifact with its own SHA-256 and
+	// does not expose Helm's legacy OpenPGP provenance path. Keep this explicit:
+	// golang.org/x/crypto/openpgp is deprecated and has no fixed release.
+	options.Verify = false
+}
+
+func verifyChartDigest(expected, actual string) error {
+	expected = strings.ToLower(strings.TrimSpace(expected))
+	actual = strings.ToLower(strings.TrimSpace(actual))
+	if expected == "" {
+		return fmt.Errorf("chart preview is required before install")
+	}
+	if len(expected) != len(actual) || subtle.ConstantTimeCompare([]byte(expected), []byte(actual)) != 1 {
+		return fmt.Errorf("the chart changed after preview; refusing install (preview %s, resolved %s)", expected, actual)
+	}
+	return nil
 }
 
 // ChartDefaultValues downloads a chart from its repo and returns its raw
 // values.yaml — the authoritative defaults to pre-fill the install editor.
 // Needs no cluster connection (only internet to the chart repo).
 func ChartDefaultValues(repoURL, chartName, version string) (string, error) {
-	cpo := action.ChartPathOptions{RepoURL: repoURL, Version: version}
+	cpo := action.ChartPathOptions{}
+	configureChartSource(&cpo, repoURL, version)
 	chartPath, err := cpo.LocateChart(chartName, cli.New())
 	if err != nil {
 		return "", err
@@ -224,7 +256,7 @@ func ChartDefaultValues(repoURL, chartName, version string) (string, error) {
 }
 
 // HelmInstall installs a chart from a repository URL into the cluster.
-func HelmInstall(c *Cluster, namespace, releaseName, repoURL, chartName, version, valuesYAML string) error {
+func HelmInstall(c *Cluster, namespace, releaseName, repoURL, chartName, version, valuesYAML, expectedDigest string) error {
 	cfg, err := newHelmConfig(c, namespace)
 	if err != nil {
 		return err
@@ -233,8 +265,11 @@ func HelmInstall(c *Cluster, namespace, releaseName, repoURL, chartName, version
 	inst.ReleaseName = releaseName
 	inst.Namespace = namespace
 	inst.CreateNamespace = true
-	ch, err := locateAndLoadChart(inst, repoURL, chartName, version)
+	ch, digest, err := locateAndLoadChart(inst, repoURL, chartName, version)
 	if err != nil {
+		return err
+	}
+	if err := verifyChartDigest(expectedDigest, digest); err != nil {
 		return err
 	}
 	vals, err := parseValues(valuesYAML)
@@ -248,8 +283,9 @@ func HelmInstall(c *Cluster, namespace, releaseName, repoURL, chartName, version
 // HelmDiff carries the rendered manifest before/after an operation so the UI
 // can show a line diff (helm-diff style) before the user commits.
 type HelmDiff struct {
-	Current  string `json:"current"`  // "" for a fresh install
-	Proposed string `json:"proposed"` // rendered manifest that WOULD be applied
+	Current     string `json:"current"`     // "" for a fresh install
+	Proposed    string `json:"proposed"`    // rendered manifest that WOULD be applied
+	ChartDigest string `json:"chartDigest"` // non-empty for install previews
 }
 
 // HelmInstallPreview renders (dry-run) the manifest a fresh install would create,
@@ -267,7 +303,7 @@ func HelmInstallPreview(c *Cluster, namespace, releaseName, repoURL, chartName, 
 	inst.Namespace = namespace
 	inst.DryRun = true
 	inst.ClientOnly = false // talk to the apiserver for capabilities/version
-	ch, err := locateAndLoadChart(inst, repoURL, chartName, version)
+	ch, digest, err := locateAndLoadChart(inst, repoURL, chartName, version)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +315,7 @@ func HelmInstallPreview(c *Cluster, namespace, releaseName, repoURL, chartName, 
 	if err != nil {
 		return nil, err
 	}
-	return &HelmDiff{Current: "", Proposed: rel.Manifest}, nil
+	return &HelmDiff{Current: "", Proposed: rel.Manifest, ChartDigest: digest}, nil
 }
 
 // HelmUpgradePreview renders (dry-run) the manifest an upgrade-values would

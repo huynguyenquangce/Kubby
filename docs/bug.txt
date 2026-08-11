@@ -6,6 +6,52 @@ Bug log — add one line per issue. Resolved items move to the bottom.
 
 ## Fixed
 
+- [2026-08-11] Helm SDK v3.16.4 exposed install/upgrade to a reachable
+  JSON-schema stack-exhaustion vulnerability. Cause: the dependency remained on
+  a version older than the upstream 3.17.3 fix. Fix: upgrade to Helm v3.21.3 and
+  its Kubernetes v0.36.2 dependency set, then make Go 1.26 the documented and
+  module-enforced build baseline.
+
+- [2026-08-11] Helm install preview and Install independently resolved a mutable
+  repository URL/version, so a repository could return a benign chart for the
+  preview and different bytes for the confirmed write. Cause: no artifact
+  identity crossed the Wails boundary. Fix: SHA-256 fingerprint the resolved
+  chart archive, require a successful preview of the exact form inputs before
+  enabling Install, pass its digest to the backend, and refuse the write if the
+  subsequently resolved archive differs.
+
+- [2026-08-11] Private Helm repository credentials could remain in a world-readable
+  `repositories.yaml`, and repository names containing path separators could
+  escape Helm's intended cache naming. Cause: repo files were written with 0644
+  and names were only checked for emptiness. Fix: restrict names to a conservative
+  1–63 character identifier, use the same validation for cache reads/removals,
+  and write plus chmod repository configuration to 0600.
+
+- [2026-08-11] AI evidence could include raw Secret `data`/`stringData`, Pod
+  literal environment values, and common credential strings from logs/events.
+  Cause: `DiagnosticContext` truncated but otherwise forwarded `GetYAML`, events,
+  and logs verbatim. Fix: structurally redact Secret values and all literal
+  `env[].value` fields before YAML truncation, filter common Bearer/key-value
+  credential shapes from free text, and pin each path with unique-sentinel tests.
+
+- [2026-08-11] Opening AI Settings returned the stored API key to the WebView
+  and repopulated the password input, contrary to its write-only label; a custom
+  hosted endpoint could also receive that credential over plain HTTP. Cause:
+  `GetAIConfig` exposed the persistence model directly and provider URL checks
+  accepted both schemes equally. Fix: expose a key-free view model with only a
+  `hasApiKey` flag, preserve a blank key server-side for the same provider,
+  re-apply 0600 after every write, require HTTPS except for loopback, and bound
+  AI response bodies to 2 MiB.
+
+- [2026-08-11] Pause/resume, cordon/uncordon, YAML Save, and Helm Test could
+  mutate the active cluster immediately, despite the global confirmation
+  invariant. Cause: these handlers called their Wails write bindings directly
+  while older actions each implemented confirmation ad hoc. Fix: route the four
+  paths through a testable confirmation boundary, identify the exact cluster and
+  resource in the prompt, summarize YAML line changes, and re-check request
+  ownership after confirmation so Cancel performs zero backend calls and a
+  cluster/resource switch cannot redirect an approved action.
+
 - [2026-08-11] Typography varied by machine and Overview looked sparse and dated:
   the intended Inter face was merely named in CSS but never shipped, so WebView2
   fell back to whichever system font happened to exist; separate health/capacity

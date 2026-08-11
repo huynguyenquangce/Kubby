@@ -60,7 +60,9 @@ Pick a **Context**, then **Connect**. The first connection may take 15–30 s if
 - **Details** — metadata, labels, annotations, kind-specific fields, **Events**, and a **relations tree** (Deployment→ReplicaSet→Pod, Service→Pod, Ingress→Service→Pod) whose nodes are clickable. A Node shows the **pods scheduled on it**; a Namespace shows a **per-kind summary** you can click into.
 - **YAML** — a real editor: syntax highlighting, line numbers, folding, and Tab that indents. Edit + save, with a **Diff** against the loaded version.
 - **Logs** (pods) — container picker, live **follow**, line filter, download.
-- **Terminal** (pods) — interactive **exec** (line-mode; full-screen TUIs like `vi`/`top` aren't supported).
+- **Terminal** (pods) — interactive resize-aware PTY rendered by xterm.js, with
+  shell completion/history, ANSI output, and full-screen TUI support where the
+  selected container has a compatible shell.
 - **Port Forward** (pods/services) — open `localhost` tunnels, several at once.
 - **Ask AI** — a conversation about *this* resource; see below.
 

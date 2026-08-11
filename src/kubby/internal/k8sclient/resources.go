@@ -78,9 +78,9 @@ type SecretInfo struct {
 
 // erroredStatuses are pod statuses treated as errors so the frontend can flag them (FR-3).
 var erroredStatuses = map[string]bool{
-	"CrashLoopBackOff": true,
-	"ImagePullBackOff": true,
-	"ErrImagePull":     true,
+	"CrashLoopBackOff":           true,
+	"ImagePullBackOff":           true,
+	"ErrImagePull":               true,
 	"CreateContainerConfigError": true,
 	"Failed":                     true,
 	"Error":                      true,

@@ -36,7 +36,7 @@ flowchart LR
     App --> K8s["internal/k8sclient"]
     K8s --> CG["client-go / Helm SDK"]
     CG --> API["kube-apiserver"]
-    App -.->|EventsEmit: logline / exec-output / portforward-closed| UI
+    App -.->|EventsEmit: loglines / exec-output / portforward-closed| UI
     CLI["cmd/kubby-cli"] --> K8s
 ```
 
@@ -126,7 +126,7 @@ src/kubby/
 │   ├── istioflow.go            #   Istio Gateway + VirtualService into the same lanes            → traffic-flow.md
 │   ├── logstream.go            #   StreamLogs (follow)                                           → streaming.md
 │   ├── portforward.go          #   StartPortForward (SPDY)                                       → streaming.md
-│   ├── exec.go                 #   StartExec (line-mode)                                         → streaming.md
+│   ├── exec.go                 #   StartExec (resize-aware PTY)                                  → streaming.md
 │   ├── ai.go                   #   DiagnosticContext → AIContext                                 → ai-assistant.md
 │   ├── helm.go, helmrepo.go    #   Helm Go SDK in-process + repositories.yaml                    → helm.md
 │   └── artifacthub.go          #   Chart search/details over HTTP                                → helm.md

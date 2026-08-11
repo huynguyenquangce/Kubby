@@ -199,9 +199,10 @@ Anything else added to the global `keydown` handler must consider both.
 must stay in step with the backend's document numbering (see
 [apply-yaml.md](apply-yaml.md)).
 
-**Cost:** CodeMirror is ~400 kB of the ~500 kB bundle (measured, not estimated).
-Acceptable here — it loads from disk in a desktop app, not over a network — but it
-is why the Vite chunk-size warning now appears on every build.
+**Cost:** the current initial JavaScript bundle is about 861 kB (about 251 kB
+gzip), with CodeMirror and xterm.js statically imported. It loads from disk in a
+desktop app, but Vite's chunk-size warning is intentional release evidence. Lazy
+loading the YAML editor and terminal is tracked as a post-preview optimization.
 
 ## Theme
 

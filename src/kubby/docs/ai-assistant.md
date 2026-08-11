@@ -59,28 +59,27 @@ truncated snapshot.
 
 ## Data handling — read before changing
 
-- Config, **including the API key**, lives at `%AppData%/kubby/ai.json`, written
-  mode **0600**.
-- `GetAIStatus()` reports provider / model / local-ness and **must never return
-  the API key** to the frontend.
+- Config, **including the API key**, lives at `%AppData%/kubby/ai.json`; its
+  directory and file permissions are tightened to **0700/0600** where supported.
+- `GetAIConfig()` and `GetAIStatus()` expose only settings metadata plus a
+  `hasApiKey` boolean. The key is write-only from the WebView and leaving its
+  field blank preserves the existing key for the same provider.
+- Hosted endpoints that receive an API key must use HTTPS. Plain HTTP is
+  accepted only for loopback development endpoints.
 - The evidence goes only to the provider the user chose. Ollama is local: nothing
   leaves the machine.
 - Unconfigured shows a **setup card, not an error**.
 
-> ### Known issue: Secret contents are sent verbatim
->
-> `DiagnosticContext` includes `GetYAML()` unmodified. For a Secret that means the
-> `data:` block — base64 is not encryption. Asking the AI about a Secret ships its
-> contents to the provider. Pod manifests have the same problem more diffusely
-> (`env` values are frequently credentials).
->
-> The fix is to redact in `DiagnosticContext`: replace a Secret's
-> `data`/`stringData` with `[redacted — N keys]`, and consider the same for
-> `env.value`. The "See exactly what is sent" viewer means the user can confirm
-> the redaction happened.
->
-> Worth flagging to a user before they point Kubby at a corporate cluster: the
-> Ask AI tab transmits a resource's events, logs and manifest to a third party.
+Before evidence reaches either the preview or a provider, `DiagnosticContext`
+redacts every Secret `data`/`stringData` value and every literal `env[].value`
+while preserving field names and `valueFrom` references. It also filters common
+credential shapes from events and logs (Bearer tokens and password/token/API-key
+assignments). Tests use unique sentinels to prevent those values from returning.
+
+This is defense in depth, not a proof that arbitrary free-form logs can never
+contain sensitive application data. The exact post-redaction payload remains
+visible through **See exactly what is sent** and should be reviewed before using
+a hosted provider on a sensitive cluster.
 
 ## Verify
 

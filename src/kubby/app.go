@@ -482,11 +482,11 @@ func (a *App) HelmUpgradeValues(namespace, name, valuesYAML string) error {
 	}
 	return k8sclient.HelmUpgradeValues(a.cluster, namespace, name, valuesYAML)
 }
-func (a *App) HelmInstall(namespace, releaseName, repoURL, chartName, version, valuesYAML string) error {
+func (a *App) HelmInstall(namespace, releaseName, repoURL, chartName, version, valuesYAML, expectedDigest string) error {
 	if err := a.requireCluster(); err != nil {
 		return err
 	}
-	return k8sclient.HelmInstall(a.cluster, namespace, releaseName, repoURL, chartName, version, valuesYAML)
+	return k8sclient.HelmInstall(a.cluster, namespace, releaseName, repoURL, chartName, version, valuesYAML, expectedDigest)
 }
 
 // SearchCharts queries Artifact Hub (needs internet). No cluster required.
@@ -686,15 +686,23 @@ func (a *App) NetworkFlows(namespace string) (*k8sclient.NetworkFlows, error) {
 
 // ---- FR-7: AI assistant (resource-scoped Q&A) ----
 
-func (a *App) GetAIConfig() AIConfig {
-	return loadAIConfig()
+func (a *App) GetAIConfig() AIConfigView {
+	cfg := loadAIConfig()
+	return AIConfigView{
+		Provider: cfg.Provider, Endpoint: cfg.Endpoint, Model: cfg.Model,
+		Language: cfg.Language, HasAPIKey: strings.TrimSpace(cfg.APIKey) != "",
+	}
 }
 
 func (a *App) SaveAIConfig(provider, endpoint, apiKey, model, language string) error {
-	return saveAIConfig(AIConfig{
+	next, err := mergeAIConfig(loadAIConfig(), AIConfig{
 		Provider: provider, Endpoint: endpoint, APIKey: apiKey,
 		Model: model, Language: language,
 	})
+	if err != nil {
+		return err
+	}
+	return saveAIConfig(next)
 }
 
 // AIStatus is what the assistant header needs to describe itself, without ever

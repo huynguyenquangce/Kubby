@@ -134,8 +134,8 @@ export function HelmHistory(arg1, arg2) {
   return window['go']['main']['App']['HelmHistory'](arg1, arg2);
 }
 
-export function HelmInstall(arg1, arg2, arg3, arg4, arg5, arg6) {
-  return window['go']['main']['App']['HelmInstall'](arg1, arg2, arg3, arg4, arg5, arg6);
+export function HelmInstall(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['HelmInstall'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 export function HelmInstallPreview(arg1, arg2, arg3, arg4, arg5, arg6) {

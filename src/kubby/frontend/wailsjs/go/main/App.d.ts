@@ -55,7 +55,7 @@ export function ExecWrite(arg1:string):Promise<void>;
 
 export function ForgetConnection(arg1:string,arg2:string):Promise<void>;
 
-export function GetAIConfig():Promise<main.AIConfig>;
+export function GetAIConfig():Promise<main.AIConfigView>;
 
 export function GetAIStatus():Promise<main.AIStatus>;
 
@@ -69,7 +69,7 @@ export function HelmGetRevision(arg1:string,arg2:string,arg3:number):Promise<k8s
 
 export function HelmHistory(arg1:string,arg2:string):Promise<Array<k8sclient.HelmRevision>>;
 
-export function HelmInstall(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<void>;
+export function HelmInstall(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string):Promise<void>;
 
 export function HelmInstallPreview(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<k8sclient.HelmDiff>;
 

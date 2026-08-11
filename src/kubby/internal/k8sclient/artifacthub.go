@@ -45,12 +45,12 @@ func SearchCharts(ctx context.Context, query string) ([]ChartSearchResult, error
 
 	var payload struct {
 		Packages []struct {
-			Name        string  `json:"name"`
-			NormName    string  `json:"normalized_name"`
-			Version     string  `json:"version"`
-			AppVersion  string  `json:"app_version"`
-			Description string  `json:"description"`
-			Stars       int     `json:"stars"`
+			Name        string `json:"name"`
+			NormName    string `json:"normalized_name"`
+			Version     string `json:"version"`
+			AppVersion  string `json:"app_version"`
+			Description string `json:"description"`
+			Stars       int    `json:"stars"`
 			Repository  struct {
 				Name string `json:"name"`
 				URL  string `json:"url"`
@@ -118,14 +118,14 @@ func ChartDetails(ctx context.Context, repoName, chartName string) (*ChartDetail
 	}
 
 	var p struct {
-		Name          string `json:"name"`
-		DisplayName   string `json:"display_name"`
-		Description   string `json:"description"`
-		Version       string `json:"version"`
-		AppVersion    string `json:"app_version"`
-		HomeURL       string `json:"home_url"`
-		Readme        string `json:"readme"`
-		DefaultValues string `json:"default_values"`
+		Name          string   `json:"name"`
+		DisplayName   string   `json:"display_name"`
+		Description   string   `json:"description"`
+		Version       string   `json:"version"`
+		AppVersion    string   `json:"app_version"`
+		HomeURL       string   `json:"home_url"`
+		Readme        string   `json:"readme"`
+		DefaultValues string   `json:"default_values"`
 		Keywords      []string `json:"keywords"`
 		Repository    struct {
 			Name string `json:"name"`

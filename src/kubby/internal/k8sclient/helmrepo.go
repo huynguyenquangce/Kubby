@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -11,6 +12,22 @@ import (
 	"helm.sh/helm/v3/pkg/getter"
 	"helm.sh/helm/v3/pkg/repo"
 )
+
+var helmRepoNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+
+func validateHelmRepoName(name string) error {
+	if !helmRepoNamePattern.MatchString(name) {
+		return fmt.Errorf("repo name must be 1-63 letters, numbers, dots, underscores, or dashes and must start with a letter or number")
+	}
+	return nil
+}
+
+func writeHelmRepoFile(f *repo.File, path string) error {
+	if err := f.WriteFile(path, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
+}
 
 // HelmRepo is one configured chart repository.
 type HelmRepo struct {
@@ -52,6 +69,9 @@ func AddHelmRepo(name, url, username, password string) error {
 	if name == "" || url == "" {
 		return fmt.Errorf("repo name and URL are required")
 	}
+	if err := validateHelmRepoName(name); err != nil {
+		return err
+	}
 	settings := cli.New()
 
 	f, err := loadOrNewRepoFile(settings.RepositoryConfig)
@@ -76,11 +96,14 @@ func AddHelmRepo(name, url, username, password string) error {
 	if err := os.MkdirAll(filepath.Dir(settings.RepositoryConfig), 0o755); err != nil {
 		return err
 	}
-	return f.WriteFile(settings.RepositoryConfig, 0o644)
+	return writeHelmRepoFile(f, settings.RepositoryConfig)
 }
 
 // RemoveHelmRepo drops a repo entry and its cached index file.
 func RemoveHelmRepo(name string) error {
+	if err := validateHelmRepoName(name); err != nil {
+		return err
+	}
 	settings := cli.New()
 	f, err := repo.LoadFile(settings.RepositoryConfig)
 	if err != nil {
@@ -89,7 +112,7 @@ func RemoveHelmRepo(name string) error {
 	if !f.Remove(name) {
 		return fmt.Errorf("repo %q not found", name)
 	}
-	if err := f.WriteFile(settings.RepositoryConfig, 0o644); err != nil {
+	if err := writeHelmRepoFile(f, settings.RepositoryConfig); err != nil {
 		return err
 	}
 	// Best-effort cache cleanup.
@@ -127,6 +150,9 @@ func UpdateHelmRepos() error {
 // per chart, latest version). Run UpdateHelmRepos / AddHelmRepo first to populate
 // the cache.
 func BrowseHelmRepo(name string) ([]ChartSearchResult, error) {
+	if err := validateHelmRepoName(name); err != nil {
+		return nil, err
+	}
 	settings := cli.New()
 	f, err := repo.LoadFile(settings.RepositoryConfig)
 	if err != nil {

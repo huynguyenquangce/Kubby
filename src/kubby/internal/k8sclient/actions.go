@@ -6,10 +6,10 @@ import (
 	"sort"
 	"strconv"
 
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
-	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -62,11 +62,11 @@ func SetDeploymentPaused(ctx context.Context, c *Cluster, namespace, name string
 
 // RolloutRevision is one entry in a deployment's rollout history.
 type RolloutRevision struct {
-	Revision   int64  `json:"revision"`
-	Name       string `json:"name"` // the ReplicaSet name
-	Images     string `json:"images"`
-	Current    bool   `json:"current"`
-	Age        string `json:"age"`
+	Revision int64  `json:"revision"`
+	Name     string `json:"name"` // the ReplicaSet name
+	Images   string `json:"images"`
+	Current  bool   `json:"current"`
+	Age      string `json:"age"`
 }
 
 // RolloutHistory lists a deployment's revisions (from its ReplicaSets), newest

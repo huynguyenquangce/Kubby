@@ -590,7 +590,11 @@ func main() {
 			if err != nil {
 				return err
 			}
-			if err := k8sclient.HelmInstall(cluster, hiNs, args[0], hiRepo, hiChart, hiVersion, ""); err != nil {
+			preview, err := k8sclient.HelmInstallPreview(cluster, hiNs, args[0], hiRepo, hiChart, hiVersion, "")
+			if err != nil {
+				return fmt.Errorf("preview install: %w", err)
+			}
+			if err := k8sclient.HelmInstall(cluster, hiNs, args[0], hiRepo, hiChart, hiVersion, "", preview.ChartDigest); err != nil {
 				return err
 			}
 			fmt.Println("installed")

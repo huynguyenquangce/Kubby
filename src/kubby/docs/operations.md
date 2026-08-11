@@ -49,9 +49,9 @@ Not implemented; listed so nobody assumes they are:
   require the name to be typed.
 - **No audit trail.** Nothing records what Kubby wrote, when. For a tool pointed
   at production that is a cheap and valuable addition.
-- **No RBAC awareness.** Actions the current token cannot perform are still
-  offered and fail at the API. `SelfSubjectAccessReview` would let them be disabled
-  up front.
+- **RBAC probing is advisory.** `SelfSubjectAccessReview` disables an action only
+  after an explicit denial; an inconclusive probe remains enabled and the API
+  server is always the final authority. See [permissions.md](permissions.md).
 
 ## Verify
 

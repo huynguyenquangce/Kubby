@@ -19,7 +19,9 @@ Headless validation proves its format and compilation, not GUI behaviour.
 
 Required for every target:
 
-- Go 1.25 or newer, matching the `go` directive in `src/kubby/go.mod`.
+- Go 1.26.5 or newer, matching the security-patched `toolchain` directive in
+  `src/kubby/go.mod`. Go's toolchain selection can download that patch release
+  automatically when an older Go 1.26 command starts the build.
 - Node.js `^20.19.0` or `>=22.12.0`, required by the locked Vite version.
 - npm and network access for the first dependency installation.
 - Wails CLI v2.13.0, matching `src/kubby/go.mod`.
@@ -146,6 +148,19 @@ Windows x86-64 from WSL:
 ```bash
 go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build -platform windows/amd64
 ```
+
+For a tagged release, override all three build identity fields and trim local
+paths. Substitute the version, seven-character commit, and commit date that will
+be tagged; do not build a release from a dirty tree:
+
+```bash
+go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build \
+  -platform windows/amd64 -trimpath \
+  -ldflags "-X kubby/internal/buildinfo.Version=0.1.0 -X kubby/internal/buildinfo.Commit=abcdef0 -X kubby/internal/buildinfo.Date=2026-08-11"
+```
+
+The checked-in `0.1.0-dev` value is intentional and must not be edited for a
+release; the ldflags prevent ordinary local builds from masquerading as a tag.
 
 Linux x86-64 on Ubuntu with WebKitGTK 4.1:
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,6 +24,16 @@ type AIConfig struct {
 	APIKey   string `json:"apiKey"`
 	Model    string `json:"model"`
 	Language string `json:"language"` // "" / "auto" | "en" | "vi"
+}
+
+// AIConfigView is safe to expose to the WebView. API keys are write-only from
+// the renderer's perspective; HasAPIKey is enough to support editing settings.
+type AIConfigView struct {
+	Provider  string `json:"provider"`
+	Endpoint  string `json:"endpoint"`
+	Model     string `json:"model"`
+	Language  string `json:"language"`
+	HasAPIKey bool   `json:"hasApiKey"`
 }
 
 // AIMessage is one turn of the resource-scoped conversation. The frontend owns
@@ -64,9 +75,10 @@ func aiConfigPath() (string, error) {
 		return "", err
 	}
 	kubbyDir := filepath.Join(dir, "kubby")
-	if err := os.MkdirAll(kubbyDir, 0o755); err != nil {
+	if err := os.MkdirAll(kubbyDir, 0o700); err != nil {
 		return "", err
 	}
+	_ = os.Chmod(kubbyDir, 0o700)
 	return filepath.Join(kubbyDir, "ai.json"), nil
 }
 
@@ -90,7 +102,30 @@ func saveAIConfig(cfg AIConfig) error {
 		return err
 	}
 	data, _ := json.MarshalIndent(cfg, "", "  ")
-	return os.WriteFile(path, data, 0o600) // 0600: contains an API key
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600) // WriteFile preserves an existing file's mode.
+}
+
+func mergeAIConfig(current, next AIConfig) (AIConfig, error) {
+	next.Provider = strings.TrimSpace(next.Provider)
+	next.Endpoint = strings.TrimSpace(next.Endpoint)
+	next.Model = strings.TrimSpace(next.Model)
+	if next.Provider == "" {
+		return AIConfig{}, fmt.Errorf("pick an AI provider first")
+	}
+	if next.Provider == "ollama" {
+		next.APIKey = ""
+		return next, nil
+	}
+	if strings.TrimSpace(next.APIKey) == "" {
+		if current.Provider != next.Provider || strings.TrimSpace(current.APIKey) == "" {
+			return AIConfig{}, fmt.Errorf("this provider needs an API key")
+		}
+		next.APIKey = current.APIKey
+	}
+	return next, nil
 }
 
 // callAI dispatches a system prompt plus the full conversation to the configured
@@ -149,7 +184,14 @@ func postJSON(ctx context.Context, client *http.Client, url string, body any, he
 		return nil, fmt.Errorf("could not reach the AI endpoint: %w", err)
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
+	const maxAIResponse = 2 << 20
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAIResponse+1))
+	if err != nil {
+		return nil, fmt.Errorf("could not read the AI response: %w", err)
+	}
+	if len(data) > maxAIResponse {
+		return nil, fmt.Errorf("the AI response exceeded the 2 MiB safety limit")
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("the AI returned HTTP %d: %s", resp.StatusCode, truncateErr(string(data)))
 	}
@@ -175,6 +217,9 @@ func callAnthropic(ctx context.Context, client *http.Client, cfg AIConfig, syste
 	endpoint := strings.TrimRight(cfg.Endpoint, "/")
 	if endpoint == "" {
 		endpoint = "https://api.anthropic.com"
+	}
+	if err := validateCredentialEndpoint(endpoint); err != nil {
+		return "", err
 	}
 	body := map[string]any{
 		"model":      model,
@@ -223,12 +268,31 @@ func openAIBaseURL(endpoint string) (string, error) {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return "", fmt.Errorf("endpoint %q must start with http:// or https://", endpoint)
 	}
+	if err := validateCredentialEndpoint(raw); err != nil {
+		return "", err
+	}
 	// Tolerate a full path being pasted in from a provider's docs.
 	raw = strings.TrimSuffix(raw, "/chat/completions")
 	if u.Path == "" {
 		raw += "/v1"
 	}
 	return raw, nil
+}
+
+func validateCredentialEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("invalid AI endpoint %q", raw)
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	host := strings.ToLower(u.Hostname())
+	ip := net.ParseIP(host)
+	if u.Scheme == "http" && (host == "localhost" || (ip != nil && ip.IsLoopback())) {
+		return nil
+	}
+	return fmt.Errorf("AI endpoints that receive an API key must use HTTPS (plain HTTP is allowed only on loopback)")
 }
 
 func callOpenAI(ctx context.Context, client *http.Client, cfg AIConfig, system string, msgs []AIMessage) (string, error) {

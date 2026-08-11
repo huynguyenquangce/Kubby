@@ -34,7 +34,7 @@ func PodsOnNode(ctx context.Context, c *Cluster, nodeName string) ([]PodInfo, er
 // NsKindCount is one resource-kind tally inside a namespace.
 type NsKindCount struct {
 	Kind   string `json:"kind"`
-	View   string `json:"view"`  // frontend view id to navigate to
+	View   string `json:"view"` // frontend view id to navigate to
 	Count  int    `json:"count"`
 	Errors int    `json:"errors"`
 }

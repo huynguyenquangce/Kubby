@@ -631,6 +631,7 @@ export namespace k8sclient {
 	export class HelmDiff {
 	    current: string;
 	    proposed: string;
+	    chartDigest: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new HelmDiff(source);
@@ -640,6 +641,7 @@ export namespace k8sclient {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.current = source["current"];
 	        this.proposed = source["proposed"];
+	        this.chartDigest = source["chartDigest"];
 	    }
 	}
 	export class HelmReleaseDetail {
@@ -1537,24 +1539,24 @@ export namespace k8sclient {
 
 export namespace main {
 	
-	export class AIConfig {
+	export class AIConfigView {
 	    provider: string;
 	    endpoint: string;
-	    apiKey: string;
 	    model: string;
 	    language: string;
+	    hasApiKey: boolean;
 	
 	    static createFrom(source: any = {}) {
-	        return new AIConfig(source);
+	        return new AIConfigView(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.provider = source["provider"];
 	        this.endpoint = source["endpoint"];
-	        this.apiKey = source["apiKey"];
 	        this.model = source["model"];
 	        this.language = source["language"];
+	        this.hasApiKey = source["hasApiKey"];
 	    }
 	}
 	export class AIMessage {
