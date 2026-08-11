@@ -35,6 +35,7 @@ coverage/
 coverage.*
 .cache/
 tmp/
+bug-screenshot
 
 # Local review reports (working notes, intentionally not versioned)
 /code-review/
