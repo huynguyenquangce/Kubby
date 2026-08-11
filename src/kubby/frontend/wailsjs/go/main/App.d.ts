@@ -149,6 +149,8 @@ export function NetworkFlows(arg1:string):Promise<k8sclient.NetworkFlows>;
 
 export function NodeMetrics():Promise<Array<k8sclient.NodeMetric>>;
 
+export function OverviewSnapshot():Promise<k8sclient.OverviewData>;
+
 export function PickKubeconfigFile():Promise<string>;
 
 export function PodContainers(arg1:string,arg2:string):Promise<Array<string>>;
@@ -199,7 +201,7 @@ export function Sizing(arg1:string):Promise<k8sclient.SizingReport>;
 
 export function StartExec(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number):Promise<void>;
 
-export function StartLogStream(arg1:string,arg2:string,arg3:string):Promise<void>;
+export function StartLogStream(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function StartPortForward(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number,arg6:boolean):Promise<main.PortForwardInfo>;
 

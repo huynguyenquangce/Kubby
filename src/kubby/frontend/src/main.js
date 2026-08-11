@@ -17,6 +17,8 @@ import {
 } from './port-forward-state.js';
 import { createRequestScopes } from './request-scope.js';
 import { createSerialWriter, validTerminalSize } from './terminal-io.js';
+import { createFrameScheduler, LineRingBuffer } from './log-buffer.js';
+import { lineDiff } from './line-diff.js';
 
 import {
     PickKubeconfigFile,
@@ -110,9 +112,7 @@ import {
     DeploymentTree,
     ServiceTree,
     IngressTree,
-    NodeMetrics,
-    TopPods,
-    ClusterEvents,
+    OverviewSnapshot,
     PodMetricsList,
     PodContainers,
     PodLogs,
@@ -478,6 +478,7 @@ function revealNavSection(view) {
 // ClusterRoles/Bindings and CRDs cannot change count when only the namespace
 // does, so their badges are left as they are instead of being refetched.
 let navCountsReqId = 0;
+let navCountsRefreshedAt = 0;
 
 function loadSidebarCounts({ includeCluster = true } = {}) {
     const reqId = ++navCountsReqId;
@@ -488,6 +489,7 @@ function loadSidebarCounts({ includeCluster = true } = {}) {
             // Drop a slow reply that a newer request has already superseded —
             // otherwise flicking through namespaces can leave older numbers on top.
             if (reqId !== navCountsReqId || !requestScopes.isCurrentConnection(connection)) return;
+            navCountsRefreshedAt = Date.now();
             for (const c of counts ?? []) {
                 const badge = document.querySelector(`.nav-item[data-view="${c.view}"] .nav-count`);
                 if (!badge) continue;
@@ -845,22 +847,18 @@ function row(cellsHtml, opts = {}) {
 
 // ---- Overview ----
 function loadOverview(scope) {
-    // These three populate their own cards independently (each handles its own errors).
-    loadNodeMetrics(scope);
-    loadTopPods(scope);
-    loadRecentEvents(scope);
-
-    return Promise.all([ListNodes(), ListNamespaces(), ListPods(''), ListDeployments('')])
-        .then(([nodes, namespaces, pods, deployments]) => {
+    return OverviewSnapshot()
+        .then((snapshot) => {
             if (!isCurrentViewRequest(scope)) return;
-            const errored = (pods ?? []).filter((p) => p.isError);
-            $('stat-nodes').textContent = nodes?.length ?? 0;
-            $('stat-namespaces').textContent = namespaces?.length ?? 0;
-            $('stat-pods').textContent = pods?.length ?? 0;
-            $('stat-deployments').textContent = deployments?.length ?? 0;
+            const stats = snapshot?.stats ?? {};
+            const errored = snapshot?.failingPods ?? [];
+            $('stat-nodes').textContent = stats.nodes ?? 0;
+            $('stat-namespaces').textContent = stats.namespaces ?? 0;
+            $('stat-pods').textContent = stats.pods ?? 0;
+            $('stat-deployments').textContent = stats.deployments ?? 0;
             $('stat-errors').textContent = errored.length;
             $('stat-errors').closest('.stat-card').classList.toggle('has-errors', errored.length > 0);
-            updateClusterHealth(pods ?? [], errored);
+            updateClusterHealth(stats.podsAvailable ? (stats.pods ?? 0) : null, errored);
 
             const body = $('overview-errors-body');
             body.innerHTML = '';
@@ -877,20 +875,26 @@ function loadOverview(scope) {
                 const pod = errored[0];
                 openDrawer({ kind: 'Pod', namespace: pod.namespace, name: pod.name, isPod: true, tab: 'ai' });
             };
+
+            renderNodeMetrics(snapshot?.nodeMetrics ?? []);
+            renderTopPods(snapshot?.topPods ?? []);
+            renderRecentEvents(snapshot?.events ?? []);
         })
         .catch((err) => {
             if (!isCurrentViewRequest(scope)) return;
             updateClusterHealth(null, []);
+            renderNodeMetrics([]);
+            renderTopPods([]);
+            renderRecentEvents([]);
             showDashError(err);
         });
 }
 
-function updateClusterHealth(pods, errored) {
+function updateClusterHealth(total, errored) {
     const score = $('cluster-health-score');
     const badgeEl = $('cluster-health-badge');
     const fill = $('cluster-health-fill');
-    const total = pods?.length ?? 0;
-    if (!pods) {
+    if (total === null) {
         score.textContent = '–';
         $('cluster-health-summary').textContent = 'Cluster health could not be loaded.';
         $('cluster-health-ratio').textContent = '– / –';
@@ -917,87 +921,58 @@ function updateClusterHealth(pods, errored) {
     badgeEl.className = `health-state ${unhealthy === 0 ? 'health-state-ok' : (percent >= 90 ? 'health-state-warn' : 'health-state-error')}`;
 }
 
-function loadTopPods(scope) {
-    TopPods(8)
-        .then((pods) => {
-            if (!isCurrentViewRequest(scope)) return;
-            const body = $('overview-toppods-body');
-            body.innerHTML = '';
-            $('overview-toppods-empty').hidden = (pods?.length ?? 0) > 0;
-            for (const p of pods ?? []) {
-                body.appendChild(row(
-                    `<td class="overview-namespace">${esc(p.namespace)}</td><td class="overview-resource-name" title="${esc(p.name)}">${esc(p.name)}</td><td><span class="overview-metric mono">${p.cpuMilli}m</span></td><td><span class="overview-metric mono">${p.memMi}Mi</span></td>`,
-                    { actions: false, ref: { kind: 'Pod', namespace: p.namespace, name: p.name, isPod: true } },
-                ));
-            }
-        })
-        .catch(() => {
-            if (!isCurrentViewRequest(scope)) return;
-            $('overview-toppods-body').innerHTML = '';
-            $('overview-toppods-empty').hidden = false;
-        });
+function renderTopPods(pods) {
+    const body = $('overview-toppods-body');
+    body.innerHTML = '';
+    $('overview-toppods-empty').hidden = (pods?.length ?? 0) > 0;
+    for (const p of pods ?? []) {
+        body.appendChild(row(
+            `<td class="overview-namespace">${esc(p.namespace)}</td><td class="overview-resource-name" title="${esc(p.name)}">${esc(p.name)}</td><td><span class="overview-metric mono">${p.cpuMilli}m</span></td><td><span class="overview-metric mono">${p.memMi}Mi</span></td>`,
+            { actions: false, ref: { kind: 'Pod', namespace: p.namespace, name: p.name, isPod: true } },
+        ));
+    }
 }
 
-function loadRecentEvents(scope) {
-    ClusterEvents(15)
-        .then((events) => {
-            if (!isCurrentViewRequest(scope)) return;
-            const body = $('overview-events-body');
-            body.innerHTML = '';
-            $('overview-events-empty').hidden = (events?.length ?? 0) > 0;
-            for (const e of events ?? []) {
-                const tr = document.createElement('tr');
-                const cls = e.isWarn ? 'ev-type-warn' : 'ev-type-normal';
-                const count = e.count > 1 ? ` (x${e.count})` : '';
-                tr.innerHTML = `<td class="${cls}">${esc(e.type)}</td><td class="mono overview-resource-name" title="${esc(e.object)}">${esc(e.object)}</td><td>${esc(e.reason)}</td><td class="overview-count">${esc(e.age)}${count}</td><td class="overview-event-message" title="${esc(e.message)}">${esc(e.message)}</td>`;
-                body.appendChild(tr);
-            }
-        })
-        .catch(() => {
-            if (!isCurrentViewRequest(scope)) return;
-            $('overview-events-body').innerHTML = '';
-            $('overview-events-empty').hidden = false;
-        });
+function renderRecentEvents(events) {
+    const body = $('overview-events-body');
+    body.innerHTML = '';
+    $('overview-events-empty').hidden = (events?.length ?? 0) > 0;
+    for (const e of events ?? []) {
+        const tr = document.createElement('tr');
+        const cls = e.isWarn ? 'ev-type-warn' : 'ev-type-normal';
+        const count = e.count > 1 ? ` (x${e.count})` : '';
+        tr.innerHTML = `<td class="${cls}">${esc(e.type)}</td><td class="mono overview-resource-name" title="${esc(e.object)}">${esc(e.object)}</td><td>${esc(e.reason)}</td><td class="overview-count">${esc(e.age)}${count}</td><td class="overview-event-message" title="${esc(e.message)}">${esc(e.message)}</td>`;
+        body.appendChild(tr);
+    }
 }
 
-function loadNodeMetrics(scope) {
-    NodeMetrics()
-        .then((metrics) => {
-            if (!isCurrentViewRequest(scope)) return;
-            const box = $('node-metrics');
-            const hint = $('node-metrics-hint');
-            const total = $('node-metrics-total');
-            if (!metrics || metrics.length === 0) {
-                box.innerHTML = '';
-                total.textContent = '';
-                hint.hidden = false;
-                updateCapacitySummary(null);
-                return;
-            }
-            hint.hidden = true;
+function renderNodeMetrics(metrics) {
+    const box = $('node-metrics');
+    const hint = $('node-metrics-hint');
+    const total = $('node-metrics-total');
+    if (!metrics || metrics.length === 0) {
+        box.innerHTML = '';
+        total.textContent = '';
+        hint.hidden = false;
+        updateCapacitySummary(null);
+        return;
+    }
+    hint.hidden = true;
 
-            // Cluster-wide first: with a dozen nodes the per-node cards answer
-            // "which node is hot", but not "how much room is left overall".
-            const sum = metrics.reduce((a, m) => ({
-                cpu: a.cpu + (m.cpuMilli || 0), cpuCap: a.cpuCap + (m.cpuCapacity || 0),
-                mem: a.mem + (m.memMi || 0), memCap: a.memCap + (m.memCapacity || 0),
-            }), { cpu: 0, cpuCap: 0, mem: 0, memCap: 0 });
-            updateCapacitySummary(metrics, sum);
-            total.textContent = `${metrics.length} nodes · CPU ${pct(sum.cpu, sum.cpuCap)}% of ${fmtCores(sum.cpuCap)} cores`
-                + ` · Memory ${pct(sum.mem, sum.memCap)}% of ${fmtMem(sum.memCap)}`;
+    // Cluster-wide first: with a dozen nodes the per-node cards answer
+    // "which node is hot", but not "how much room is left overall".
+    const sum = metrics.reduce((a, m) => ({
+        cpu: a.cpu + (m.cpuMilli || 0), cpuCap: a.cpuCap + (m.cpuCapacity || 0),
+        mem: a.mem + (m.memMi || 0), memCap: a.memCap + (m.memCapacity || 0),
+    }), { cpu: 0, cpuCap: 0, mem: 0, memCap: 0 });
+    updateCapacitySummary(metrics, sum);
+    total.textContent = `${metrics.length} nodes · CPU ${pct(sum.cpu, sum.cpuCap)}% of ${fmtCores(sum.cpuCap)} cores`
+        + ` · Memory ${pct(sum.mem, sum.memCap)}% of ${fmtMem(sum.memCap)}`;
 
-            box.innerHTML = metrics.map(nodeUsageCard).join('');
-            box.querySelectorAll('.nm-name').forEach((el) => {
-                el.addEventListener('click', () => openDrawer({ kind: 'Node', namespace: '', name: el.dataset.name }));
-            });
-        })
-        .catch(() => {
-            if (!isCurrentViewRequest(scope)) return;
-            $('node-metrics').innerHTML = '';
-            $('node-metrics-total').textContent = '';
-            $('node-metrics-hint').hidden = false;
-            updateCapacitySummary(null);
-        });
+    box.innerHTML = metrics.map(nodeUsageCard).join('');
+    box.querySelectorAll('.nm-name').forEach((el) => {
+        el.addEventListener('click', () => openDrawer({ kind: 'Node', namespace: '', name: el.dataset.name }));
+    });
 }
 
 function updateCapacitySummary(metrics, sum) {
@@ -1950,28 +1925,6 @@ function exitDiffMode() {
     $('btn-yaml-diff').textContent = 'Diff';
 }
 
-// Minimal LCS-based line diff (files here are small, O(n*m) is fine).
-function lineDiff(aText, bText) {
-    const a = aText.split('\n'), b = bText.split('\n');
-    const n = a.length, m = b.length;
-    const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
-    for (let i = n - 1; i >= 0; i--) {
-        for (let j = m - 1; j >= 0; j--) {
-            dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-        }
-    }
-    const out = [];
-    let i = 0, j = 0;
-    while (i < n && j < m) {
-        if (a[i] === b[j]) { out.push({ t: ' ', l: a[i] }); i++; j++; }
-        else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: '-', l: a[i] }); i++; }
-        else { out.push({ t: '+', l: b[j] }); j++; }
-    }
-    while (i < n) out.push({ t: '-', l: a[i++] });
-    while (j < m) out.push({ t: '+', l: b[j++] });
-    return out;
-}
-
 $('btn-yaml-save').addEventListener('click', () => {
     const scope = activeDrawerScope;
     const ref = scope?.ref;
@@ -2004,15 +1957,26 @@ function setYamlStatus(text, cls) {
 }
 
 // ---- Logs (static fetch + live follow + search + download) ----
-let logLines = [];
+const logLines = new LineRingBuffer(5000);
 let following = false;
+let logStreamSequence = 0;
+let activeLogStreamID = '';
 
-// A single global listener appends streamed lines (only one stream at a time).
-EventsOn('logline', (line) => {
-    if (!following) return;
-    logLines.push(line);
-    if (logLines.length > 5000) logLines = logLines.slice(-5000);
-    renderLogs();
+// The backend batches lines to avoid one Wails event per line. A stream ID is
+// still required because cancellation cannot retract a batch already in flight.
+EventsOn('loglines', (batch) => {
+    if (!following || !batch || batch.streamId !== activeLogStreamID) return;
+    logLines.pushMany(batch.lines);
+    logRenderScheduler.request();
+});
+
+EventsOn('logerror', (failure) => {
+    if (!following || !failure || failure.streamId !== activeLogStreamID) return;
+    following = false;
+    activeLogStreamID = '';
+    $('logs-follow').checked = false;
+    logLines.replace([failure.message || 'Log stream ended unexpectedly.']);
+    logRenderScheduler.flush();
 });
 
 function prepareLogs(scope = activeDrawerScope) {
@@ -2035,7 +1999,7 @@ function prepareLogs(scope = activeDrawerScope) {
         })
         .catch((err) => {
             if (!isCurrentDrawerRequest(scope)) return;
-            logLines = [errMsg(err)];
+            logLines.replace([errMsg(err)]);
             renderLogs();
         });
 }
@@ -2043,47 +2007,55 @@ function prepareLogs(scope = activeDrawerScope) {
 function loadStaticLogs(scope = activeDrawerScope) {
     if (!scope || !isCurrentDrawerRequest(scope)) return;
     const ref = scope.ref;
-    logLines = ['Loading logs…'];
+    logLines.replace(['Loading logs…']);
     renderLogs();
     PodLogs(ref.namespace, ref.name, $('logs-container').value, LOG_TAIL_LINES)
         .then((text) => {
             if (!isCurrentDrawerRequest(scope)) return;
-            logLines = (text || '').split('\n');
+            logLines.replace((text || '').split('\n'));
             renderLogs();
         })
         .catch((err) => {
             if (!isCurrentDrawerRequest(scope)) return;
-            logLines = [errMsg(err)];
+            logLines.replace([errMsg(err)]);
             renderLogs();
         });
 }
 
 function renderLogs() {
     const term = $('logs-search').value.trim().toLowerCase();
-    const lines = term ? logLines.filter((l) => l.toLowerCase().includes(term)) : logLines;
+    const buffered = logLines.toArray();
+    const lines = term ? buffered.filter((l) => l.toLowerCase().includes(term)) : buffered;
     const view = $('logs-view');
     const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 40;
     view.textContent = lines.join('\n') || '(no logs)';
     if (following || atBottom) view.scrollTop = view.scrollHeight;
 }
 
+const logRenderScheduler = createFrameScheduler(renderLogs);
+
 function startFollow() {
     const ref = drawerRef;
     const scope = activeDrawerScope;
     if (!ref || !ref.isPod) return;
+    const streamID = `${requestScopes.drawerOwnerKey(scope)}:${++logStreamSequence}`;
     following = true;
-    logLines = [];
+    activeLogStreamID = streamID;
+    logLines.clear();
     renderLogs();
-    StartLogStream(ref.namespace, ref.name, $('logs-container').value).catch((err) => {
-        if (!isCurrentDrawerRequest(scope)) return;
+    StartLogStream(ref.namespace, ref.name, $('logs-container').value, streamID).catch((err) => {
+        if (!isCurrentDrawerRequest(scope) || activeLogStreamID !== streamID) return;
         following = false;
+        activeLogStreamID = '';
         $('logs-follow').checked = false;
-        logLines = [errMsg(err)];
+        logLines.replace([errMsg(err)]);
         renderLogs();
     });
 }
 
 function stopFollow() {
+    activeLogStreamID = '';
+    logRenderScheduler.cancel();
     if (following) {
         following = false;
         StopLogStream();
@@ -2113,7 +2085,7 @@ $('btn-logs-download').addEventListener('click', () => {
     const ref = drawerRef;
     if (!ref) return;
     const name = `${ref.name}${$('logs-container').value ? '-' + $('logs-container').value : ''}.log`;
-    SaveTextToFile(name, logLines.join('\n'))
+    SaveTextToFile(name, logLines.toArray().join('\n'))
         .catch((err) => showError(errMsg(err)));
 });
 
@@ -4254,6 +4226,8 @@ $('btn-repo-update').addEventListener('click', () => {
 // ============ Live mode (auto-refresh) ============
 
 let liveTimer = null;
+const LIVE_REFRESH_MS = 5000;
+const LIVE_SIDEBAR_REFRESH_MS = 30000;
 
 $('btn-live').addEventListener('click', () => {
     if (liveTimer) {
@@ -4267,8 +4241,8 @@ $('btn-live').addEventListener('click', () => {
             if (selectedRows.size > 0) return;
             if (!$('drawer').hidden || !$('modal').hidden || !$('palette').hidden) return;
             refreshCurrentView();
-            loadSidebarCounts();
-        }, 5000);
+            if (Date.now() - navCountsRefreshedAt >= LIVE_SIDEBAR_REFRESH_MS) loadSidebarCounts();
+        }, LIVE_REFRESH_MS);
         $('btn-live').classList.add('live-on');
     }
 });

@@ -294,6 +294,10 @@ export function NodeMetrics() {
   return window['go']['main']['App']['NodeMetrics']();
 }
 
+export function OverviewSnapshot() {
+  return window['go']['main']['App']['OverviewSnapshot']();
+}
+
 export function PickKubeconfigFile() {
   return window['go']['main']['App']['PickKubeconfigFile']();
 }
@@ -394,8 +398,8 @@ export function StartExec(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['StartExec'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
-export function StartLogStream(arg1, arg2, arg3) {
-  return window['go']['main']['App']['StartLogStream'](arg1, arg2, arg3);
+export function StartLogStream(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['StartLogStream'](arg1, arg2, arg3, arg4);
 }
 
 export function StartPortForward(arg1, arg2, arg3, arg4, arg5, arg6) {

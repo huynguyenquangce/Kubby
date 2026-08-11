@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"sort"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 )
 
 // RelationNode is one node in the Deployment → ReplicaSet → Pod tree.
@@ -168,16 +170,20 @@ func NodeMetrics(ctx context.Context, c *Cluster) ([]NodeMetric, error) {
 	if err != nil {
 		return nil, err
 	}
-	capByName := map[string]NodeMetric{}
-	for _, n := range nodes.Items {
+	return nodeMetricsFrom(nodes.Items, usage.Items), nil
+}
+
+func nodeMetricsFrom(nodes []corev1.Node, usage []metricsv1beta1.NodeMetrics) []NodeMetric {
+	capByName := make(map[string]NodeMetric, len(nodes))
+	for _, n := range nodes {
 		capByName[n.Name] = NodeMetric{
 			CPUCapacity: n.Status.Capacity.Cpu().MilliValue(),
 			MemCapacity: n.Status.Capacity.Memory().Value() / (1024 * 1024),
 		}
 	}
 
-	out := make([]NodeMetric, 0, len(usage.Items))
-	for _, m := range usage.Items {
+	out := make([]NodeMetric, 0, len(usage))
+	for _, m := range usage {
 		cap := capByName[m.Name]
 		out = append(out, NodeMetric{
 			Name:        m.Name,
@@ -187,7 +193,7 @@ func NodeMetrics(ctx context.Context, c *Cluster) ([]NodeMetric, error) {
 			MemCapacity: cap.MemCapacity,
 		})
 	}
-	return out, nil
+	return out
 }
 
 // PodMetric is aggregate CPU/memory usage for a pod (requires metrics-server).
@@ -209,16 +215,7 @@ func PodMetricsList(ctx context.Context, c *Cluster, namespace string) ([]PodMet
 	if err != nil {
 		return nil, nil
 	}
-	out := make([]PodMetric, 0, len(list.Items))
-	for _, pm := range list.Items {
-		var cpu, mem int64
-		for _, ct := range pm.Containers {
-			cpu += ct.Usage.Cpu().MilliValue()
-			mem += ct.Usage.Memory().Value() / (1024 * 1024)
-		}
-		out = append(out, PodMetric{Namespace: pm.Namespace, Name: pm.Name, CPUMilli: cpu, MemMi: mem})
-	}
-	return out, nil
+	return podMetricsFrom(list.Items), nil
 }
 
 // TopPods returns the top `limit` pods by CPU usage. Returns (nil, nil) when
@@ -231,8 +228,17 @@ func TopPods(ctx context.Context, c *Cluster, limit int) ([]PodMetric, error) {
 	if err != nil {
 		return nil, nil
 	}
-	out := make([]PodMetric, 0, len(list.Items))
-	for _, pm := range list.Items {
+	out := podMetricsFrom(list.Items)
+	sort.Slice(out, func(i, j int) bool { return out[i].CPUMilli > out[j].CPUMilli })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func podMetricsFrom(items []metricsv1beta1.PodMetrics) []PodMetric {
+	out := make([]PodMetric, 0, len(items))
+	for _, pm := range items {
 		var cpu, mem int64
 		for _, ct := range pm.Containers {
 			cpu += ct.Usage.Cpu().MilliValue()
@@ -240,9 +246,5 @@ func TopPods(ctx context.Context, c *Cluster, limit int) ([]PodMetric, error) {
 		}
 		out = append(out, PodMetric{Namespace: pm.Namespace, Name: pm.Name, CPUMilli: cpu, MemMi: mem})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CPUMilli > out[j].CPUMilli })
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
+	return out
 }

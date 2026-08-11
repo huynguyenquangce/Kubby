@@ -40,6 +40,14 @@ not enough to burst two dozen requests at a proxy).
 The same shape applies to `NamespaceSummary` and `SearchResources`, both of which
 were converted for the same reason.
 
+Overview follows it too: one `OverviewSnapshot()` bound call fans out under a
+fixed semaphore, lists full Nodes and Pods once, and reuses those objects for
+counts, failing Pods, capacity and metrics joins. Namespace and Deployment counts
+are metadata-only. A failed section becomes a warning and does not blank the
+other cards. The 5-second live refresh updates the current screen; expensive
+sidebar tallies have their own 30-second live TTL (manual refresh, writes and
+namespace/cluster changes still refresh immediately).
+
 ## Rule 3 — metadata-only where a number or a name is enough
 
 `Cluster.Meta` returns `PartialObjectMetadata`: names and labels, no object
@@ -93,12 +101,16 @@ both the throttle and the payload scale with it.
 | Fill the sidebar (all kinds, cluster-wide) | **930 ms** (23 sequential typed lists, QPS 5) | **73 ms** |
 | Sidebar on a namespace change | same 930 ms | **~100 ms** (17 tallies, cluster kinds skipped) |
 | Global search | 10 kinds, sequential, full objects, throttled | ~40 kinds incl. CRDs, concurrent, metadata-only |
+| Overview bridge calls | 7 independent calls | **1** `OverviewSnapshot` call |
+| Overview processing, synthetic 10,000 Pods | unmeasured | **33 ms/op**, 54.6 MB/op (fake-client benchmark, 3 runs) |
 
 Reproduce with the CLI:
 
 ```powershell
 go run ./cmd/kubby-cli counts                      # full, timed
 go run ./cmd/kubby-cli counts -n default --cluster=false   # the namespace-switch path
+go run ./cmd/kubby-cli overview                            # one Overview snapshot, timed
+go test ./internal/k8sclient -run '^$' -bench BenchmarkOverviewSnapshot10kPods -benchmem
 ```
 
 ## Known remaining costs

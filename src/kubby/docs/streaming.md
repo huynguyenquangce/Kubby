@@ -19,7 +19,8 @@ This is the single most repeated mistake in this area. See
 
 | Event | Emitted by | Meaning |
 |---|---|---|
-| `logline` | `StartLogStream` goroutine | one log line |
+| `loglines` | `StartLogStream` goroutine | one owned batch of log lines |
+| `logerror` | `StartLogStream` goroutine | an owned stream failure |
 | `exec-output` | exec session | terminal output |
 | `exec-closed` | exec session | the session ended |
 | `portforward-closed` | a tunnel dying | the frontend should drop it |
@@ -29,9 +30,17 @@ must also close it — `closeDrawer()` calls `stopFollow()` and `stopExec()`.
 
 ## Log streaming
 
-`StartLogStream` runs a goroutine emitting `logline`. **One stream at a time**:
-each `StartLogStream` calls `StopLogStream` first, and `App.logCancel` holds the
-cancel func.
+`StartLogStream` runs a goroutine emitting `loglines`. `StreamLogs` flushes at 64
+lines or 40 ms, whichever comes first, so a noisy Pod cannot cross the Wails
+bridge and repaint the WebView once per line. **One stream at a time**: each
+`StartLogStream` cancels its predecessor, and `App.logCancel` holds the cancel
+func behind `logMu`.
+
+Every batch/error carries the frontend-created stream ID. Cancellation cannot
+retract an event already crossing the bridge, so the frontend accepts it only
+when that ID still owns the open Pod/container. Lines enter a 5,000-line ring
+buffer and rendering is coalesced to one animation frame; do not restore
+`slice(-5000)` or render inside a per-line listener.
 
 The drawer's Logs tab adds a container picker, a client-side line filter, and
 download-to-file. Non-follow reads use `PodLogs(..., tail)`.

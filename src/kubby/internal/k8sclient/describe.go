@@ -517,7 +517,11 @@ func ClusterEvents(ctx context.Context, c *Cluster, limit int) ([]EventInfo, err
 	if err != nil {
 		return nil, err
 	}
-	items := list.Items
+	return recentEventInfos(list.Items, limit), nil
+}
+
+func recentEventInfos(source []corev1.Event, limit int) []EventInfo {
+	items := append([]corev1.Event(nil), source...)
 	sort.Slice(items, func(i, j int) bool {
 		return eventTime(items[i]).After(eventTime(items[j]).Time)
 	})
@@ -536,7 +540,7 @@ func ClusterEvents(ctx context.Context, c *Cluster, limit int) ([]EventInfo, err
 			Object:  fmt.Sprintf("%s/%s", e.InvolvedObject.Kind, e.InvolvedObject.Name),
 		})
 	}
-	return out, nil
+	return out
 }
 
 func eventTime(e corev1.Event) metav1.Time {

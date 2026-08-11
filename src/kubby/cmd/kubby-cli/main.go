@@ -66,6 +66,32 @@ func main() {
 	}
 	root.AddCommand(diagnosticsCmd)
 
+	// overview — the same single backend snapshot used by the dashboard.
+	overviewCmd := &cobra.Command{
+		Use:   "overview",
+		Short: "Đo và in snapshot của Overview (read-only)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			started := time.Now()
+			snapshot, err := k8sclient.OverviewSnapshot(context.Background(), cluster)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%d nodes, %d namespaces, %d pods, %d deployments, %d failing · %d top pods, %d events · %s\n",
+				snapshot.Stats.Nodes, snapshot.Stats.Namespaces, snapshot.Stats.Pods,
+				snapshot.Stats.Deployments, snapshot.Stats.Errors, len(snapshot.TopPods),
+				len(snapshot.Events), time.Since(started).Round(time.Millisecond))
+			for _, warning := range snapshot.Warnings {
+				fmt.Printf("warning: %s\n", warning)
+			}
+			return nil
+		},
+	}
+	root.AddCommand(overviewCmd)
+
 	getCmd := &cobra.Command{Use: "get", Short: "Xem resource trong cluster"}
 
 	var podsNamespace string

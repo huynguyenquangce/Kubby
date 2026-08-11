@@ -25,7 +25,11 @@ cd ..
 | `frontend/src/request-scope.test.js` | late view/drawer/modal responses cannot overwrite a newer owner; stale Helm/chart values cannot cross modal or version boundaries |
 | `frontend/src/port-forward-state.test.js` | hydration/upsert, closed-event removal, drawer-close policy, and late Start ownership |
 | `frontend/src/terminal-io.test.js` | raw input ordering, write-error recovery, and valid PTY dimensions |
+| `frontend/src/log-buffer.test.js` | 5,000-line cap and frame-coalesced live-log rendering |
+| `frontend/src/line-diff.test.js` | diff reconstruction, pathological fallback, and 10,000-line regression budget |
 | `internal/k8sclient/exec_test.go` | initial/coalesced terminal resize plus concurrent, unblocking queue close |
+| `internal/k8sclient/logstream_test.go` | batch size, quiet-stream timer flush, final flush and cancel semantics |
+| `internal/k8sclient/overview_test.go` | one Node/Pod list, partial failures, terminating-Pod exclusion, and 10k benchmark |
 
 None of them need a cluster. Everything else is still verified through
 `cmd/kubby-cli` against a real one — **that is a gap, not a design choice** — see
@@ -80,6 +84,7 @@ go run ./cmd/kubby-cli node-pods <node>
 go run ./cmd/kubby-cli ns-summary <namespace>
 go run ./cmd/kubby-cli search <query>
 go run ./cmd/kubby-cli counts [-n <ns>] [--cluster=false]     # timed — the perf path
+go run ./cmd/kubby-cli overview                               # timed single-call dashboard snapshot
 go run ./cmd/kubby-cli custom-kinds
 go run ./cmd/kubby-cli list-custom <Kind.group> [-n <ns>]
 go run ./cmd/kubby-cli netflows [-n <ns>]

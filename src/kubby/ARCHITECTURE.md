@@ -116,6 +116,7 @@ src/kubby/
 │   ├── explore.go              #   PodsOnNode, NamespaceSummary, SearchResources                 → resource-browsing.md
 │   ├── diagnostics.go          #   Diagnose — server version, capabilities, first failure        → verification.md
 │   ├── counts.go               #   SidebarCounts — every nav badge in one concurrent call        → performance.md
+│   ├── overview.go             #   OverviewSnapshot — one bounded dashboard fan-out              → performance.md
 │   ├── custom.go               #   CustomKinds + ListCustom (CRD kinds as sections)              → custom-resources.md
 │   ├── apply.go                #   ApplyYAML + ApplyPreview (dry-run diff), any kind             → apply-yaml.md
 │   ├── access.go               #   CanI — SelfSubjectAccessReview per kind, cached               → permissions.md

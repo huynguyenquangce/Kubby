@@ -264,6 +264,10 @@ Do not replace the mark with the concept-board raster or the old Wails logo.
 The frontend side of [performance.md](performance.md):
 
 - **One bound call per screen**, not one per kind.
+- Live logs arrive as owned batches and enter a bounded ring buffer; one line must
+  never mean one bridge call plus one full repaint.
+- Line diffs use the linear-memory Myers/bisect module. Its work-budget fallback
+  is intentionally a non-minimal delete/add block; never restore an `n*m` matrix.
 - **Ownership scopes** from `request-scope.js` on any connection, view, namespace,
   drawer, or editor response that can be superseded. Feature-local request IDs may
   supplement the scope (for repeated reloads) but cannot replace it.

@@ -251,3 +251,22 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   Fix: emit the age cell; padRowToHeader() backfills short rows as a safety net.
   Also: the quota summary was built by ranging a Go map, so its order reshuffled on
   every refresh — now sorted, and rendered as chips that flag any resource at its limit.
+- [2026-08-11] Noisy live logs progressively froze the drawer.
+  Cause: every line crossed the Wails bridge as its own event, appended with an
+  allocating `slice(-5000)`, filtered/joined all retained lines, and replaced the
+  whole `<pre>` immediately. Work therefore grew with both log rate and retained
+  history; late events also had no Pod/container owner. Fix: backend batches of up
+  to 64 lines/40 ms, an owned stream ID on batch/error events, a 5,000-line ring
+  buffer, and animation-frame render coalescing.
+- [2026-08-11] Large YAML and Helm diffs could freeze or exhaust the WebView.
+  Cause: `lineDiff` retained an `(n+1)*(m+1)` Int32 LCS matrix; two 10,000-line
+  documents implied roughly 382 MiB before render costs. Fix: a line-oriented
+  Myers bisect diff with O(n+m) frontier memory and a deterministic work-budget
+  fallback that remains correct but may show a whole block as replaced.
+- [2026-08-11] Overview multiplied bridge/API work on every live refresh.
+  Cause: JavaScript independently called seven App methods; Node capacity listed
+  Nodes a second time, and the 5-second loop also refreshed every sidebar kind.
+  Fix: one `OverviewSnapshot` bound call with bounded Go fan-out, shared Node/Pod
+  lists, metadata-only counts, partial-section warnings, and a 30-second sidebar
+  live TTL. Synthetic 10,000-Pod backend processing measured about 33 ms/op and
+  54.6 MB/op on the development machine.

@@ -49,3 +49,16 @@ test('overview uses bundled typography and dashboard-specific table contracts', 
     assert.ok(tables.length >= 3);
     for (const table of tables) assert.match(table[1], /class="[^"]*plain[^"]*"/);
 });
+
+test('overview loads through one snapshot binding', () => {
+    const loader = mainJS.match(/function loadOverview\(scope\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    assert.match(loader, /return OverviewSnapshot\(\)/);
+    assert.doesNotMatch(loader, /Promise\.all|\bListNodes\(|\bListNamespaces\(|\bListPods\(|\bListDeployments\(|\bNodeMetrics\(|\bTopPods\(|\bClusterEvents\(/);
+});
+
+test('live logs use owned batches and a bounded buffer', () => {
+    assert.match(mainJS, /EventsOn\('loglines'/);
+    assert.match(mainJS, /new LineRingBuffer\(5000\)/);
+    assert.match(mainJS, /batch\.streamId !== activeLogStreamID/);
+    assert.doesNotMatch(mainJS, /EventsOn\('logline'/);
+});

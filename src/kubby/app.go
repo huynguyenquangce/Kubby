@@ -21,8 +21,10 @@ type App struct {
 	cluster    *k8sclient.Cluster // the active cluster (nil if none)
 	activeName string             // display name (context) of the active cluster
 	clusters   map[string]*k8sclient.Cluster
-	order      []string           // connection order, for a stable dropdown
+	order      []string // connection order, for a stable dropdown
+	logMu      sync.Mutex
 	logCancel  context.CancelFunc // cancels the active log stream, if any
+	logEpoch   uint64             // invalidates callbacks from an older stream
 	pfMu       sync.Mutex
 	pfSessions map[string]*portForwardEntry
 	pfCluster  *k8sclient.Cluster
@@ -114,6 +116,7 @@ func (a *App) verifyAndStore(name string, cluster *k8sclient.Cluster) error {
 		a.order = append(a.order, name)
 	}
 	a.clusters[name] = cluster
+	a.StopLogStream()
 	a.StopExec()
 	a.resetPortForwardsForCluster(cluster)
 	a.activeName = name
@@ -559,6 +562,15 @@ func (a *App) ListLimitRanges(ns string) ([]k8sclient.LimitRangeInfo, error) {
 
 // ---- Feature 4: relations + metrics ----
 
+// OverviewSnapshot returns the complete dashboard payload in one bound call;
+// Kubernetes fan-out and partial-error handling live in k8sclient.
+func (a *App) OverviewSnapshot() (*k8sclient.OverviewData, error) {
+	if err := a.requireCluster(); err != nil {
+		return nil, err
+	}
+	return k8sclient.OverviewSnapshot(a.ctx, a.cluster)
+}
+
 func (a *App) DeploymentTree(namespace, name string) (*k8sclient.RelationNode, error) {
 	if err := a.requireCluster(); err != nil {
 		return nil, err
@@ -775,31 +787,65 @@ func languageRule(lang string) string {
 
 // ---- Feature 2: log streaming + save ----
 
-// StartLogStream begins following a container's logs. Each line is emitted to
-// the frontend as a "logline" event; the stream stops on StopLogStream, a new
-// stream, or disconnect.
-func (a *App) StartLogStream(namespace, name, container string) error {
+// LogStreamBatch crosses the Wails bridge at most once per backend batch. The
+// frontend-provided stream ID prevents a late batch from an old Pod/container
+// being rendered into its replacement drawer.
+type LogStreamBatch struct {
+	StreamID string   `json:"streamId"`
+	Lines    []string `json:"lines"`
+}
+
+type LogStreamError struct {
+	StreamID string `json:"streamId"`
+	Message  string `json:"message"`
+}
+
+// StartLogStream begins following a container's logs. Batches are emitted as
+// "loglines" events; the stream stops on StopLogStream, a new stream, or
+// disconnect.
+func (a *App) StartLogStream(namespace, name, container, streamID string) error {
 	if err := a.requireCluster(); err != nil {
 		return err
 	}
-	a.StopLogStream() // ensure only one active stream
+	if strings.TrimSpace(streamID) == "" {
+		return fmt.Errorf("log stream ID is required")
+	}
 
+	a.logMu.Lock()
+	if a.logCancel != nil {
+		a.logCancel()
+	}
+	a.logEpoch++
+	epoch := a.logEpoch
 	ctx, cancel := context.WithCancel(a.ctx)
 	a.logCancel = cancel
+	cluster := a.cluster
+	a.logMu.Unlock()
 
 	go func() {
-		err := k8sclient.StreamLogs(ctx, a.cluster, namespace, name, container, func(line string) {
-			wailsruntime.EventsEmit(a.ctx, "logline", line)
+		err := k8sclient.StreamLogs(ctx, cluster, namespace, name, container, func(lines []string) {
+			if a.isCurrentLogStream(epoch) {
+				wailsruntime.EventsEmit(a.ctx, "loglines", LogStreamBatch{StreamID: streamID, Lines: lines})
+			}
 		})
-		if err != nil && ctx.Err() == nil {
-			wailsruntime.EventsEmit(a.ctx, "logerror", err.Error())
+		if err != nil && ctx.Err() == nil && a.isCurrentLogStream(epoch) {
+			wailsruntime.EventsEmit(a.ctx, "logerror", LogStreamError{StreamID: streamID, Message: err.Error()})
 		}
 	}()
 	return nil
 }
 
+func (a *App) isCurrentLogStream(epoch uint64) bool {
+	a.logMu.Lock()
+	defer a.logMu.Unlock()
+	return a.logEpoch == epoch && a.logCancel != nil
+}
+
 // StopLogStream cancels the active log stream, if any.
 func (a *App) StopLogStream() {
+	a.logMu.Lock()
+	defer a.logMu.Unlock()
+	a.logEpoch++
 	if a.logCancel != nil {
 		a.logCancel()
 		a.logCancel = nil
