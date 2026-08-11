@@ -49,15 +49,15 @@ In the app: **Settings → About** shows the same line, and **Copy diagnostics**
 a full report on the clipboard (`App.Diagnostics` in `diagnostics.go`, cluster
 probing in `internal/k8sclient/diagnostics.go`).
 
-- `buildinfo.Version` is the checked-in source of truth, carrying a `-dev` suffix
-  so an unreleased build is never mistaken for a release. A release overrides it:
-  `-ldflags "-X kubby/internal/buildinfo.Version=1.2.0"`.
-- Commit and date come from **Go's embedded VCS stamps** automatically once this
-  directory is a git checkout — no ldflags needed. Until then the report says
-  `(not built from a git checkout)` rather than showing a blank field.
+- `buildinfo.Version` keeps a checked-in `-dev` suffix so an unreleased build is
+  never mistaken for a release. Normal checkout builds use Go's embedded VCS
+  stamps when available. A release explicitly overrides version, commit, and date
+  because Wails cross-builds or source archives may omit those stamps; the sole
+  command and checklist live in [`docs/BUILD.md`](../../../docs/BUILD.md).
 - `wails.json` carries the `info` block (`productVersion`, `companyName`,
-  `copyright`), which is what fills the Windows exe's file-properties metadata.
-  **Bump it together with `buildinfo.Version`** — nothing enforces that they match.
+  `copyright`), which fills the Windows exe's file-properties metadata. Its
+  numeric `productVersion` must match the release version passed through ldflags;
+  nothing enforces that equality automatically.
 
 > **The report must never carry a secret.** It reads AI provider and model from
 > `GetAIStatus()`, which does not return the key. It includes the API-server

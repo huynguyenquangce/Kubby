@@ -242,6 +242,139 @@ check rather than claiming it from a headless session.
 For Kubernetes-backed behaviour, use the corresponding read-only `kubby-cli`
 command described in [`../src/kubby/docs/verification.md`](../src/kubby/docs/verification.md).
 
+## 9. Publish a GitHub release
+
+This section is the release checklist. Complete sections 1–8 first; a successful
+`go build`, frontend bundle, or cross-build alone is not release readiness.
+
+### 9.1 Freeze and audit the release commit
+
+Update the intended version in `wails.json`, prepare user-facing notes under
+`docs/releases/vX.Y.Z.md`, and commit/push every source and documentation change.
+The checked-in `internal/buildinfo.Version` must keep its `-dev` suffix; section 5
+overrides it only in the release binary.
+
+Confirm that the exact commit to be tagged is clean and matches `origin/main`:
+
+```bash
+git status --short --branch
+git rev-parse HEAD
+git rev-parse origin/main
+git tag -l vX.Y.Z
+git ls-remote --tags origin refs/tags/vX.Y.Z
+```
+
+`git status --short` must print no changed paths, the two revisions must match,
+and the proposed tag must not already exist. Run the project release-readiness
+audits described in `AGENTS.md`, then repeat the source checks in section 4.
+
+For a release, also review dependency advisories:
+
+```bash
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+cd frontend
+npm audit --json
+cd ..
+```
+
+Do not silently ignore a scanner failure. Upgrade a dependency when a fix exists.
+If upstream has no fix, release only after proving the vulnerable path is disabled
+or unreachable, adding a regression test, and disclosing the residual in that
+version's release notes.
+
+### 9.2 Build and stage the assets
+
+Record the release version without the `v` prefix, the seven-character commit,
+and the commit date:
+
+```bash
+git rev-parse --short=7 HEAD
+git show -s --format=%cs HEAD
+```
+
+Use those exact values in the release build from section 5. After section 6 has
+verified the new canonical EXE, stage a target-specific copy and checksum:
+
+```bash
+cp build/bin/kubby.exe build/bin/kubby-windows-amd64.exe
+
+cd build/bin
+sha256sum kubby-windows-amd64.exe > kubby-windows-amd64.exe.sha256
+sha256sum -c kubby-windows-amd64.exe.sha256
+cd ../..
+```
+
+Keep `build/bin/kubby.exe` as the canonical local artifact. The release-named copy
+and checksum are upload assets, not source, and remain ignored by Git.
+
+The `.sha256` file is the EXE's byte-for-byte fingerprint. It lets someone detect
+an incomplete, corrupted, or changed download. On Windows, calculate the local
+fingerprint and compare it with the value inside the downloaded checksum file:
+
+```powershell
+Get-FileHash .\kubby-windows-amd64.exe -Algorithm SHA256
+Get-Content .\kubby-windows-amd64.exe.sha256
+```
+
+Matching hashes prove file integrity, not publisher identity. A checksum does not
+replace Authenticode/code signing because an attacker who can replace both release
+assets could publish a matching malicious checksum too.
+
+Perform the native Windows checks in section 8 against the release-named EXE.
+In **Settings → About**, the runtime identity must contain the same version,
+commit, date, Go toolchain, and `windows/amd64` target used for the build. Do not
+tag or publish until the human visual check passes.
+
+### 9.3 Tag, upload, and verify
+
+Install and authenticate GitHub CLI once if needed:
+
+```bash
+gh auth status
+gh auth login
+```
+
+Create an annotated tag only after the manual gate passes, push it, and publish
+the two verified assets. Use `--prerelease` while the Windows binary is unsigned
+or the release is otherwise a preview; omit it only when the project is ready for
+a stable release.
+
+```bash
+git tag -a vX.Y.Z -m "Kubby vX.Y.Z"
+git push origin vX.Y.Z
+
+gh release create vX.Y.Z \
+  build/bin/kubby-windows-amd64.exe \
+  build/bin/kubby-windows-amd64.exe.sha256 \
+  --verify-tag \
+  --prerelease \
+  --title "Kubby vX.Y.Z" \
+  --notes-file ../../docs/releases/vX.Y.Z.md
+```
+
+The command above runs from `src/kubby/`, so the release-notes path intentionally
+walks back to the repository-level `docs/releases/` directory.
+
+Finally, prove the remote tag points to the audited commit and GitHub accepted
+both complete assets:
+
+```bash
+git ls-remote --tags origin refs/tags/vX.Y.Z refs/tags/vX.Y.Z^{}
+gh release view vX.Y.Z --json name,tagName,isDraft,isPrerelease,url,targetCommitish,assets,publishedAt
+
+cd build/bin
+sha256sum -c kubby-windows-amd64.exe.sha256
+cd ../..
+```
+
+The peeled `^{}` tag revision must equal the release commit. The GitHub release
+must not be a draft, both assets must report `uploaded`, the remote EXE size must
+match the verified local file, and the checksum must still pass. Only then is the
+release complete. Run section 7 afterward to remove identified legacy binaries
+and temporary caches without deleting the retained canonical artifact or release
+assets.
+
 ## Troubleshooting
 
 - `webkit2gtk-4.0 not found` on a recent Ubuntu: install WebKitGTK 4.1 development
