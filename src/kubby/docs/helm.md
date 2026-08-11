@@ -39,6 +39,12 @@ maintainer and home links.
   before it happens, and it is worth keeping for any new mutating action.
 - **Chart default values are loaded from the chart**, not from Artifact Hub's
   `default_values` field, which is unreliable. Authoritative beats convenient.
+- **Helm dialogs reuse one modal and fixed element IDs.** Async release/chart
+  responses must carry the exact modal owner scope and write only through captured
+  DOM/editor handles. Upgrade stays disabled until current values load; Install is
+  disabled while a requested defaults load is pending. Chart defaults are
+  version-bound; changing the version invalidates an in-flight request and clears
+  defaults loaded for the previous version.
 - **`repo.LoadFile`'s not-found error is not matched by `os.IsNotExist` on
   Windows.** `loadOrNewRepoFile` therefore stats the file first. Removing that
   stat reintroduces a Windows-only failure on first use.

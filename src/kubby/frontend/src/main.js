@@ -224,6 +224,11 @@ function viewError(scope, err) {
     if (isCurrentViewRequest(scope)) showDashError(err);
 }
 
+function connectionOwnershipChanged() {
+    if (!$('modal').hidden) closeModal();
+    requestScopes.connectionChanged();
+}
+
 // ============ Welcome screen ============
 
 document.querySelectorAll('.tab').forEach((tab) => {
@@ -304,7 +309,7 @@ function clearWelcomeError() { $('welcome-error').hidden = true; }
 // ============ Dashboard ============
 
 function enterDashboard() {
-    requestScopes.connectionChanged();
+    connectionOwnershipChanged();
     clearRenderedView();
     $('welcome').hidden = true;
     $('dashboard').hidden = false;
@@ -336,7 +341,7 @@ function refreshClusterSwitcher() {
 
 $('cluster-select').addEventListener('change', (e) => {
     const name = e.target.value;
-    requestScopes.connectionChanged();
+    connectionOwnershipChanged();
     clearRenderedView();
     closeDrawer();
     for (const f of activeForwards) StopPortForward(f.key);
@@ -361,7 +366,7 @@ $('cluster-select').addEventListener('change', (e) => {
 // "+ Add cluster" returns to Welcome but keeps existing connections alive;
 // connecting there just adds another cluster and re-enters the dashboard.
 $('btn-add-cluster').addEventListener('click', () => {
-    requestScopes.connectionChanged();
+    connectionOwnershipChanged();
     closeDrawer();
     $('dashboard').hidden = true;
     $('welcome').hidden = false;
@@ -371,7 +376,7 @@ $('btn-add-cluster').addEventListener('click', () => {
 
 $('btn-disconnect').addEventListener('click', () => {
     const active = $('cluster-select').value;
-    requestScopes.connectionChanged();
+    connectionOwnershipChanged();
     clearRenderedView();
     closeDrawer();
     for (const f of activeForwards) StopPortForward(f.key);
@@ -2241,6 +2246,7 @@ function renderForwards() {
 
 let modalOnOk = null;
 let modalOnExtra = null;
+let activeModalScope = null;
 
 // YAML editors living inside the current modal, keyed by host element id. They
 // must be destroyed when the modal closes — closeModal wipes the body's HTML,
@@ -2259,10 +2265,30 @@ function modalEditor(id) { return modalEditors[id] || null; }
 function modalYaml(id) { return modalEditors[id] ? modalEditors[id].getValue() : ''; }
 function setModalYaml(id, text) { if (modalEditors[id]) modalEditors[id].setValue(text); }
 
-function openModal({ title, bodyHtml, okText = 'OK', onOk, onOpen, extraText = '', onExtra = null }) {
+function disposeModalContent() {
+    for (const id of Object.keys(modalEditors)) modalEditors[id].destroy();
+    modalEditors = {};
+    $('modal-body').innerHTML = '';
+}
+
+function isCurrentModalRequest(scope) {
+    return activeModalScope === scope
+        && !$('modal').hidden
+        && requestScopes.isCurrentModal(scope);
+}
+
+function openModal({ title, bodyHtml, okText = 'OK', onOk, onOpen, extraText = '', onExtra = null,
+    ownerKey = `modal\0${title}`, okDisabled = false }) {
+    // A modal can transition directly into another modal (chart search → install).
+    // Dispose the old content before reusing its IDs and invalidate every callback
+    // that still belongs to it.
+    disposeModalContent();
+    const scope = requestScopes.openModal(ownerKey);
+    activeModalScope = scope;
     $('modal-title').textContent = title;
     $('modal-body').innerHTML = bodyHtml;
     $('modal-ok').textContent = okText;
+    $('modal-ok').disabled = okDisabled;
     $('modal-error').hidden = true;
     modalOnOk = onOk;
     // An optional secondary action (Import YAML's Preview). Hidden unless given.
@@ -2274,20 +2300,26 @@ function openModal({ title, bodyHtml, okText = 'OK', onOk, onOpen, extraText = '
     $('modal-backdrop').hidden = false;
     $('modal').hidden = false;
     if (onOpen) onOpen();
+    return scope;
 }
 
-function closeModal() {
+function closeModal(scope = null) {
+    // Async completion from A must never close a newer modal B.
+    if (scope && activeModalScope !== scope) return;
+    requestScopes.closeModal();
+    activeModalScope = null;
     $('modal').hidden = true;
     $('modal-backdrop').hidden = true;
-    for (const id of Object.keys(modalEditors)) modalEditors[id].destroy();
-    modalEditors = {};
-    $('modal-body').innerHTML = '';
+    disposeModalContent();
     $('modal-extra').hidden = true;
+    $('modal-extra').disabled = false;
+    $('modal-ok').disabled = false;
     modalOnOk = null;
     modalOnExtra = null;
 }
 
-function modalError(msg) {
+function modalError(msg, scope = activeModalScope) {
+    if (!isCurrentModalRequest(scope)) return;
     const el = $('modal-error');
     el.textContent = msg;
     el.hidden = false;
@@ -2295,33 +2327,41 @@ function modalError(msg) {
 
 function submitModal() {
     if (!modalOnOk) { closeModal(); return; }
+    const scope = activeModalScope;
+    const onOk = modalOnOk;
+    if (!isCurrentModalRequest(scope)) return;
     const btn = $('modal-ok');
     btn.disabled = true;
     $('modal-error').hidden = true;
     Promise.resolve()
-        .then(() => modalOnOk())
-        .then(() => closeModal())
-        .catch((err) => modalError(errMsg(err)))
-        .finally(() => { btn.disabled = false; });
+        .then(() => onOk())
+        .then(() => { if (isCurrentModalRequest(scope)) closeModal(scope); })
+        .catch((err) => modalError(errMsg(err), scope))
+        .finally(() => { if (isCurrentModalRequest(scope)) btn.disabled = false; });
 }
 
 // The secondary action runs in place — unlike OK it does not close the modal,
 // because its whole purpose is to show you something before you commit.
 $('modal-extra').addEventListener('click', () => {
     if (!modalOnExtra) return;
+    const scope = activeModalScope;
+    const onExtra = modalOnExtra;
+    if (!isCurrentModalRequest(scope)) return;
     const btn = $('modal-extra');
     btn.disabled = true;
     $('modal-error').hidden = true;
     Promise.resolve()
-        .then(() => modalOnExtra())
-        .catch((err) => modalError(errMsg(err)))
-        .finally(() => { btn.disabled = false; });
+        .then(() => onExtra())
+        .catch((err) => modalError(errMsg(err), scope))
+        .finally(() => { if (isCurrentModalRequest(scope)) btn.disabled = false; });
 });
 
 $('modal-ok').addEventListener('click', submitModal);
-$('modal-cancel').addEventListener('click', closeModal);
-$('modal-close').addEventListener('click', closeModal);
-$('modal-backdrop').addEventListener('click', closeModal);
+// Do not pass closeModal directly: addEventListener supplies a MouseEvent as
+// argument 1, which the scope-aware closeModal would interpret as a stale scope.
+$('modal-cancel').addEventListener('click', () => closeModal());
+$('modal-close').addEventListener('click', () => closeModal());
+$('modal-backdrop').addEventListener('click', () => closeModal());
 
 // ---- Stackable alert/confirm dialog (replaces the native browser popups) ----
 // Its own layer with a higher z-index so it can appear on top of an open modal
@@ -3353,9 +3393,14 @@ function collapseDiff(diff, context) {
     return out;
 }
 
+function modalOwner(type, ...parts) {
+    return [type, ...parts].join('\u0000');
+}
+
 function openHelmDetailModal(ref) {
-    openModal({
+    const scope = openModal({
         title: `Helm — ${ref.name}`,
+        ownerKey: modalOwner('helm-detail', ref.namespace, ref.name),
         okText: 'Close',
         bodyHtml: `<div class="helm-tabs">
                 <button class="helm-tab active" data-htab="resources">Resources</button>
@@ -3369,43 +3414,55 @@ function openHelmDetailModal(ref) {
             <pre id="helm-content" class="helm-content" hidden>Loading…</pre>`,
         onOk: () => Promise.resolve(),
     });
+    const metaBox = $('helm-meta');
+    const resourcesBox = $('helm-resources');
+    const contentBox = $('helm-content');
+    const tabs = [...$('modal-body').querySelectorAll('.helm-tab')];
+    const runTestsButton = $('helm-run-tests');
     HelmGet(ref.namespace, ref.name)
         .then((d) => {
-            $('helm-meta').innerHTML = `<span class="chip">chart: ${esc(d.chart)}</span> <span class="chip">app: ${esc(d.appVersion || '-')}</span> <span class="chip">rev ${d.revision}</span> <span class="chip">${esc(d.status)}</span>`;
+            if (!isCurrentModalRequest(scope)) return;
+            metaBox.innerHTML = `<span class="chip">chart: ${esc(d.chart)}</span> <span class="chip">app: ${esc(d.appVersion || '-')}</span> <span class="chip">rev ${d.revision}</span> <span class="chip">${esc(d.status)}</span>`;
             const panes = { values: d.values || '(no user-supplied values)', manifest: d.manifest || '', notes: d.notes || '(no notes)' };
             const show = (tab) => {
                 const isRes = tab === 'resources';
-                $('helm-resources').hidden = !isRes;
-                $('helm-content').hidden = isRes;
-                if (!isRes) $('helm-content').textContent = panes[tab];
+                resourcesBox.hidden = !isRes;
+                contentBox.hidden = isRes;
+                if (!isRes) contentBox.textContent = panes[tab];
             };
             show('resources');
-            document.querySelectorAll('.helm-tab').forEach((t) => {
+            tabs.forEach((t) => {
                 t.addEventListener('click', () => {
-                    document.querySelectorAll('.helm-tab').forEach((x) => x.classList.toggle('active', x === t));
+                    tabs.forEach((x) => x.classList.toggle('active', x === t));
                     show(t.dataset.htab);
                 });
             });
         })
-        .catch((err) => { $('helm-resources').textContent = errMsg(err); });
+        .catch((err) => {
+            if (isCurrentModalRequest(scope)) metaBox.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
+        });
 
     // Resources tab: live health of every object the release owns.
-    loadHelmReleaseResources(ref);
+    loadHelmReleaseResources(ref, scope, resourcesBox);
 
-    $('helm-run-tests').addEventListener('click', () => {
-        const btn = $('helm-run-tests');
+    runTestsButton.addEventListener('click', () => {
+        const btn = runTestsButton;
         btn.disabled = true; btn.textContent = 'Testing…';
         HelmTest(ref.namespace, ref.name)
-            .then((out) => showAlert(out, { title: `Test results — ${ref.name}`, icon: '🧪' }))
-            .catch((err) => showError(errMsg(err)))
-            .finally(() => { btn.disabled = false; btn.textContent = 'Run tests'; });
+            .then((out) => { if (isCurrentModalRequest(scope)) showAlert(out, { title: `Test results — ${ref.name}`, icon: '🧪' }); })
+            .catch((err) => { if (isCurrentModalRequest(scope)) showError(errMsg(err)); })
+            .finally(() => {
+                if (!isCurrentModalRequest(scope)) return;
+                btn.disabled = false;
+                btn.textContent = 'Run tests';
+            });
     });
 }
 
-function loadHelmReleaseResources(ref) {
+function loadHelmReleaseResources(ref, scope, box) {
     HelmReleaseResources(ref.namespace, ref.name)
         .then((list) => {
-            const box = $('helm-resources');
+            if (!isCurrentModalRequest(scope)) return;
             if (!list || list.length === 0) { box.innerHTML = '<p class="empty-inline">No resources found in the manifest.</p>'; return; }
             box.innerHTML = '';
             for (const r of list) {
@@ -3428,19 +3485,22 @@ function loadHelmReleaseResources(ref) {
                 box.appendChild(div);
             }
         })
-        .catch((err) => { $('helm-resources').innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
+        .catch((err) => { if (isCurrentModalRequest(scope)) box.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
 }
 
 function openHelmHistoryModal(ref) {
-    openModal({
+    const scope = openModal({
         title: `Helm history — ${ref.name}`,
+        ownerKey: modalOwner('helm-history', ref.namespace, ref.name),
         okText: 'Close',
         bodyHtml: `<div id="helm-history" class="rollout-list"><p class="empty-inline">Loading…</p></div>`,
         onOk: () => Promise.resolve(),
     });
+    const historyBox = $('helm-history');
     HelmHistory(ref.namespace, ref.name)
         .then((revs) => {
-            const box = $('helm-history');
+            if (!isCurrentModalRequest(scope)) return;
+            const box = historyBox;
             if (!revs || revs.length === 0) { box.innerHTML = '<p class="empty-inline">No history.</p>'; return; }
             const currentRev = revs[0].revision;
             box.innerHTML = revs.map((r, i) =>
@@ -3475,32 +3535,45 @@ function openHelmHistoryModal(ref) {
                         HelmGetRevision(ref.namespace, ref.name, currentRev),
                     ])
                         .then(([older, current]) => {
+                            if (!isCurrentModalRequest(scope) || pre.dataset.rev !== String(rev)) return;
                             renderDiffInto(pre, older.manifest, current.manifest);
                             pre.scrollIntoView({ block: 'nearest' });
                         })
-                        .catch((err) => { pre.textContent = errMsg(err); });
+                        .catch((err) => {
+                            if (isCurrentModalRequest(scope) && pre.dataset.rev === String(rev)) pre.textContent = errMsg(err);
+                        });
                 });
             });
             box.querySelectorAll('.helm-rollback-btn').forEach((btn) => {
                 btn.addEventListener('click', () => {
                     const rev = parseInt(btn.dataset.rev, 10);
                     showConfirm(`Rollback release “${ref.name}” to revision ${rev}?`, { title: 'Rollback release', icon: '↩', okText: 'Rollback' }).then((ok) => {
-                        if (!ok) return;
+                        if (!ok || !isCurrentModalRequest(scope)) return;
                         btn.disabled = true;
                         HelmRollback(ref.namespace, ref.name, rev)
-                            .then(() => { closeModal(); refreshCurrentView(); })
-                            .catch((err) => { showError(errMsg(err)); btn.disabled = false; });
+                            .then(() => {
+                                if (isCurrentModalRequest(scope)) closeModal(scope);
+                                refreshCurrentView();
+                            })
+                            .catch((err) => {
+                                if (!isCurrentModalRequest(scope)) return;
+                                showError(errMsg(err));
+                                btn.disabled = false;
+                            });
                     });
                 });
             });
         })
-        .catch((err) => { $('helm-history').innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
+        .catch((err) => { if (isCurrentModalRequest(scope)) historyBox.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
 }
 
 function openHelmUpgradeModal(ref) {
-    openModal({
+    let valuesEditor = null;
+    const scope = openModal({
         title: `Upgrade values — ${ref.name}`,
+        ownerKey: modalOwner('helm-upgrade', ref.namespace, ref.name),
         okText: 'Upgrade',
+        okDisabled: true,
         bodyHtml: `<p class="modal-hint">Edit the release values, then <strong>Preview</strong> the rendered diff before you Upgrade (reuses the current chart).</p>
             <div id="helm-values" class="yaml-host yaml-host-modal"></div>
             <div class="install-actions">
@@ -3508,29 +3581,56 @@ function openHelmUpgradeModal(ref) {
                 <span id="helm-preview-status" class="modal-hint"></span>
             </div>
             <pre id="helm-upg-diff" class="helm-content diff-view" hidden></pre>`,
-        onOpen: () => mountModalEditor('helm-values', { value: '# loading…' }),
+        onOpen: () => { valuesEditor = mountModalEditor('helm-values', { value: '# loading…' }); },
         onOk: () => {
-            const vals = modalYaml('helm-values');
+            if (!isCurrentModalRequest(scope) || !valuesEditor) return Promise.reject('This Upgrade dialog is stale. Reopen it.');
+            const vals = valuesEditor.getValue();
             return HelmUpgradeValues(ref.namespace, ref.name, vals).then(() => refreshCurrentView());
         },
     });
+    const okButton = $('modal-ok');
+    const previewButton = $('helm-preview-btn');
+    const previewBox = $('helm-upg-diff');
+    const previewStatus = $('helm-preview-status');
+    previewButton.disabled = true;
     HelmGet(ref.namespace, ref.name)
-        .then((d) => setModalYaml('helm-values', d.values || ''))
-        .catch((err) => setModalYaml('helm-values', `# could not load values: ${errMsg(err)}`));
+        .then((d) => {
+            if (!isCurrentModalRequest(scope)) return;
+            valuesEditor.setValue(d.values || '');
+            okButton.disabled = false;
+            previewButton.disabled = false;
+        })
+        .catch((err) => {
+            if (!isCurrentModalRequest(scope)) return;
+            valuesEditor.setValue('');
+            modalError(`Could not load current values: ${errMsg(err)}`, scope);
+        });
 
-    $('helm-preview-btn').addEventListener('click', () => {
-        const vals = modalYaml('helm-values');
-        const pre = $('helm-upg-diff');
-        const btn = $('helm-preview-btn');
-        const status = $('helm-preview-status');
-        if (!pre.hidden) { pre.hidden = true; status.textContent = ''; btn.textContent = '👁 Preview diff'; return; }
+    let previewReqId = 0;
+    previewButton.addEventListener('click', () => {
+        if (!isCurrentModalRequest(scope) || !valuesEditor) return;
+        const vals = valuesEditor.getValue();
+        const pre = previewBox;
+        const btn = previewButton;
+        const status = previewStatus;
+        if (!pre.hidden) {
+            previewReqId++;
+            pre.hidden = true;
+            status.textContent = '';
+            btn.textContent = '👁 Preview diff';
+            return;
+        }
+        const reqId = ++previewReqId;
         pre.hidden = false; pre.textContent = 'Rendering (dry-run)…'; status.textContent = ''; btn.textContent = '✕ Hide preview';
         HelmUpgradePreview(ref.namespace, ref.name, vals)
             .then((diff) => {
+                if (!isCurrentModalRequest(scope) || reqId !== previewReqId) return;
                 renderDiffInto(pre, diff.current, diff.proposed);
                 status.textContent = 'Diff = current manifest → what Upgrade would apply.';
             })
-            .catch((err) => { pre.textContent = errMsg(err); });
+            .catch((err) => {
+                if (isCurrentModalRequest(scope) && reqId === previewReqId) pre.textContent = errMsg(err);
+            });
     });
 }
 
@@ -3548,8 +3648,9 @@ function uninstallHelm(ref) {
 $('btn-helm-search').addEventListener('click', openChartSearchModal);
 
 function openChartSearchModal() {
-    openModal({
+    const scope = openModal({
         title: 'Search & install charts',
+        ownerKey: 'chart-search',
         okText: 'Close',
         bodyHtml: `<div class="chart-search-row">
                 <input id="chart-query" class="pf-input no-enter-submit" style="flex:1" type="text" placeholder="Search Artifact Hub (e.g. nginx, redis, prometheus)…" autocomplete="off">
@@ -3559,17 +3660,27 @@ function openChartSearchModal() {
             <div id="chart-results" class="chart-results"></div>`,
         onOk: () => Promise.resolve(),
     });
+    const queryInput = $('chart-query');
+    const resultsBox = $('chart-results');
+    const searchButton = $('chart-search-go');
+    let searchReqId = 0;
     const run = () => {
-        const q = $('chart-query').value.trim();
+        if (!isCurrentModalRequest(scope)) return;
+        const q = queryInput.value.trim();
         if (!q) return;
-        $('chart-results').innerHTML = '<p class="empty-inline">Searching…</p>';
+        const reqId = ++searchReqId;
+        resultsBox.innerHTML = '<p class="empty-inline">Searching…</p>';
         SearchCharts(q)
-            .then((results) => renderChartResults(results, $('chart-results')))
-            .catch((err) => { $('chart-results').innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
+            .then((results) => {
+                if (isCurrentModalRequest(scope) && reqId === searchReqId) renderChartResults(results, resultsBox);
+            })
+            .catch((err) => {
+                if (isCurrentModalRequest(scope) && reqId === searchReqId) resultsBox.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
+            });
     };
-    $('chart-search-go').addEventListener('click', run);
-    $('chart-query').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } });
-    $('chart-query').focus();
+    searchButton.addEventListener('click', run);
+    queryInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } });
+    queryInput.focus();
 }
 
 function renderChartResults(results, box) {
@@ -3596,8 +3707,12 @@ function renderChartResults(results, box) {
 function openChartInstallModal(chart) {
     const ns = currentNamespace || 'default';
     const chartName = chart.normName || chart.name;
-    openModal({
+    let valuesEditor = null;
+    let defaultsLoading = false;
+    let loadedDefaultsVersion = null;
+    const scope = openModal({
         title: `Install ${chart.name}`,
+        ownerKey: modalOwner('chart-install', chart.repoURL, chartName),
         okText: 'Install',
         bodyHtml: `<div class="install-form">
                 <label>Release name<input type="text" id="inst-name" class="pf-input" value="${esc(chartName)}"></label>
@@ -3619,69 +3734,141 @@ function openChartInstallModal(chart) {
                 <pre id="inst-diff" class="helm-content diff-view" hidden></pre>
             </div>
             <pre id="inst-readme" class="helm-content" hidden>Loading README…</pre>`,
-        onOpen: () => mountModalEditor('inst-values', {
-            placeholder: '# leave empty for chart defaults, or click “Load chart defaults”',
-        }),
+        onOpen: () => {
+            valuesEditor = mountModalEditor('inst-values', {
+                placeholder: '# leave empty for chart defaults, or click “Load chart defaults”',
+            });
+        },
         onOk: () => {
-            const name = $('inst-name').value.trim();
-            const nsv = $('inst-ns').value.trim() || 'default';
-            const ver = $('inst-ver').value.trim();
-            const vals = modalYaml('inst-values');
+            if (!isCurrentModalRequest(scope) || !valuesEditor) return Promise.reject('This Install dialog is stale. Reopen it.');
+            if (defaultsLoading) return Promise.reject('Wait for chart defaults to finish loading.');
+            const name = nameInput.value.trim();
+            const nsv = namespaceInput.value.trim() || 'default';
+            const ver = versionSelect.value.trim();
+            const vals = valuesEditor.getValue();
             if (!name) return Promise.reject('Enter a release name.');
             return HelmInstall(nsv, name, chart.repoURL, chartName, ver, vals)
                 .then(() => { selectView('helm'); loadSidebarCounts(); });
         },
     });
+    const modalBody = $('modal-body');
+    const nameInput = $('inst-name');
+    const namespaceInput = $('inst-ns');
+    const versionSelect = $('inst-ver');
+    const linksBox = $('inst-links');
+    const readmeBox = $('inst-readme');
+    const valuesPane = $('inst-pane-values');
+    const defaultsButton = $('inst-load-defaults');
+    const previewButton = $('inst-preview');
+    const statusBox = $('inst-status');
+    const diffBox = $('inst-diff');
+    const okButton = $('modal-ok');
+    const installTabs = [...modalBody.querySelectorAll('.install-tab')];
 
     // Tabs: Values / README.
-    document.querySelectorAll('.install-tab').forEach((t) => {
+    installTabs.forEach((t) => {
         t.addEventListener('click', () => {
-            document.querySelectorAll('.install-tab').forEach((x) => x.classList.toggle('active', x === t));
+            installTabs.forEach((x) => x.classList.toggle('active', x === t));
             const readme = t.dataset.itab === 'readme';
-            $('inst-pane-values').hidden = readme;
-            $('inst-readme').hidden = !readme;
+            valuesPane.hidden = readme;
+            readmeBox.hidden = !readme;
         });
     });
 
     // Load chart defaults into the values editor (authoritative, from the repo).
-    $('inst-load-defaults').addEventListener('click', () => {
-        const btn = $('inst-load-defaults');
+    let defaultsReqId = 0;
+    versionSelect.addEventListener('change', () => {
+        // Defaults belong to an exact chart version. A version switch invalidates
+        // both an in-flight download and defaults already loaded for the old one.
+        defaultsReqId++;
+        defaultsLoading = false;
+        defaultsButton.disabled = false;
+        defaultsButton.textContent = '↓ Load chart defaults';
+        previewButton.disabled = false;
+        okButton.disabled = false;
+        if (loadedDefaultsVersion !== null && loadedDefaultsVersion !== versionSelect.value.trim()) {
+            valuesEditor.setValue('');
+            loadedDefaultsVersion = null;
+            statusBox.textContent = 'Version changed — old defaults were cleared. Load defaults for this version.';
+        }
+    });
+    defaultsButton.addEventListener('click', () => {
+        if (!isCurrentModalRequest(scope) || !valuesEditor) return;
+        const btn = defaultsButton;
+        const requestedVersion = versionSelect.value.trim();
+        const reqId = ++defaultsReqId;
+        defaultsLoading = true;
+        okButton.disabled = true;
+        previewButton.disabled = true;
         btn.disabled = true; btn.textContent = 'Loading…';
-        ChartDefaultValues(chart.repoURL, chartName, $('inst-ver').value.trim())
-            .then((vals) => { setModalYaml('inst-values', vals); $('inst-status').textContent = 'Loaded chart defaults.'; })
-            .catch((err) => { $('inst-status').textContent = errMsg(err); })
-            .finally(() => { btn.disabled = false; btn.textContent = '↓ Load chart defaults'; });
+        ChartDefaultValues(chart.repoURL, chartName, requestedVersion)
+            .then((vals) => {
+                if (!isCurrentModalRequest(scope) || reqId !== defaultsReqId) return;
+                if (versionSelect.value.trim() !== requestedVersion) {
+                    statusBox.textContent = 'Version changed — load defaults again for the selected version.';
+                    return;
+                }
+                valuesEditor.setValue(vals);
+                loadedDefaultsVersion = requestedVersion;
+                statusBox.textContent = 'Loaded chart defaults.';
+            })
+            .catch((err) => {
+                if (isCurrentModalRequest(scope) && reqId === defaultsReqId) statusBox.textContent = errMsg(err);
+            })
+            .finally(() => {
+                if (!isCurrentModalRequest(scope) || reqId !== defaultsReqId) return;
+                defaultsLoading = false;
+                okButton.disabled = false;
+                previewButton.disabled = false;
+                btn.disabled = false;
+                btn.textContent = '↓ Load chart defaults';
+            });
     });
 
     // Dry-run preview of the manifest this install would create (toggle on/off).
-    $('inst-preview').addEventListener('click', () => {
-        const pre = $('inst-diff');
-        const btn = $('inst-preview');
-        if (!pre.hidden) { pre.hidden = true; btn.textContent = '👁 Preview (dry-run)'; return; }
+    let previewReqId = 0;
+    previewButton.addEventListener('click', () => {
+        if (!isCurrentModalRequest(scope) || !valuesEditor) return;
+        const pre = diffBox;
+        const btn = previewButton;
+        if (!pre.hidden) {
+            previewReqId++;
+            pre.hidden = true;
+            btn.textContent = '👁 Preview (dry-run)';
+            return;
+        }
+        const reqId = ++previewReqId;
         pre.hidden = false; pre.textContent = 'Rendering (dry-run)…'; btn.textContent = '✕ Hide preview';
-        HelmInstallPreview($('inst-ns').value.trim() || 'default', $('inst-name').value.trim() || 'preview',
-            chart.repoURL, chartName, $('inst-ver').value.trim(), modalYaml('inst-values'))
-            .then((diff) => { renderDiffInto(pre, diff.current, diff.proposed); })
-            .catch((err) => { pre.textContent = errMsg(err); });
+        HelmInstallPreview(namespaceInput.value.trim() || 'default', nameInput.value.trim() || 'preview',
+            chart.repoURL, chartName, versionSelect.value.trim(), valuesEditor.getValue())
+            .then((diff) => {
+                if (isCurrentModalRequest(scope) && reqId === previewReqId) renderDiffInto(pre, diff.current, diff.proposed);
+            })
+            .catch((err) => {
+                if (isCurrentModalRequest(scope) && reqId === previewReqId) pre.textContent = errMsg(err);
+            });
     });
 
     // Enrich from Artifact Hub (best-effort): version list, README, home/links.
     ChartDetails(chart.repo, chartName)
         .then((d) => {
+            if (!isCurrentModalRequest(scope)) return;
             if (d.versions && d.versions.length > 0) {
-                const sel = $('inst-ver');
+                const sel = versionSelect;
                 sel.innerHTML = d.versions.map((v) => `<option value="${esc(v)}"${v === chart.version ? ' selected' : ''}>${esc(v)}</option>`).join('');
             }
             const links = [];
             if (d.homeURL) links.push(extLink(d.homeURL, 'home'));
             for (const l of d.links || []) links.push(extLink(l.url, l.name || 'link'));
-            const linkBox = $('inst-links');
+            const linkBox = linksBox;
             linkBox.innerHTML = `<span class="modal-hint">Repo: </span>${extLink(chart.repoURL)}` +
                 (links.length ? ` &nbsp;·&nbsp; <span class="modal-hint">Links: </span>${links.join(' ')}` : '') +
                 (d.maintainers && d.maintainers.length ? ` &nbsp;·&nbsp; <span class="modal-hint">By: </span>${esc(d.maintainers.join(', '))}` : '');
-            $('inst-readme').textContent = d.readme || '(no README published)';
+            readmeBox.textContent = d.readme || '(no README published)';
         })
-        .catch(() => { $('inst-readme').textContent = '(chart details unavailable — not on Artifact Hub or offline)'; });
+        .catch(() => {
+            if (isCurrentModalRequest(scope)) readmeBox.textContent = '(chart details unavailable — not on Artifact Hub or offline)';
+        });
 }
 
 // ============ Helm repositories ============
@@ -3709,7 +3896,7 @@ function loadHelmRepos(scope) {
                 btn.addEventListener('click', () => {
                     showConfirm(`Remove repo “${btn.dataset.name}”?`, { title: 'Remove repository', icon: '🗑', okText: 'Remove', danger: true }).then((ok) => {
                         if (!ok) return;
-                        RemoveHelmRepo(btn.dataset.name).then(loadHelmRepos).catch((err) => showError(errMsg(err)));
+                        RemoveHelmRepo(btn.dataset.name).then(() => refreshCurrentView()).catch((err) => showError(errMsg(err)));
                     });
                 }));
         })
@@ -3719,6 +3906,7 @@ function loadHelmRepos(scope) {
 function openRepoAddModal() {
     openModal({
         title: 'Add Helm repository',
+        ownerKey: 'helm-repo-add',
         okText: 'Add',
         bodyHtml: `<div class="install-form">
                 <label>Name<input type="text" id="repo-name" class="pf-input" placeholder="bitnami"></label>
@@ -3731,14 +3919,15 @@ function openRepoAddModal() {
             const name = $('repo-name').value.trim();
             const url = $('repo-url').value.trim();
             if (!name || !url) return Promise.reject('Name and URL are required.');
-            return AddHelmRepo(name, url, $('repo-user').value, $('repo-pass').value).then(loadHelmRepos);
+            return AddHelmRepo(name, url, $('repo-user').value, $('repo-pass').value).then(() => refreshCurrentView());
         },
     });
 }
 
 function openRepoBrowseModal(name) {
-    openModal({
+    const scope = openModal({
         title: `Browse ${name}`,
+        ownerKey: modalOwner('helm-repo-browse', name),
         okText: 'Close',
         bodyHtml: `<div class="chart-search-row">
                 <input id="repo-filter" class="pf-input no-enter-submit" style="flex:1" type="text" placeholder="Filter charts…" autocomplete="off">
@@ -3746,16 +3935,25 @@ function openRepoBrowseModal(name) {
             <div id="repo-browse-results" class="chart-results"><p class="empty-inline">Loading…</p></div>`,
         onOk: () => Promise.resolve(),
     });
+    const filterInput = $('repo-filter');
+    const resultsBox = $('repo-browse-results');
     let all = [];
     const render = () => {
-        const q = $('repo-filter').value.trim().toLowerCase();
+        if (!isCurrentModalRequest(scope)) return;
+        const q = filterInput.value.trim().toLowerCase();
         const filtered = q ? all.filter((c) => c.name.toLowerCase().includes(q)) : all;
-        renderChartResults(filtered, $('repo-browse-results'));
+        renderChartResults(filtered, resultsBox);
     };
     BrowseHelmRepo(name)
-        .then((charts) => { all = charts || []; render(); })
-        .catch((err) => { $('repo-browse-results').innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
-    $('repo-filter').addEventListener('input', render);
+        .then((charts) => {
+            if (!isCurrentModalRequest(scope)) return;
+            all = charts || [];
+            render();
+        })
+        .catch((err) => {
+            if (isCurrentModalRequest(scope)) resultsBox.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
+        });
+    filterInput.addEventListener('input', render);
 }
 
 $('btn-repo-add').addEventListener('click', openRepoAddModal);

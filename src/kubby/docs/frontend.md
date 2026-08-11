@@ -59,11 +59,12 @@ reference.
 
 Wails calls cannot be cancelled reliably, so every async response must prove it
 still owns the UI before changing shared DOM or editor state. `request-scope.js`
-provides three related generations:
+provides four related generations:
 
 - a connection epoch, invalidated as soon as cluster ownership changes;
 - a view epoch capturing the exact view and namespace;
 - a drawer epoch capturing the exact `kind / namespace / name` resource key.
+- a modal epoch capturing the exact dialog operation and resource/chart owner.
 
 Start list work through `refreshCurrentView()` and pass its scope into the loader.
 Success and error callbacks both call `isCurrentViewRequest(scope)` before touching
@@ -74,6 +75,19 @@ DOM view, and two namespaces or clusters can show the same view id.
 The shared drawer YAML editor has an additional owner key. Save stays disabled
 until the current drawer's `GetYAML` completes, and the backend receives the
 expected cluster and resource identity as a second safety boundary.
+
+The shared modal container and its fixed element IDs are also singleton state.
+Every async modal loader must capture its returned modal scope and its direct DOM
+or CodeMirror handles, then call `isCurrentModalRequest(scope)` before rendering.
+Opening or closing a modal and switching connections invalidates older modal work.
+Keep write buttons disabled while required authoritative values for that exact
+owner load, or while an optional defaults request is in flight; chart defaults
+additionally belong to the exact selected chart version.
+
+`closeModal` accepts an optional ownership scope for async completion. Never pass
+it directly to `addEventListener`: the browser's `MouseEvent` would become that
+scope and be rejected as stale. UI dismiss handlers must wrap it as
+`() => closeModal()`; async code may deliberately use `closeModal(scope)`.
 
 ## Two layout rules that have each cost a round of rework
 
@@ -190,6 +204,11 @@ came out double-spaced. Both diff renderers now join with `''` — see the comme
 
 Icons are a single inline **SVG sprite** in `index.html`, referenced with
 `<use href="#i-…">`.
+
+An SVG inside a generic `.icon-btn` uses `.btn-ico`, which supplies its 16×16
+box and outline stroke. Bare `.ico` is only sized by contextual selectors such
+as `.nav-item .ico` and `.rail-button .ico`; using it elsewhere falls back to an
+SVG's large intrinsic size and black fill.
 
 ## Brand assets
 

@@ -6,6 +6,32 @@ Bug log — add one line per issue. Resolved items move to the bottom.
 
 ## Fixed
 
+- [2026-08-11] Cancel, the title-bar X, and backdrop clicks stopped closing every
+  shared modal after modal ownership protection was added. Cause: all three used
+  `addEventListener('click', closeModal)`, so the browser passed a `MouseEvent` as
+  the new scope parameter; `closeModal` correctly rejected that event object as a
+  stale scope and returned before hiding anything. Fix: UI event handlers now call
+  `() => closeModal()` while async completions still pass their captured scope. A
+  source-wiring regression test pins all three dismiss paths.
+- [2026-08-11] A slow Helm/chart response could write release A's values or chart
+  defaults into the singleton modal after it had already been reused for B; a late
+  submit could also close or report errors inside B. Cause: modal element IDs and
+  the CodeMirror registry were shared, but unlike views and drawers the modal had
+  no connection/owner generation, so callbacks looked up whichever nodes happened
+  to own those IDs when they resolved. Fix: exact modal ownership scopes now
+  invalidate on open, close, or connection change; async Helm/chart callbacks use
+  captured DOM/editor handles and discard stale success/error/completion; Upgrade
+  stays disabled until current values load and Install is disabled during a
+  requested defaults load; chart defaults are tied to the selected version and
+  cleared when it changes. Deferred-promise regression
+  tests cover A-then-B ordering, stale completion, cluster invalidation, and chart
+  version changes.
+- [2026-08-11] The AI Settings cog in an unconfigured resource drawer rendered
+  as a huge black shape instead of a small outline icon. Cause: that one
+  `.icon-btn` used the context-dependent `.ico` class; outside the nav/rail it
+  had no width, height, fill, or stroke rule, so SVG intrinsic sizing and default
+  black fill took over. Fix: use the shared `.btn-ico` contract and pin the
+  markup with a Node regression test.
 - [2026-07-30] Right-sizing hero had no left inset and overflowed the card on the right
   ("3% of the cluster's 15.4Gi" cut off by the border, meter touching both edges).
   Cause: `.card` has NO padding of its own — a table inside a card is deliberately

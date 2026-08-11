@@ -9,12 +9,14 @@ export function createRequestScopes() {
     let connectionEpoch = 0;
     let viewEpoch = 0;
     let drawerEpoch = 0;
+    let modalEpoch = 0;
 
     return {
         connectionChanged() {
             connectionEpoch++;
             viewEpoch++;
             drawerEpoch++;
+            modalEpoch++;
         },
 
         connectionToken() {
@@ -60,6 +62,21 @@ export function createRequestScopes() {
         drawerOwnerKey(scope) {
             if (!scope) return '';
             return `${scope.connectionEpoch}:${scope.epoch}:${scope.resourceKey}`;
+        },
+
+        openModal(ownerKey) {
+            return { connectionEpoch, epoch: ++modalEpoch, ownerKey: String(ownerKey ?? '') };
+        },
+
+        closeModal() {
+            modalEpoch++;
+        },
+
+        isCurrentModal(scope, ownerKey = scope?.ownerKey) {
+            return !!scope
+                && scope.connectionEpoch === connectionEpoch
+                && scope.epoch === modalEpoch
+                && scope.ownerKey === String(ownerKey ?? '');
         },
     };
 }

@@ -54,6 +54,11 @@ Do not treat generated files or binaries as source. Never hand-edit
 ## Change discipline
 
 - Make the smallest coherent change and preserve unrelated user modifications.
+- Treat files under `bug-screenshot/` as temporary local defect evidence. Inspect
+  the relevant image before diagnosing, use it to verify the owning UI path, and
+  delete only the consumed screenshot after the fix passes its available checks.
+  Keep the directory ignored and never retain screenshots containing credentials
+  or Secret values.
 - Update the owning branch document only when a design decision, invariant, or
   known trap changes.
 - Log fixed defects in `docs/bug.txt` with the root cause, not just the symptom.

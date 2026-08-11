@@ -20,7 +20,7 @@ cd ..
 | `internal/k8sclient/access_test.go` | **unknown permission == allowed**, explicit deny respected, pod subresources probed separately |
 | `internal/k8sclient/rightsizing_test.go` | unset never rendered as zero, threshold floors, severity order, quota parsing, advice grammar |
 | `internal/k8sclient/detail_test.go` | YAML Save cannot change kind, namespace, name, or cluster-scoped identity |
-| `frontend/src/request-scope.test.js` | a late view/drawer response cannot overwrite the newer owner |
+| `frontend/src/request-scope.test.js` | late view/drawer/modal responses cannot overwrite a newer owner; stale Helm/chart values cannot cross modal or version boundaries |
 
 None of them need a cluster. Everything else is still verified through
 `cmd/kubby-cli` against a real one — **that is a gap, not a design choice** — see
