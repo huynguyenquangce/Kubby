@@ -19,7 +19,7 @@ type App struct {
 	cluster    *k8sclient.Cluster // the active cluster (nil if none)
 	activeName string             // display name (context) of the active cluster
 	clusters   map[string]*k8sclient.Cluster
-	order      []string // connection order, for a stable dropdown
+	order      []string           // connection order, for a stable dropdown
 	logCancel  context.CancelFunc // cancels the active log stream, if any
 	pfSessions map[string]*k8sclient.PortForwardSession
 	execSess   *k8sclient.ExecSession // the active exec session, if any
@@ -818,12 +818,18 @@ func (a *App) GetYAML(kind, namespace, name string) (string, error) {
 	return k8sclient.GetYAML(a.ctx, a.cluster, kind, namespace, name)
 }
 
-// UpdateYAML applies edited YAML back to the cluster.
-func (a *App) UpdateYAML(yamlText string) error {
+// UpdateYAML applies edited YAML only when the active cluster and resource still
+// match the drawer that loaded it.  The local cluster pointer is captured after
+// the check so a later UI switch cannot redirect this call to the new cluster.
+func (a *App) UpdateYAML(expectedCluster, expectedKind, expectedNamespace, expectedName, yamlText string) error {
 	if err := a.requireCluster(); err != nil {
 		return err
 	}
-	return k8sclient.UpdateYAML(a.ctx, a.cluster, yamlText)
+	if expectedCluster == "" || expectedCluster != a.activeName {
+		return fmt.Errorf("refusing stale YAML update: expected cluster %q, active cluster is %q; reload the open resource", expectedCluster, a.activeName)
+	}
+	cluster := a.cluster
+	return k8sclient.UpdateYAML(a.ctx, cluster, expectedKind, expectedNamespace, expectedName, yamlText)
 }
 
 // ApplyYAML creates or updates the resource(s) in the given YAML (create-or-

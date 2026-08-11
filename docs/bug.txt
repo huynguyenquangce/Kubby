@@ -77,6 +77,18 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   one bar per resource (fill = used, tick = requested, full width = allocatable),
   because the comparison is the content and the tiles made the reader do the
   arithmetic themselves.
+- [2026-08-11] A slow list or drawer response could repaint a newer namespace,
+  resource, or cluster; most dangerously, the singleton YAML editor could show
+  resource A while the drawer header showed B, and Save trusted the identity in
+  that stale YAML. Cause: async Wails responses wrote shared DOM/editor state with
+  no common connection/view/drawer ownership generation; the backend accepted the
+  YAML's own kind, namespace, and name as its update target. Fix: exact ownership
+  scopes now invalidate stale success and error callbacks, actionable rows clear
+  when a new view load begins, YAML Save stays disabled until the current drawer
+  owns the loaded document, and both App and k8sclient reject a cluster/resource
+  identity mismatch. Deferred-promise JS tests and Go precondition tests pin the
+  regression. Manual Windows verification confirmed rapid namespace switching
+  and opening resource A followed immediately by B no longer causes stale repaint.
 - [2026-07-29] Every diff rendered double-spaced — a blank line between each line of
   the diff, so it was twice as tall and needed twice the scrolling.
   Cause: the line spans are `display: block` (so they already break), but the code

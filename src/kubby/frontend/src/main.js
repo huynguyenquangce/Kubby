@@ -3,6 +3,7 @@ import './app.css';
 import './option-b.css';
 
 import { createYamlEditor, parseApplyFailures } from './editor.js';
+import { createRequestScopes } from './request-scope.js';
 
 import {
     PickKubeconfigFile,
@@ -213,6 +214,15 @@ const $ = (id) => document.getElementById(id);
 let source = { mode: 'path', path: '', content: '' };
 let currentView = 'overview';
 let currentNamespace = '';
+const requestScopes = createRequestScopes();
+
+function isCurrentViewRequest(scope) {
+    return requestScopes.isCurrentView(scope, currentView, currentNamespace);
+}
+
+function viewError(scope, err) {
+    if (isCurrentViewRequest(scope)) showDashError(err);
+}
 
 // ============ Welcome screen ============
 
@@ -294,6 +304,8 @@ function clearWelcomeError() { $('welcome-error').hidden = true; }
 // ============ Dashboard ============
 
 function enterDashboard() {
+    requestScopes.connectionChanged();
+    clearRenderedView();
     $('welcome').hidden = true;
     $('dashboard').hidden = false;
     return refreshClusterSwitcher()
@@ -324,6 +336,8 @@ function refreshClusterSwitcher() {
 
 $('cluster-select').addEventListener('change', (e) => {
     const name = e.target.value;
+    requestScopes.connectionChanged();
+    clearRenderedView();
     closeDrawer();
     for (const f of activeForwards) StopPortForward(f.key);
     activeForwards = [];
@@ -337,12 +351,18 @@ $('cluster-select').addEventListener('change', (e) => {
             loadCustomSections();
             return selectView('overview');
         })
-        .catch(showDashError);
+        .catch((err) => {
+            // The native select changes before SwitchCluster succeeds. Restore
+            // the authoritative active option and reload the old scope on error.
+            refreshClusterSwitcher().then(() => refreshCurrentView()).finally(() => showDashError(err));
+        });
 });
 
 // "+ Add cluster" returns to Welcome but keeps existing connections alive;
 // connecting there just adds another cluster and re-enters the dashboard.
 $('btn-add-cluster').addEventListener('click', () => {
+    requestScopes.connectionChanged();
+    closeDrawer();
     $('dashboard').hidden = true;
     $('welcome').hidden = false;
     clearWelcomeError();
@@ -351,6 +371,8 @@ $('btn-add-cluster').addEventListener('click', () => {
 
 $('btn-disconnect').addEventListener('click', () => {
     const active = $('cluster-select').value;
+    requestScopes.connectionChanged();
+    clearRenderedView();
     closeDrawer();
     for (const f of activeForwards) StopPortForward(f.key);
     activeForwards = [];
@@ -440,11 +462,13 @@ let navCountsReqId = 0;
 
 function loadSidebarCounts({ includeCluster = true } = {}) {
     const reqId = ++navCountsReqId;
-    return SidebarCounts(currentNamespace, includeCluster)
+    const connection = requestScopes.connectionToken();
+    const namespace = currentNamespace;
+    return SidebarCounts(namespace, includeCluster)
         .then((counts) => {
             // Drop a slow reply that a newer request has already superseded —
             // otherwise flicking through namespaces can leave older numbers on top.
-            if (reqId !== navCountsReqId) return;
+            if (reqId !== navCountsReqId || !requestScopes.isCurrentConnection(connection)) return;
             for (const c of counts ?? []) {
                 const badge = document.querySelector(`.nav-item[data-view="${c.view}"] .nav-count`);
                 if (!badge) continue;
@@ -480,8 +504,10 @@ const CUSTOM_KINDS = new Map(); // view id → { refKind, title, namespaced }
 function loadCustomSections() {
     const box = $('nav-custom-items');
     const section = $('nav-section-custom');
+    const connection = requestScopes.connectionToken();
     return CustomKinds()
         .then((res) => {
+            if (!requestScopes.isCurrentConnection(connection)) return;
             const kinds = res?.kinds ?? [];
             CUSTOM_KINDS.clear();
             box.innerHTML = '';
@@ -509,17 +535,17 @@ function loadCustomSections() {
                 ? `${res.overflow} more kinds exist — open them from CRDs`
                 : '';
         })
-        .catch(() => { section.hidden = true; });
+        .catch(() => { if (requestScopes.isCurrentConnection(connection)) section.hidden = true; });
 }
 
-function loadCustom() {
-    const meta = CUSTOM_KINDS.get(currentView);
+function loadCustom(scope) {
+    const meta = CUSTOM_KINDS.get(scope.view);
     if (!meta) return Promise.resolve();
     $('custom-title').textContent = meta.title;
     $('custom-api').textContent = meta.refKind;
-    return ListCustom(meta.refKind, meta.namespaced ? currentNamespace : '')
+    return ListCustom(meta.refKind, meta.namespaced ? scope.namespace : '')
         .then((items) => {
-            if (!CUSTOM_KINDS.get(currentView)) return; // navigated away meanwhile
+            if (!isCurrentViewRequest(scope)) return;
             const body = $('custom-body');
             const table = body.closest('table');
             body.innerHTML = '';
@@ -535,7 +561,7 @@ function loadCustom() {
                 body.appendChild(tr);
             }
         })
-        .catch(showDashError);
+        .catch((err) => viewError(scope, err));
 }
 
 // Custom-resource views share one DOM section (#view-custom) because there is no
@@ -563,10 +589,12 @@ function selectView(view) {
     // Import stays enabled: its YAML can name any kind, so there is nothing
     // specific to check.
     if (createKind) {
-        const ns = NAMESPACED_VIEWS.has(view) ? currentNamespace : '';
+        const scopeNamespace = currentNamespace;
+        const ns = NAMESPACED_VIEWS.has(view) ? scopeNamespace : '';
+        const connection = requestScopes.connectionToken();
         gate($('btn-create'), allowed(accessPeek(createKind, ns), 'create'), denyReason(createKind, ns, 'create'));
         accessSet(createKind, ns).then((set) => {
-            if (currentView !== view) return;
+            if (currentView !== view || currentNamespace !== scopeNamespace || !requestScopes.isCurrentConnection(connection)) return;
             gate($('btn-create'), allowed(set, 'create'), denyReason(createKind, ns, 'create'));
         });
     }
@@ -597,9 +625,17 @@ function updateNsScope() {
 function refreshCurrentView() {
     clearDashError();
     clearSelection();
-    const p = doRefresh();
-    Promise.resolve(p).finally(filterCurrentTable);
+    const scope = requestScopes.beginView(currentView, currentNamespace);
+    // Rows are actionable. Remove the previous owner's rows immediately so a
+    // failed or slow refresh cannot leave clickable data from another scope.
+    clearRenderedView(scope.view);
+    const p = doRefresh(scope);
+    Promise.resolve(p).finally(() => { if (isCurrentViewRequest(scope)) filterCurrentTable(); });
     return p;
+}
+
+function clearRenderedView(view = currentView) {
+    document.querySelectorAll(`#${viewSectionId(view)} tbody`).forEach((body) => { body.innerHTML = ''; });
 }
 
 // Instant client-side filter over the current view's table rows.
@@ -620,62 +656,63 @@ function filterCurrentTable() {
     $('view-count').textContent = term ? `${shown} / ${rows.length}` : `${rows.length}`;
 }
 
-function doRefresh() {
-    if (String(currentView).startsWith('custom:')) return loadCustom();
-    switch (currentView) {
-        case 'overview': return loadOverview();
-        case 'nodes': return loadNodes();
-        case 'namespaces': return loadNamespaces();
-        case 'sizing': return loadSizing();
-        case 'pods': return loadPods();
-        case 'deployments': return loadDeployments();
-        case 'services': return loadServices();
-        case 'configmaps': return loadConfigMaps();
-        case 'secrets': return loadSecrets();
-        case 'statefulsets': return loadSimple(ListStatefulSets, 'statefulsets', 'StatefulSet',
+function doRefresh(scope) {
+    if (String(scope.view).startsWith('custom:')) return loadCustom(scope);
+    switch (scope.view) {
+        case 'overview': return loadOverview(scope);
+        case 'nodes': return loadNodes(scope);
+        case 'namespaces': return loadNamespaces(scope);
+        case 'sizing': return loadSizing(scope);
+        case 'pods': return loadPods(scope);
+        case 'deployments': return loadDeployments(scope);
+        case 'services': return loadServices(scope);
+        case 'configmaps': return loadConfigMaps(scope);
+        case 'secrets': return loadSecrets(scope);
+        case 'statefulsets': return loadSimple(scope, ListStatefulSets, 'statefulsets', 'StatefulSet',
             (s) => `<td>${esc(s.namespace)}</td><td>${esc(s.name)}</td><td>${badge(s.ready, !s.isError)}</td><td>${esc(s.age)}</td>`);
-        case 'daemonsets': return loadSimple(ListDaemonSets, 'daemonsets', 'DaemonSet',
+        case 'daemonsets': return loadSimple(scope, ListDaemonSets, 'daemonsets', 'DaemonSet',
             (d) => `<td>${esc(d.namespace)}</td><td>${esc(d.name)}</td><td>${d.desired}</td><td>${d.ready}</td><td>${d.available}</td><td>${esc(d.age)}</td>`);
-        case 'jobs': return loadSimple(ListJobs, 'jobs', 'Job',
+        case 'jobs': return loadSimple(scope, ListJobs, 'jobs', 'Job',
             (j) => `<td>${esc(j.namespace)}</td><td>${esc(j.name)}</td><td>${badge(j.completions, !j.isError)}</td><td>${j.active}</td><td>${esc(j.age)}</td>`);
-        case 'cronjobs': return loadSimple(ListCronJobs, 'cronjobs', 'CronJob',
+        case 'cronjobs': return loadSimple(scope, ListCronJobs, 'cronjobs', 'CronJob',
             (c) => `<td>${esc(c.namespace)}</td><td>${esc(c.name)}</td><td class="mono">${esc(c.schedule)}</td><td>${c.suspend}</td><td>${c.active}</td><td>${esc(c.age)}</td>`);
-        case 'ingresses': return loadSimple(ListIngresses, 'ingresses', 'Ingress',
+        case 'ingresses': return loadSimple(scope, ListIngresses, 'ingresses', 'Ingress',
             (i) => `<td>${esc(i.namespace)}</td><td>${esc(i.name)}</td><td>${esc(i.class)}</td><td>${esc(i.hosts)}</td><td>${esc(i.age)}</td>`);
-        case 'pvcs': return loadSimple(ListPVCs, 'pvcs', 'PersistentVolumeClaim',
+        case 'pvcs': return loadSimple(scope, ListPVCs, 'pvcs', 'PersistentVolumeClaim',
             (p) => `<td>${esc(p.namespace)}</td><td>${esc(p.name)}</td><td>${badge(p.status, !p.isError)}</td><td>${esc(p.capacity)}</td><td>${esc(p.storageClass)}</td><td>${esc(p.age)}</td>`);
-        case 'serviceaccounts': return loadSimple(ListServiceAccounts, 'serviceaccounts', 'ServiceAccount',
+        case 'serviceaccounts': return loadSimple(scope, ListServiceAccounts, 'serviceaccounts', 'ServiceAccount',
             (s) => `<td>${esc(s.namespace)}</td><td>${esc(s.name)}</td><td>${s.secrets}</td><td>${esc(s.age)}</td>`);
-        case 'pvs': return loadSimple(ListPersistentVolumes, 'pvs', 'PersistentVolume',
+        case 'pvs': return loadSimple(scope, ListPersistentVolumes, 'pvs', 'PersistentVolume',
             (p) => `<td>${esc(p.name)}</td><td>${esc(p.capacity)}</td><td>${esc(p.accessModes)}</td><td>${badge(p.status, !p.isError)}</td><td>${esc(p.claim)}</td><td>${esc(p.storageClass)}</td><td>${esc(p.age)}</td>`);
-        case 'storageclasses': return loadSimple(ListStorageClasses, 'storageclasses', 'StorageClass',
+        case 'storageclasses': return loadSimple(scope, ListStorageClasses, 'storageclasses', 'StorageClass',
             (s) => `<td>${esc(s.name)}${s.isDefault ? ' <span class="chip">default</span>' : ''}</td><td class="mono">${esc(s.provisioner)}</td><td>${esc(s.reclaimPolicy)}</td><td>${s.isDefault}</td><td>${esc(s.age)}</td>`);
-        case 'roles': return loadSimple(ListRoles, 'roles', 'Role',
+        case 'roles': return loadSimple(scope, ListRoles, 'roles', 'Role',
             (r) => `<td>${esc(r.namespace)}</td><td>${esc(r.name)}</td><td>${r.rules}</td><td>${esc(r.age)}</td>`);
-        case 'rolebindings': return loadSimple(ListRoleBindings, 'rolebindings', 'RoleBinding',
+        case 'rolebindings': return loadSimple(scope, ListRoleBindings, 'rolebindings', 'RoleBinding',
             (r) => `<td>${esc(r.namespace)}</td><td>${esc(r.name)}</td><td class="mono">${esc(r.roleRef)}</td><td>${esc(r.subjects)}</td><td>${esc(r.age)}</td>`);
-        case 'clusterroles': return loadSimple(ListClusterRoles, 'clusterroles', 'ClusterRole',
+        case 'clusterroles': return loadSimple(scope, ListClusterRoles, 'clusterroles', 'ClusterRole',
             (r) => `<td>${esc(r.name)}</td><td>${r.rules}</td><td>${esc(r.age)}</td>`);
-        case 'clusterrolebindings': return loadSimple(ListClusterRoleBindings, 'clusterrolebindings', 'ClusterRoleBinding',
+        case 'clusterrolebindings': return loadSimple(scope, ListClusterRoleBindings, 'clusterrolebindings', 'ClusterRoleBinding',
             (r) => `<td>${esc(r.name)}</td><td class="mono">${esc(r.roleRef)}</td><td>${esc(r.subjects)}</td><td>${esc(r.age)}</td>`);
-        case 'crds': return loadSimple(ListCRDs, 'crds', 'CustomResourceDefinition',
+        case 'crds': return loadSimple(scope, ListCRDs, 'crds', 'CustomResourceDefinition',
             (c) => `<td>${esc(c.name)}</td><td class="mono">${esc(c.group)}</td><td>${esc(c.kind)}</td><td>${esc(c.scope)}</td><td>${esc(c.versions)}</td><td>${esc(c.age)}</td>`);
-        case 'resourcequotas': return loadSimple(ListResourceQuotas, 'resourcequotas', 'ResourceQuota',
+        case 'resourcequotas': return loadSimple(scope, ListResourceQuotas, 'resourcequotas', 'ResourceQuota',
             (q) => `<td>${esc(q.namespace)}</td><td>${esc(q.name)}</td><td>${quotaChips(q.summary)}</td><td>${esc(q.age)}</td>`);
-        case 'limitranges': return loadSimple(ListLimitRanges, 'limitranges', 'LimitRange',
+        case 'limitranges': return loadSimple(scope, ListLimitRanges, 'limitranges', 'LimitRange',
             (l) => `<td>${esc(l.namespace)}</td><td>${esc(l.name)}</td><td>${l.limits}</td>
                     <td>${(l.types || '').split(',').map((t) => t.trim()).filter(Boolean).map((t) => `<span class="chip">${esc(t)}</span>`).join('') || '<span class="dim">—</span>'}</td>
                     <td>${esc(l.age)}</td>`);
-        case 'helm': return loadHelm();
-        case 'helmrepos': return loadHelmRepos();
-        case 'traffic': return loadTraffic();
+        case 'helm': return loadHelm(scope);
+        case 'helmrepos': return loadHelmRepos(scope);
+        case 'traffic': return loadTraffic(scope);
     }
 }
 
 // Helm releases are backed by Secrets — rows drill into the underlying Secret.
-function loadHelm() {
-    return ListHelmReleases(currentNamespace)
+function loadHelm(scope) {
+    return ListHelmReleases(scope.namespace)
         .then((rels) => {
+            if (!isCurrentViewRequest(scope)) return;
             const body = $('helm-body');
             body.innerHTML = '';
             $('helm-empty').hidden = (rels?.length ?? 0) > 0;
@@ -686,7 +723,7 @@ function loadHelm() {
                 ));
             }
         })
-        .catch(showDashError);
+        .catch((err) => viewError(scope, err));
 }
 
 // Kinds whose backend List method takes no namespace argument.
@@ -695,10 +732,11 @@ const CLUSTER_SCOPED_KINDS = new Set([
 ]);
 
 // Generic loader for the simpler resource lists.
-function loadSimple(listFn, viewId, kind, cellsFn) {
-    const call = CLUSTER_SCOPED_KINDS.has(kind) ? listFn() : listFn(currentNamespace);
+function loadSimple(scope, listFn, viewId, kind, cellsFn) {
+    const call = CLUSTER_SCOPED_KINDS.has(kind) ? listFn() : listFn(scope.namespace);
     return call
         .then((items) => {
+            if (!isCurrentViewRequest(scope)) return;
             const body = $(`${viewId}-body`);
             const table = body.closest('table');
             body.innerHTML = '';
@@ -712,7 +750,7 @@ function loadSimple(listFn, viewId, kind, cellsFn) {
                 body.appendChild(tr);
             }
         })
-        .catch(showDashError);
+        .catch((err) => viewError(scope, err));
 }
 
 // The Age + Actions headers are appended to every list table by JS (below), so a
@@ -745,9 +783,10 @@ function quotaChips(summary) {
     }).join('')}</div>`;
 }
 
-function loadNamespaceOptions() {
+function loadNamespaceOptions(connection = requestScopes.connectionToken()) {
     return ListNamespaces()
         .then((namespaces) => {
+            if (!requestScopes.isCurrentConnection(connection)) return;
             const select = $('namespace-select');
             select.innerHTML = '<option value="">All namespaces</option>';
             for (const ns of namespaces ?? []) {
@@ -757,7 +796,7 @@ function loadNamespaceOptions() {
                 select.appendChild(opt);
             }
         })
-        .catch(showDashError);
+        .catch((err) => { if (requestScopes.isCurrentConnection(connection)) showDashError(err); });
 }
 
 // Build a table row; if `ref` is given the row is clickable and opens the drawer.
@@ -786,14 +825,15 @@ function row(cellsHtml, opts = {}) {
 }
 
 // ---- Overview ----
-function loadOverview() {
+function loadOverview(scope) {
     // These three populate their own cards independently (each handles its own errors).
-    loadNodeMetrics();
-    loadTopPods();
-    loadRecentEvents();
+    loadNodeMetrics(scope);
+    loadTopPods(scope);
+    loadRecentEvents(scope);
 
     return Promise.all([ListNodes(), ListNamespaces(), ListPods(''), ListDeployments('')])
         .then(([nodes, namespaces, pods, deployments]) => {
+            if (!isCurrentViewRequest(scope)) return;
             const errored = (pods ?? []).filter((p) => p.isError);
             $('stat-nodes').textContent = nodes?.length ?? 0;
             $('stat-namespaces').textContent = namespaces?.length ?? 0;
@@ -818,7 +858,11 @@ function loadOverview() {
                 openDrawer({ kind: 'Pod', namespace: pod.namespace, name: pod.name, isPod: true, tab: 'ai' });
             };
         })
-        .catch((err) => { updateClusterHealth(null, []); showDashError(err); });
+        .catch((err) => {
+            if (!isCurrentViewRequest(scope)) return;
+            updateClusterHealth(null, []);
+            showDashError(err);
+        });
 }
 
 function updateClusterHealth(pods, errored) {
@@ -851,9 +895,10 @@ function updateClusterHealth(pods, errored) {
     badgeEl.className = `health-state ${unhealthy === 0 ? 'health-state-ok' : (percent >= 90 ? 'health-state-warn' : 'health-state-error')}`;
 }
 
-function loadTopPods() {
+function loadTopPods(scope) {
     TopPods(8)
         .then((pods) => {
+            if (!isCurrentViewRequest(scope)) return;
             const body = $('overview-toppods-body');
             body.innerHTML = '';
             $('overview-toppods-empty').hidden = (pods?.length ?? 0) > 0;
@@ -864,12 +909,17 @@ function loadTopPods() {
                 ));
             }
         })
-        .catch(() => { $('overview-toppods-body').innerHTML = ''; $('overview-toppods-empty').hidden = false; });
+        .catch(() => {
+            if (!isCurrentViewRequest(scope)) return;
+            $('overview-toppods-body').innerHTML = '';
+            $('overview-toppods-empty').hidden = false;
+        });
 }
 
-function loadRecentEvents() {
+function loadRecentEvents(scope) {
     ClusterEvents(15)
         .then((events) => {
+            if (!isCurrentViewRequest(scope)) return;
             const body = $('overview-events-body');
             body.innerHTML = '';
             $('overview-events-empty').hidden = (events?.length ?? 0) > 0;
@@ -881,12 +931,17 @@ function loadRecentEvents() {
                 body.appendChild(tr);
             }
         })
-        .catch(() => { $('overview-events-body').innerHTML = ''; $('overview-events-empty').hidden = false; });
+        .catch(() => {
+            if (!isCurrentViewRequest(scope)) return;
+            $('overview-events-body').innerHTML = '';
+            $('overview-events-empty').hidden = false;
+        });
 }
 
-function loadNodeMetrics() {
+function loadNodeMetrics(scope) {
     NodeMetrics()
         .then((metrics) => {
+            if (!isCurrentViewRequest(scope)) return;
             const box = $('node-metrics');
             const hint = $('node-metrics-hint');
             const total = $('node-metrics-total');
@@ -915,6 +970,7 @@ function loadNodeMetrics() {
             });
         })
         .catch(() => {
+            if (!isCurrentViewRequest(scope)) return;
             $('node-metrics').innerHTML = '';
             $('node-metrics-total').textContent = '';
             $('node-metrics-hint').hidden = false;
@@ -998,9 +1054,10 @@ function fmtMem(mi) {
 }
 
 // ---- Nodes ----
-function loadNodes() {
+function loadNodes(scope) {
     return ListNodes()
         .then((nodes) => {
+            if (!isCurrentViewRequest(scope)) return;
             const body = $('nodes-body');
             body.innerHTML = '';
             for (const n of nodes ?? []) {
@@ -1010,13 +1067,14 @@ function loadNodes() {
                 ));
             }
         })
-        .catch(showDashError);
+        .catch((err) => viewError(scope, err));
 }
 
 // ---- Namespaces ----
-function loadNamespaces() {
+function loadNamespaces(scope) {
     return ListNamespaces()
         .then((namespaces) => {
+            if (!isCurrentViewRequest(scope)) return;
             const body = $('namespaces-body');
             body.innerHTML = '';
             for (const ns of namespaces ?? []) {
@@ -1026,13 +1084,14 @@ function loadNamespaces() {
                 ));
             }
         })
-        .catch(showDashError);
+        .catch((err) => viewError(scope, err));
 }
 
 // ---- Pods (enriched: live CPU/mem, IP, node, age, per-row actions) ----
-function loadPods() {
-    return Promise.all([ListPods(currentNamespace), PodMetricsList(currentNamespace)])
+function loadPods(scope) {
+    return Promise.all([ListPods(scope.namespace), PodMetricsList(scope.namespace)])
         .then(([pods, metrics]) => {
+            if (!isCurrentViewRequest(scope)) return;
             const usage = {};
             for (const m of metrics ?? []) usage[`${m.namespace}/${m.name}`] = m;
             const body = $('pods-body');
@@ -1049,7 +1108,7 @@ function loadPods() {
                 ));
             }
         })
-        .catch(showDashError);
+        .catch((err) => viewError(scope, err));
 }
 
 // A three-dot actions button + per-row menu, like Lens/Headlamp.
@@ -1067,9 +1126,10 @@ function wireRowActions(tr, ref) {
 }
 
 // ---- Deployments ----
-function loadDeployments() {
-    return ListDeployments(currentNamespace)
+function loadDeployments(scope) {
+    return ListDeployments(scope.namespace)
         .then((deps) => {
+            if (!isCurrentViewRequest(scope)) return;
             const body = $('deployments-body');
             body.innerHTML = '';
             $('deployments-empty').hidden = (deps?.length ?? 0) > 0;
@@ -1080,13 +1140,14 @@ function loadDeployments() {
                 ));
             }
         })
-        .catch(showDashError);
+        .catch((err) => viewError(scope, err));
 }
 
 // ---- Services ----
-function loadServices() {
-    return ListServices(currentNamespace)
+function loadServices(scope) {
+    return ListServices(scope.namespace)
         .then((svcs) => {
+            if (!isCurrentViewRequest(scope)) return;
             const body = $('services-body');
             body.innerHTML = '';
             $('services-empty').hidden = (svcs?.length ?? 0) > 0;
@@ -1097,13 +1158,14 @@ function loadServices() {
                 ));
             }
         })
-        .catch(showDashError);
+        .catch((err) => viewError(scope, err));
 }
 
 // ---- ConfigMaps ----
-function loadConfigMaps() {
-    return ListConfigMaps(currentNamespace)
+function loadConfigMaps(scope) {
+    return ListConfigMaps(scope.namespace)
         .then((items) => {
+            if (!isCurrentViewRequest(scope)) return;
             const body = $('configmaps-body');
             body.innerHTML = '';
             $('configmaps-empty').hidden = (items?.length ?? 0) > 0;
@@ -1114,13 +1176,14 @@ function loadConfigMaps() {
                 ));
             }
         })
-        .catch(showDashError);
+        .catch((err) => viewError(scope, err));
 }
 
 // ---- Secrets ----
-function loadSecrets() {
-    return ListSecrets(currentNamespace)
+function loadSecrets(scope) {
+    return ListSecrets(scope.namespace)
         .then((items) => {
+            if (!isCurrentViewRequest(scope)) return;
             const body = $('secrets-body');
             body.innerHTML = '';
             $('secrets-empty').hidden = (items?.length ?? 0) > 0;
@@ -1131,18 +1194,27 @@ function loadSecrets() {
                 ));
             }
         })
-        .catch(showDashError);
+        .catch((err) => viewError(scope, err));
 }
 
 // ============ Detail drawer ============
 
 let drawerRef = null; // { kind, namespace, name, isPod }
+let activeDrawerScope = null;
+
+function isCurrentDrawerRequest(scope) {
+    return !!drawerRef
+        && !$('drawer').hidden
+        && requestScopes.isCurrentDrawer(scope, drawerRef);
+}
 
 function openDrawer(ref) {
     if (ref.kind === 'HelmRelease') { openHelmDetailModal(ref); return; }
     stopFollow();
     stopExec();
     drawerRef = ref;
+    activeDrawerScope = requestScopes.openDrawer(ref);
+    const scope = activeDrawerScope;
     const isDeployment = ref.kind === 'Deployment';
     const canForward = !!ref.isPod || ref.kind === 'Service';
     // A custom resource is referenced kubectl-style as "Kind.group" so the
@@ -1164,14 +1236,14 @@ function openDrawer(ref) {
     // only if this drawer is still the one open.
     applyDrawerAccess(ref);
     accessSet(ref.kind, ref.namespace).then(() => {
-        if (drawerRef === ref) applyDrawerAccess(ref);
+        if (isCurrentDrawerRequest(scope)) applyDrawerAccess(ref);
     });
 
     resetAIPanel(ref);
     setDrawerTab(ref.tab ?? 'details');
-    loadDetails();
-    loadYAML();
-    if (ref.isPod) { prepareLogs(); prepareTerminal(); }
+    loadDetails(scope);
+    loadYAML(scope);
+    if (ref.isPod) { prepareLogs(scope); prepareTerminal(scope); }
     if (canForward) prepareForward();
 }
 
@@ -1184,7 +1256,11 @@ function applyDrawerAccess(ref) {
 
     // Saving edited YAML goes through a server-side apply, which the apiserver
     // accepts on either update or patch.
-    gate($('btn-yaml-save'), allowed(set, 'update') || allowed(set, 'patch'), reason('update'));
+    const ownsYAML = yamlReady
+        && yamlOwnerKey === requestScopes.drawerOwnerKey(activeDrawerScope)
+        && isCurrentDrawerRequest(activeDrawerScope);
+    gate($('btn-yaml-save'), ownsYAML && (allowed(set, 'update') || allowed(set, 'patch')),
+        ownsYAML ? reason('update') : 'Wait for this resource YAML to finish loading.');
     gate($('btn-delete'), allowed(set, 'delete'), reason('delete'));
     gate($('btn-scale'), allowed(set, 'update'), reason('update'));
     gate($('btn-restart'), allowed(set, 'patch'), reason('patch'));
@@ -1206,6 +1282,11 @@ function applyDrawerAccess(ref) {
 function closeDrawer() {
     stopFollow();
     stopExec();
+    requestScopes.closeDrawer();
+    activeDrawerScope = null;
+    yamlReady = false;
+    yamlOwnerKey = '';
+    yamlRequestId++;
     drawerRef = null;
     $('drawer').hidden = true;
     $('drawer-backdrop').hidden = true;
@@ -1307,22 +1388,26 @@ function setDrawerTab(name) {
 }
 
 // ---- Details + Events ----
-function loadDetails() {
-    const ref = drawerRef;
+function loadDetails(scope = activeDrawerScope) {
+    if (!scope || !isCurrentDrawerRequest(scope)) return;
+    const ref = scope.ref;
     $('detail-meta').innerHTML = '<p class="empty-inline">Loading…</p>';
     $('detail-relations').innerHTML = '';
     $('detail-events-body').innerHTML = '';
     $('detail-events-empty').hidden = true;
 
     GetDetail(ref.kind, ref.namespace, ref.name)
-        .then((d) => renderDetailMeta(d))
-        .catch((err) => { $('detail-meta').innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
+        .then((d) => { if (isCurrentDrawerRequest(scope)) renderDetailMeta(d); })
+        .catch((err) => {
+            if (isCurrentDrawerRequest(scope)) $('detail-meta').innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
+        });
 
-    loadRelations(ref);
-    if (ref.kind === 'Secret') loadSecretData(ref);
+    loadRelations(scope);
+    if (ref.kind === 'Secret') loadSecretData(scope);
 
     ListEvents(ref.kind, ref.namespace, ref.name)
         .then((events) => {
+            if (!isCurrentDrawerRequest(scope)) return;
             const body = $('detail-events-body');
             body.innerHTML = '';
             $('detail-events-empty').hidden = (events?.length ?? 0) > 0;
@@ -1362,10 +1447,11 @@ function detailRow(k, v) {
 }
 
 // Relations tree: Deployment→RS→Pod, Service→Pod, Ingress→Service→Pod.
-function loadRelations(ref) {
+function loadRelations(scope) {
+    const ref = scope.ref;
     $('detail-relations').innerHTML = '';
-    if (ref.kind === 'Node') { loadNodePods(ref); return; }
-    if (ref.kind === 'Namespace') { loadNamespaceSummary(ref); return; }
+    if (ref.kind === 'Node') { loadNodePods(scope); return; }
+    if (ref.kind === 'Namespace') { loadNamespaceSummary(scope); return; }
     const treeFn = ref.kind === 'Deployment' ? DeploymentTree
         : ref.kind === 'Service' ? ServiceTree
         : ref.kind === 'Ingress' ? IngressTree
@@ -1373,6 +1459,7 @@ function loadRelations(ref) {
     if (!treeFn) return;
     treeFn(ref.namespace, ref.name)
         .then((tree) => {
+            if (!isCurrentDrawerRequest(scope)) return;
             if (!tree) return;
             const box = $('detail-relations');
             box.innerHTML =
@@ -1412,11 +1499,13 @@ function relNodeHtml(node, namespace) {
 }
 
 // Node → Pods: what's scheduled on this node (grouped by namespace).
-function loadNodePods(ref) {
+function loadNodePods(scope) {
+    const ref = scope.ref;
     const box = $('detail-relations');
     box.innerHTML = '<h4 class="detail-section-title">Pods on this node</h4><p class="empty-inline">Loading…</p>';
     PodsOnNode(ref.name)
         .then((pods) => {
+            if (!isCurrentDrawerRequest(scope)) return;
             if (!pods || pods.length === 0) { box.innerHTML = '<h4 class="detail-section-title">Pods on this node</h4><p class="empty-inline">No pods scheduled here.</p>'; return; }
             const rows = pods.map((p) =>
                 `<div class="node-pod-row${p.isError ? ' err' : ''}" data-ns="${esc(p.namespace)}" data-name="${esc(p.name)}">
@@ -1429,15 +1518,17 @@ function loadNodePods(ref) {
                 el.addEventListener('click', () => openDrawer({ kind: 'Pod', namespace: el.dataset.ns, name: el.dataset.name, isPod: true }));
             });
         })
-        .catch((err) => { box.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
+        .catch((err) => { if (isCurrentDrawerRequest(scope)) box.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
 }
 
 // Namespace → summary: per-kind counts, click a card to jump into that view scoped here.
-function loadNamespaceSummary(ref) {
+function loadNamespaceSummary(scope) {
+    const ref = scope.ref;
     const box = $('detail-relations');
     box.innerHTML = '<h4 class="detail-section-title">Contents</h4><p class="empty-inline">Loading…</p>';
     NamespaceSummary(ref.name)
         .then((counts) => {
+            if (!isCurrentDrawerRequest(scope)) return;
             if (!counts || counts.length === 0) { box.innerHTML = ''; return; }
             const cards = counts.map((c) =>
                 `<button class="ns-sum-card${c.errors > 0 ? ' has-err' : ''}" data-view="${esc(c.view)}">
@@ -1454,7 +1545,7 @@ function loadNamespaceSummary(ref) {
                 });
             });
         })
-        .catch((err) => { box.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
+        .catch((err) => { if (isCurrentDrawerRequest(scope)) box.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
 }
 
 // Point the namespace selector at a specific namespace and refresh scope/counts.
@@ -1480,13 +1571,13 @@ function setNamespaceScope(ns) {
 // Ingress you just deleted reappearing).
 let trafficReqId = 0;
 
-function loadTraffic() {
+function loadTraffic(scope) {
     const reqId = ++trafficReqId;
     const ingBox = $('traffic-ingress');
     const svcBox = $('traffic-services');
-    return NetworkFlows(currentNamespace || '')
+    return NetworkFlows(scope.namespace || '')
         .then((flows) => {
-            if (reqId !== trafficReqId) return;
+            if (reqId !== trafficReqId || !isCurrentViewRequest(scope)) return;
             const ings = flows?.ingresses ?? [];
             const svcs = flows?.services ?? [];
 
@@ -1506,7 +1597,7 @@ function loadTraffic() {
             applyFlowFilter();
         })
         .catch((err) => {
-            if (reqId !== trafficReqId) return;
+            if (reqId !== trafficReqId || !isCurrentViewRequest(scope)) return;
             // Never leave the previous topology on screen behind an error — it
             // reads as current state when it isn't.
             ingBox.innerHTML = '';
@@ -1717,9 +1808,11 @@ $('flow-filter').addEventListener('input', applyFlowFilter);
 $('flow-only-problems').addEventListener('change', applyFlowFilter);
 
 // Secret data with per-key reveal/hide (values are decoded server-side).
-function loadSecretData(ref) {
+function loadSecretData(scope) {
+    const ref = scope.ref;
     SecretData(ref.namespace, ref.name)
         .then((entries) => {
+            if (!isCurrentDrawerRequest(scope)) return;
             const box = $('detail-relations');
             if (!entries || entries.length === 0) { box.innerHTML = ''; return; }
             box.innerHTML = `<h4 class="detail-section-title">Data</h4>` + entries.map((e, i) =>
@@ -1739,7 +1832,7 @@ function loadSecretData(ref) {
                 });
             });
         })
-        .catch(() => { $('detail-relations').innerHTML = ''; });
+        .catch(() => { if (isCurrentDrawerRequest(scope)) $('detail-relations').innerHTML = ''; });
 }
 
 function chipsGroup(title, obj) {
@@ -1753,6 +1846,9 @@ function chipsGroup(title, obj) {
 let yamlOriginal = '';
 let yamlDiffMode = false;
 let yamlEditor = null;
+let yamlReady = false;
+let yamlOwnerKey = '';
+let yamlRequestId = 0;
 
 // The drawer's editor is created once and reused for every resource — the host
 // element is static in index.html, and rebuilding CodeMirror on each open would
@@ -1762,18 +1858,29 @@ function drawerEditor() {
     return yamlEditor;
 }
 
-function loadYAML() {
-    const ref = drawerRef;
+function loadYAML(scope = activeDrawerScope) {
+    if (!scope || !isCurrentDrawerRequest(scope)) return;
+    const ref = scope.ref;
+    const reqId = ++yamlRequestId;
+    yamlReady = false;
+    yamlOwnerKey = '';
+    applyDrawerAccess(ref);
     setYamlStatus('Loading…', '');
     drawerEditor().setValue('');
     exitDiffMode();
     GetYAML(ref.kind, ref.namespace, ref.name)
         .then((text) => {
+            if (reqId !== yamlRequestId || !isCurrentDrawerRequest(scope)) return;
             yamlOriginal = text;
             drawerEditor().setValue(text);
+            yamlReady = true;
+            yamlOwnerKey = requestScopes.drawerOwnerKey(scope);
+            applyDrawerAccess(ref);
             setYamlStatus('', '');
         })
-        .catch((err) => setYamlStatus(errMsg(err), 'err'));
+        .catch((err) => {
+            if (reqId === yamlRequestId && isCurrentDrawerRequest(scope)) setYamlStatus(errMsg(err), 'err');
+        });
 }
 
 $('btn-yaml-reload').addEventListener('click', loadYAML);
@@ -1824,16 +1931,28 @@ function lineDiff(aText, bText) {
 }
 
 $('btn-yaml-save').addEventListener('click', () => {
+    const scope = activeDrawerScope;
+    const ref = scope?.ref;
+    if (!scope || !ref || !isCurrentDrawerRequest(scope)
+        || !yamlReady || yamlOwnerKey !== requestScopes.drawerOwnerKey(scope)) {
+        setYamlStatus('This YAML no longer belongs to the open resource. Reload it before saving.', 'err');
+        return;
+    }
     if (yamlDiffMode) exitDiffMode();
     const text = drawerEditor().getValue();
+    const ownerKey = yamlOwnerKey;
+    const expectedCluster = $('cluster-select').value;
     setYamlStatus('Saving…', '');
-    UpdateYAML(text)
+    UpdateYAML(expectedCluster, ref.kind, ref.namespace, ref.name, text)
         .then(() => {
+            if (!isCurrentDrawerRequest(scope) || yamlOwnerKey !== ownerKey) return;
             setYamlStatus('Saved ✓', 'ok');
             yamlOriginal = text;
             refreshCurrentView();
         })
-        .catch((err) => setYamlStatus(errMsg(err), 'err'));
+        .catch((err) => {
+            if (isCurrentDrawerRequest(scope) && yamlOwnerKey === ownerKey) setYamlStatus(errMsg(err), 'err');
+        });
 });
 
 function setYamlStatus(text, cls) {
@@ -1854,32 +1973,47 @@ EventsOn('logline', (line) => {
     renderLogs();
 });
 
-function prepareLogs() {
-    const ref = drawerRef;
+function prepareLogs(scope = activeDrawerScope) {
+    if (!scope || !isCurrentDrawerRequest(scope)) return;
+    const ref = scope.ref;
     const select = $('logs-container');
     select.innerHTML = '';
     $('logs-follow').checked = false;
     $('logs-search').value = '';
     PodContainers(ref.namespace, ref.name)
         .then((containers) => {
+            if (!isCurrentDrawerRequest(scope)) return;
             for (const c of containers ?? []) {
                 const opt = document.createElement('option');
                 opt.value = c;
                 opt.textContent = c;
                 select.appendChild(opt);
             }
-            loadStaticLogs();
+            loadStaticLogs(scope);
         })
-        .catch((err) => { logLines = [errMsg(err)]; renderLogs(); });
+        .catch((err) => {
+            if (!isCurrentDrawerRequest(scope)) return;
+            logLines = [errMsg(err)];
+            renderLogs();
+        });
 }
 
-function loadStaticLogs() {
-    const ref = drawerRef;
+function loadStaticLogs(scope = activeDrawerScope) {
+    if (!scope || !isCurrentDrawerRequest(scope)) return;
+    const ref = scope.ref;
     logLines = ['Loading logs…'];
     renderLogs();
     PodLogs(ref.namespace, ref.name, $('logs-container').value, LOG_TAIL_LINES)
-        .then((text) => { logLines = (text || '').split('\n'); renderLogs(); })
-        .catch((err) => { logLines = [errMsg(err)]; renderLogs(); });
+        .then((text) => {
+            if (!isCurrentDrawerRequest(scope)) return;
+            logLines = (text || '').split('\n');
+            renderLogs();
+        })
+        .catch((err) => {
+            if (!isCurrentDrawerRequest(scope)) return;
+            logLines = [errMsg(err)];
+            renderLogs();
+        });
 }
 
 function renderLogs() {
@@ -1893,11 +2027,13 @@ function renderLogs() {
 
 function startFollow() {
     const ref = drawerRef;
+    const scope = activeDrawerScope;
     if (!ref || !ref.isPod) return;
     following = true;
     logLines = [];
     renderLogs();
     StartLogStream(ref.namespace, ref.name, $('logs-container').value).catch((err) => {
+        if (!isCurrentDrawerRequest(scope)) return;
         following = false;
         $('logs-follow').checked = false;
         logLines = [errMsg(err)];
@@ -1953,8 +2089,9 @@ EventsOn('exec-closed', (msg) => {
     resetTerminalUI();
 });
 
-function prepareTerminal() {
-    const ref = drawerRef;
+function prepareTerminal(scope = activeDrawerScope) {
+    if (!scope || !isCurrentDrawerRequest(scope)) return;
+    const ref = scope.ref;
     const select = $('term-container');
     select.innerHTML = '';
     $('term-view').textContent = '';
@@ -1962,6 +2099,7 @@ function prepareTerminal() {
     resetTerminalUI();
     PodContainers(ref.namespace, ref.name)
         .then((containers) => {
+            if (!isCurrentDrawerRequest(scope)) return;
             for (const c of containers ?? []) {
                 const opt = document.createElement('option');
                 opt.value = c;
@@ -1969,7 +2107,7 @@ function prepareTerminal() {
                 select.appendChild(opt);
             }
         })
-        .catch((err) => { $('term-status').textContent = errMsg(err); });
+        .catch((err) => { if (isCurrentDrawerRequest(scope)) $('term-status').textContent = errMsg(err); });
 }
 
 function appendTerm(text) {
@@ -1989,6 +2127,7 @@ function resetTerminalUI() {
 
 $('btn-term-start').addEventListener('click', () => {
     const ref = drawerRef;
+    const scope = activeDrawerScope;
     if (!ref || !ref.isPod) return;
     const container = $('term-container').value;
     const shell = $('term-shell').value;
@@ -1996,6 +2135,7 @@ $('btn-term-start').addEventListener('click', () => {
     $('term-view').textContent = '';
     StartExec(ref.namespace, ref.name, container, shell)
         .then(() => {
+            if (!isCurrentDrawerRequest(scope)) { StopExec(); return; }
             execConnected = true;
             $('term-status').textContent = `connected (${shell})`;
             $('btn-term-start').hidden = true;
@@ -2005,7 +2145,7 @@ $('btn-term-start').addEventListener('click', () => {
             input.focus();
             appendTerm(`Connected to ${ref.name} · ${container} via ${shell}\nType commands below. Full-screen apps (vi, top) are not supported.\n\n`);
         })
-        .catch((err) => { $('term-status').textContent = errMsg(err); });
+        .catch((err) => { if (isCurrentDrawerRequest(scope)) $('term-status').textContent = errMsg(err); });
 });
 
 $('btn-term-stop').addEventListener('click', stopExec);
@@ -2463,15 +2603,16 @@ document.addEventListener('keydown', (e) => {
 const SZ_UNSET = -1;
 let sizingReport = null;
 
-function loadSizing() {
-    const ns = currentNamespace;
+function loadSizing(scope) {
+    const ns = scope.namespace;
     return Sizing(ns)
         .then((r) => {
-            if (currentView !== 'sizing') return; // the user moved on
+            if (!isCurrentViewRequest(scope)) return;
             sizingReport = r;
             renderSizing(r);
         })
         .catch((err) => {
+            if (!isCurrentViewRequest(scope)) return;
             sizingReport = null;
             $('sz-bars').innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
             $('sz-ns-body').innerHTML = '';
@@ -3545,9 +3686,10 @@ function openChartInstallModal(chart) {
 
 // ============ Helm repositories ============
 
-function loadHelmRepos() {
+function loadHelmRepos(scope) {
     return ListHelmRepos()
         .then((repos) => {
+            if (!isCurrentViewRequest(scope)) return;
             const body = $('helmrepos-body');
             body.innerHTML = '';
             $('helmrepos-empty').hidden = (repos?.length ?? 0) > 0;
@@ -3571,7 +3713,7 @@ function loadHelmRepos() {
                     });
                 }));
         })
-        .catch(showDashError);
+        .catch((err) => viewError(scope, err));
 }
 
 function openRepoAddModal() {

@@ -55,6 +55,26 @@ reference.
 
 `closeDrawer()` must stop anything the drawer started (log follow, exec).
 
+### Async ownership
+
+Wails calls cannot be cancelled reliably, so every async response must prove it
+still owns the UI before changing shared DOM or editor state. `request-scope.js`
+provides three related generations:
+
+- a connection epoch, invalidated as soon as cluster ownership changes;
+- a view epoch capturing the exact view and namespace;
+- a drawer epoch capturing the exact `kind / namespace / name` resource key.
+
+Start list work through `refreshCurrentView()` and pass its scope into the loader.
+Success and error callbacks both call `isCurrentViewRequest(scope)` before touching
+the page. Drawer loaders follow the same rule with `isCurrentDrawerRequest(scope)`.
+Do not replace this with a check of only `currentView`: all custom kinds share one
+DOM view, and two namespaces or clusters can show the same view id.
+
+The shared drawer YAML editor has an additional owner key. Save stays disabled
+until the current drawer's `GetYAML` completes, and the backend receives the
+expected cluster and resource identity as a second safety boundary.
+
 ## Two layout rules that have each cost a round of rework
 
 **`.card` has no padding.** A table inside a card is deliberately full-bleed and takes
@@ -194,8 +214,9 @@ Do not replace the mark with the concept-board raster or the old Wails logo.
 The frontend side of [performance.md](performance.md):
 
 - **One bound call per screen**, not one per kind.
-- **Generation guards** (`navCountsReqId`, `trafficReqId`) on anything async that
-  can be superseded.
+- **Ownership scopes** from `request-scope.js` on any connection, view, namespace,
+  drawer, or editor response that can be superseded. Feature-local request IDs may
+  supplement the scope (for repeated reloads) but cannot replace it.
 - Known unpaid costs: one `<tr>` per object with listeners, and
   `filterCurrentTable` reading `tr.textContent` for every row on every keystroke.
 

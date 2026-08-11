@@ -36,6 +36,9 @@ coverage.*
 .cache/
 tmp/
 
+# Local review reports (working notes, intentionally not versioned)
+/code-review/
+
 # Go and native build outputs
 *.exe
 *.dll

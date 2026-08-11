@@ -116,6 +116,7 @@ go vet ./...
 gofmt -l *.go internal/k8sclient/*.go internal/buildinfo/*.go cmd/kubby-cli/*.go
 
 cd frontend
+npm test
 npm run build
 cd ..
 ```

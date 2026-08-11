@@ -7,7 +7,10 @@ How to check that a change works. Read this before claiming something is done.
 ## The test suite
 
 ```powershell
-go test ./...        # ~35 tests across four files
+go test ./...
+cd frontend
+npm test             # deferred-response ownership tests; no GUI required
+cd ..
 ```
 
 | File | Pins |
@@ -16,6 +19,8 @@ go test ./...        # ~35 tests across four files
 | `internal/k8sclient/apply_test.go` | missing-`---` detection, document splitting, diff-noise stripping, the pending-namespace explanation |
 | `internal/k8sclient/access_test.go` | **unknown permission == allowed**, explicit deny respected, pod subresources probed separately |
 | `internal/k8sclient/rightsizing_test.go` | unset never rendered as zero, threshold floors, severity order, quota parsing, advice grammar |
+| `internal/k8sclient/detail_test.go` | YAML Save cannot change kind, namespace, name, or cluster-scoped identity |
+| `frontend/src/request-scope.test.js` | a late view/drawer response cannot overwrite the newer owner |
 
 None of them need a cluster. Everything else is still verified through
 `cmd/kubby-cli` against a real one — **that is a gap, not a design choice** — see
@@ -184,9 +189,9 @@ Still untested: `openAIBaseURL`, `splitKindGroup`, `titleFor`, `isFullyReady`,
 `readyCondition`, `destinationService` (Istio host parsing), `podStatus`.
 (`checkMissingSeparator` and `splitYAMLDocuments` are now covered.)
 
-The frontend has no tests at all, and it now holds logic worth pinning:
-`documentStarts` and `parseApplyFailures` in `editor.js`, and `collapseDiff` in
-`main.js`. There is no JS test runner configured.
+Frontend request ownership is covered by the built-in Node test runner. Still
+untested: `documentStarts` and `parseApplyFailures` in `editor.js`, and
+`collapseDiff` in `main.js`.
 
 And above that, `k8s.io/client-go/kubernetes/fake` + `dynamic/fake` +
 `metadata/fake` would let `SidebarCounts`, `NetworkTopology`, `istioFlows` and

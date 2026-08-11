@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"kubby/internal/buildinfo"
+	"kubby/internal/k8sclient"
 )
 
 // The diagnostics report exists to be pasted into a bug report, so the two things
@@ -30,6 +31,14 @@ func TestDiagnosticsReportShape(t *testing.T) {
 		if !strings.Contains(report, want) {
 			t.Errorf("report is missing %q\n--- report ---\n%s", want, report)
 		}
+	}
+}
+
+func TestUpdateYAMLRejectsChangedActiveCluster(t *testing.T) {
+	a := &App{activeName: "cluster-b", cluster: &k8sclient.Cluster{}}
+	err := a.UpdateYAML("cluster-a", "ConfigMap", "default", "settings", "ignored")
+	if err == nil || !strings.Contains(err.Error(), "refusing stale YAML update") {
+		t.Fatalf("expected stale-cluster rejection, got %v", err)
 	}
 }
 

@@ -213,4 +213,4 @@ export function TopPods(arg1:number):Promise<Array<k8sclient.PodMetric>>;
 
 export function UpdateHelmRepos():Promise<void>;
 
-export function UpdateYAML(arg1:string):Promise<void>;
+export function UpdateYAML(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;

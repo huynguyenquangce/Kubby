@@ -15,21 +15,21 @@ import (
 // gvrByKind maps the resource kinds the UI supports to their GroupVersionResource.
 // Keeping an explicit map avoids a discovery round-trip and keeps behaviour obvious.
 var gvrByKind = map[string]schema.GroupVersionResource{
-	"Pod":        {Group: "", Version: "v1", Resource: "pods"},
-	"Service":    {Group: "", Version: "v1", Resource: "services"},
-	"Namespace":  {Group: "", Version: "v1", Resource: "namespaces"},
-	"Node":       {Group: "", Version: "v1", Resource: "nodes"},
-	"ConfigMap":      {Group: "", Version: "v1", Resource: "configmaps"},
-	"Secret":         {Group: "", Version: "v1", Resource: "secrets"},
-	"ServiceAccount": {Group: "", Version: "v1", Resource: "serviceaccounts"},
+	"Pod":                   {Group: "", Version: "v1", Resource: "pods"},
+	"Service":               {Group: "", Version: "v1", Resource: "services"},
+	"Namespace":             {Group: "", Version: "v1", Resource: "namespaces"},
+	"Node":                  {Group: "", Version: "v1", Resource: "nodes"},
+	"ConfigMap":             {Group: "", Version: "v1", Resource: "configmaps"},
+	"Secret":                {Group: "", Version: "v1", Resource: "secrets"},
+	"ServiceAccount":        {Group: "", Version: "v1", Resource: "serviceaccounts"},
 	"PersistentVolumeClaim": {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
-	"Deployment":  {Group: "apps", Version: "v1", Resource: "deployments"},
-	"ReplicaSet":  {Group: "apps", Version: "v1", Resource: "replicasets"},
-	"StatefulSet": {Group: "apps", Version: "v1", Resource: "statefulsets"},
-	"DaemonSet":   {Group: "apps", Version: "v1", Resource: "daemonsets"},
-	"Job":         {Group: "batch", Version: "v1", Resource: "jobs"},
-	"CronJob":     {Group: "batch", Version: "v1", Resource: "cronjobs"},
-	"Ingress":     {Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
+	"Deployment":            {Group: "apps", Version: "v1", Resource: "deployments"},
+	"ReplicaSet":            {Group: "apps", Version: "v1", Resource: "replicasets"},
+	"StatefulSet":           {Group: "apps", Version: "v1", Resource: "statefulsets"},
+	"DaemonSet":             {Group: "apps", Version: "v1", Resource: "daemonsets"},
+	"Job":                   {Group: "batch", Version: "v1", Resource: "jobs"},
+	"CronJob":               {Group: "batch", Version: "v1", Resource: "cronjobs"},
+	"Ingress":               {Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
 
 	"PersistentVolume": {Group: "", Version: "v1", Resource: "persistentvolumes"},
 	"StorageClass":     {Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses"},
@@ -46,8 +46,8 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 
 // clusterScopedKinds are not namespaced.
 var clusterScopedKinds = map[string]bool{
-	"Namespace":          true,
-	"Node":               true,
+	"Namespace":                true,
+	"Node":                     true,
 	"PersistentVolume":         true,
 	"StorageClass":             true,
 	"ClusterRole":              true,
@@ -102,9 +102,11 @@ func GetYAML(ctx context.Context, c *Cluster, kind, namespace, name string) (str
 	return string(out), nil
 }
 
-// UpdateYAML parses edited YAML and applies it back to the cluster.
-// The kind/namespace/name are taken from the YAML itself.
-func UpdateYAML(ctx context.Context, c *Cluster, yamlText string) error {
+// UpdateYAML parses edited YAML and applies it back to the resource that opened
+// the editor.  The expected identity is an explicit precondition: editing the
+// document may change spec, labels, or annotations, but it must never silently
+// retarget Save to another object.
+func UpdateYAML(ctx context.Context, c *Cluster, expectedKind, expectedNamespace, expectedName, yamlText string) error {
 	var raw map[string]interface{}
 	if err := yaml.Unmarshal([]byte(yamlText), &raw); err != nil {
 		return fmt.Errorf("invalid YAML: %w", err)
@@ -117,12 +119,39 @@ func UpdateYAML(ctx context.Context, c *Cluster, yamlText string) error {
 	if err != nil {
 		return err
 	}
+	expected, err := c.ResolveKind(expectedKind)
+	if err != nil {
+		return err
+	}
+	if err := validateUpdateTarget(expected, expectedNamespace, expectedName, ak, obj); err != nil {
+		return err
+	}
 	if !ak.Namespaced {
 		_, err = c.Dynamic.Resource(ak.GVR).Update(ctx, obj, metav1.UpdateOptions{})
 		return err
 	}
 	_, err = c.Dynamic.Resource(ak.GVR).Namespace(obj.GetNamespace()).Update(ctx, obj, metav1.UpdateOptions{})
 	return err
+}
+
+func validateUpdateTarget(expected APIKind, expectedNamespace, expectedName string, actual APIKind, obj *unstructured.Unstructured) error {
+	stale := func(detail string) error {
+		return fmt.Errorf("refusing stale YAML update: %s; reload the open resource", detail)
+	}
+	if expectedName == "" || obj.GetName() != expectedName {
+		return stale(fmt.Sprintf("expected name %q, YAML names %q", expectedName, obj.GetName()))
+	}
+	if expected.Namespaced != actual.Namespaced || expected.GVR.Group != actual.GVR.Group || expected.GVR.Resource != actual.GVR.Resource {
+		return stale(fmt.Sprintf("expected %s, YAML addresses %s", expected.GVR.GroupResource(), actual.GVR.GroupResource()))
+	}
+	if expected.Namespaced {
+		if obj.GetNamespace() != expectedNamespace {
+			return stale(fmt.Sprintf("expected namespace %q, YAML names %q", expectedNamespace, obj.GetNamespace()))
+		}
+	} else if expectedNamespace != "" || obj.GetNamespace() != "" {
+		return stale("a cluster-scoped resource cannot carry a namespace")
+	}
+	return nil
 }
 
 // DeleteResource deletes a resource by kind/namespace/name.

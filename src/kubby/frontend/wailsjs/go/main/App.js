@@ -422,6 +422,6 @@ export function UpdateHelmRepos() {
   return window['go']['main']['App']['UpdateHelmRepos']();
 }
 
-export function UpdateYAML(arg1) {
-  return window['go']['main']['App']['UpdateYAML'](arg1);
+export function UpdateYAML(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['UpdateYAML'](arg1, arg2, arg3, arg4, arg5);
 }
