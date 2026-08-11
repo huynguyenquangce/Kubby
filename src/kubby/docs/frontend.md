@@ -227,6 +227,10 @@ Do not replace the mark with the concept-board raster or the old Wails logo.
   actions) plus debounced live resource search.
 - **Live mode** refreshes every 5 s, and pauses while a selection, drawer, modal or
   palette is open — so it never yanks something out from under the user.
+- **Port forwards are global sessions.** Their creation form stays in a Pod/Service
+  drawer, but every running tunnel remains visible in the top-bar manager. The
+  drawer's keep-running option decides whether its new tunnel survives drawer
+  close; frontend state is rehydrated from the backend registry on connection.
 
 ## Performance obligations
 

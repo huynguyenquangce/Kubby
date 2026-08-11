@@ -514,7 +514,8 @@ tr.error-row:hover { background: var(--err-bg); }
     .overview-hero,
     .overview-grid { grid-template-columns: 1fr; }
     .stat-cards { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-    .command-search { width: min(360px, 40vw); }
+    .command-search { width: min(280px, 30vw); }
+    .pf-manager-label { display: none; }
     .topbar { padding-inline: 1.15rem; }
     .page-heading { padding-inline: 1.25rem; }
     .content { padding-inline: 1.25rem; }

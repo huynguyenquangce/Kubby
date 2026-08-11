@@ -6,6 +6,16 @@ Bug log — add one line per issue. Resolved items move to the bottom.
 
 ## Fixed
 
+- [2026-08-11] A port-forward kept running after its resource drawer closed but
+  became effectively hidden; stopping it required finding and reopening the same
+  Pod/Service. Cause: the long-lived session correctly belonged to the application,
+  while its only control surface and the frontend's only copy of its metadata lived
+  inside a resource-filtered drawer. The backend registry also dropped the original
+  target when listed and its map/Close paths were not concurrency-safe. Fix: a
+  top-bar manager hydrates the authoritative registry and exposes Copy/Open,
+  Stop, and Stop all; Start shows a management toast; a remembered drawer option
+  chooses background versus drawer-scoped lifetime; pending starts are invalidated
+  across drawer/cluster changes; registry access and session close are synchronized.
 - [2026-08-11] Cancel, the title-bar X, and backdrop clicks stopped closing every
   shared modal after modal ownership protection was added. Cause: all three used
   `addEventListener('click', closeModal)`, so the browser passed a `MouseEvent` as

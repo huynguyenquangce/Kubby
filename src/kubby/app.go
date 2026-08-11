@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"kubby/internal/k8sclient"
@@ -21,19 +23,28 @@ type App struct {
 	clusters   map[string]*k8sclient.Cluster
 	order      []string           // connection order, for a stable dropdown
 	logCancel  context.CancelFunc // cancels the active log stream, if any
-	pfSessions map[string]*k8sclient.PortForwardSession
+	pfMu       sync.Mutex
+	pfSessions map[string]*portForwardEntry
+	pfCluster  *k8sclient.Cluster
+	pfEpoch    uint64
 	execSess   *k8sclient.ExecSession // the active exec session, if any
 }
 
 func NewApp() *App {
 	return &App{
-		pfSessions: map[string]*k8sclient.PortForwardSession{},
+		pfSessions: map[string]*portForwardEntry{},
 		clusters:   map[string]*k8sclient.Cluster{},
 	}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+}
+
+func (a *App) shutdown(context.Context) {
+	a.StopLogStream()
+	a.StopExec()
+	a.stopAllPortForwards()
 }
 
 // ContextsResult is returned to the frontend so it can render a context picker.
@@ -101,6 +112,7 @@ func (a *App) verifyAndStore(name string, cluster *k8sclient.Cluster) error {
 		a.order = append(a.order, name)
 	}
 	a.clusters[name] = cluster
+	a.resetPortForwardsForCluster(cluster)
 	a.activeName = name
 	a.cluster = cluster
 	return nil
@@ -130,9 +142,7 @@ func (a *App) SwitchCluster(name string) error {
 	// Stop anything tied to the previous cluster.
 	a.StopLogStream()
 	a.StopExec()
-	for key := range a.pfSessions {
-		a.StopPortForward(key)
-	}
+	a.resetPortForwardsForCluster(c)
 	a.activeName = name
 	a.cluster = c
 	return nil
@@ -147,9 +157,7 @@ func (a *App) DisconnectCluster(name string) string {
 	if name == a.activeName {
 		a.StopLogStream()
 		a.StopExec()
-		for key := range a.pfSessions {
-			a.StopPortForward(key)
-		}
+		a.resetPortForwardsForCluster(nil)
 	}
 	delete(a.clusters, name)
 	for i, n := range a.order {
@@ -166,6 +174,7 @@ func (a *App) DisconnectCluster(name string) string {
 			a.activeName = ""
 			a.cluster = nil
 		}
+		a.resetPortForwardsForCluster(a.cluster)
 	}
 	return a.activeName
 }
@@ -890,23 +899,73 @@ func (a *App) PodLogs(namespace, name, container string, tailLines int) (string,
 
 // PortForwardInfo describes an active forward for the UI.
 type PortForwardInfo struct {
-	Key        string `json:"key"`
-	Kind       string `json:"kind"`
-	Namespace  string `json:"namespace"`
-	Name       string `json:"name"`
-	PodName    string `json:"podName"`
-	LocalPort  int    `json:"localPort"`
-	RemotePort int    `json:"remotePort"`
+	Key         string `json:"key"`
+	Kind        string `json:"kind"`
+	Namespace   string `json:"namespace"`
+	Name        string `json:"name"`
+	PodName     string `json:"podName"`
+	LocalPort   int    `json:"localPort"`
+	RemotePort  int    `json:"remotePort"`
+	KeepRunning bool   `json:"keepRunning"`
+}
+
+type portForwardEntry struct {
+	session *k8sclient.PortForwardSession
+	info    PortForwardInfo
+}
+
+func (a *App) detachPortForwardsLocked() []*k8sclient.PortForwardSession {
+	sessions := make([]*k8sclient.PortForwardSession, 0, len(a.pfSessions))
+	for _, entry := range a.pfSessions {
+		if entry.session != nil {
+			sessions = append(sessions, entry.session)
+		}
+	}
+	a.pfSessions = map[string]*portForwardEntry{}
+	a.pfEpoch++
+	return sessions
+}
+
+func closePortForwardSessions(sessions []*k8sclient.PortForwardSession) {
+	for _, session := range sessions {
+		session.Close()
+	}
+}
+
+// resetPortForwardsForCluster atomically invalidates pending starts, changes the
+// cluster new starts belong to, and detaches every existing tunnel.
+func (a *App) resetPortForwardsForCluster(cluster *k8sclient.Cluster) {
+	a.pfMu.Lock()
+	sessions := a.detachPortForwardsLocked()
+	a.pfCluster = cluster
+	a.pfMu.Unlock()
+	closePortForwardSessions(sessions)
+}
+
+func (a *App) stopAllPortForwards() {
+	a.pfMu.Lock()
+	sessions := a.detachPortForwardsLocked()
+	a.pfMu.Unlock()
+	closePortForwardSessions(sessions)
+}
+
+func (a *App) portForwardEpoch() uint64 {
+	a.pfMu.Lock()
+	defer a.pfMu.Unlock()
+	return a.pfEpoch
 }
 
 // StartPortForward opens a forward from localPort (0 = auto) to remotePort of a
 // pod backing the target Pod/Service. Returns the info including the bound local
 // port once the tunnel is ready.
-func (a *App) StartPortForward(kind, namespace, name string, localPort, remotePort int) (*PortForwardInfo, error) {
-	if err := a.requireCluster(); err != nil {
-		return nil, err
+func (a *App) StartPortForward(kind, namespace, name string, localPort, remotePort int, keepRunning bool) (*PortForwardInfo, error) {
+	a.pfMu.Lock()
+	cluster, epoch := a.pfCluster, a.pfEpoch
+	a.pfMu.Unlock()
+	if cluster == nil {
+		return nil, fmt.Errorf("not connected to any cluster")
 	}
-	session, ready, errCh, err := k8sclient.StartPortForward(a.ctx, a.cluster, kind, namespace, name, localPort, remotePort)
+	session, ready, errCh, err := k8sclient.StartPortForward(a.ctx, cluster, kind, namespace, name, localPort, remotePort)
 	if err != nil {
 		return nil, err
 	}
@@ -921,40 +980,61 @@ func (a *App) StartPortForward(kind, namespace, name string, localPort, remotePo
 		return nil, fmt.Errorf("port-forward did not become ready in time")
 	}
 
-	key := fmt.Sprintf("%s/%s:%d→%d", namespace, name, session.LocalPort, remotePort)
-	a.pfSessions[key] = session
-
-	// Report an async teardown if the tunnel dies later.
-	go func() {
-		if err := <-errCh; err != nil {
-			delete(a.pfSessions, key)
-			wailsruntime.EventsEmit(a.ctx, "portforward-closed", key)
-		}
-	}()
-
-	return &PortForwardInfo{
+	key := fmt.Sprintf("%s/%s/%s:%d→%d", kind, namespace, name, session.LocalPort, remotePort)
+	info := PortForwardInfo{
 		Key: key, Kind: kind, Namespace: namespace, Name: name,
 		PodName: session.PodName, LocalPort: session.LocalPort, RemotePort: remotePort,
-	}, nil
+		KeepRunning: keepRunning,
+	}
+	entry := &portForwardEntry{session: session, info: info}
+	a.pfMu.Lock()
+	if epoch != a.pfEpoch || cluster != a.pfCluster {
+		a.pfMu.Unlock()
+		session.Close()
+		return nil, fmt.Errorf("port-forward start was superseded by a cluster change")
+	}
+	a.pfSessions[key] = entry
+	a.pfMu.Unlock()
+
+	// Report an async teardown if the tunnel dies later.
+	go func(expected *portForwardEntry) {
+		<-errCh
+		a.pfMu.Lock()
+		current, ok := a.pfSessions[key]
+		if ok && current == expected {
+			delete(a.pfSessions, key)
+		}
+		a.pfMu.Unlock()
+		if ok && current == expected {
+			wailsruntime.EventsEmit(a.ctx, "portforward-closed", key)
+		}
+	}(entry)
+
+	return &info, nil
 }
 
 // StopPortForward tears down a forward by its key.
 func (a *App) StopPortForward(key string) {
-	if s, ok := a.pfSessions[key]; ok {
-		s.Close()
+	a.pfMu.Lock()
+	entry, ok := a.pfSessions[key]
+	if ok {
 		delete(a.pfSessions, key)
+	}
+	a.pfMu.Unlock()
+	if ok && entry.session != nil {
+		entry.session.Close()
 	}
 }
 
 // ListPortForwards returns the currently active forwards.
 func (a *App) ListPortForwards() []PortForwardInfo {
+	a.pfMu.Lock()
+	defer a.pfMu.Unlock()
 	out := make([]PortForwardInfo, 0, len(a.pfSessions))
-	for key, s := range a.pfSessions {
-		out = append(out, PortForwardInfo{
-			Key: key, Namespace: s.Namespace, PodName: s.PodName,
-			LocalPort: s.LocalPort, RemotePort: s.RemotePort,
-		})
+	for _, entry := range a.pfSessions {
+		out = append(out, entry.info)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
 }
 

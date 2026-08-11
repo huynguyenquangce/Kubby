@@ -107,7 +107,7 @@ Requirements are grouped by capability. **Status** legend: ✅ implemented · �
 | FR-18 | Delete resources with confirmation; bulk-select + bulk delete. | ✅ | Checkbox selection across a table; a single confirm dialog. |
 | FR-19 | Workload operations. | ✅ | **Deployment:** scale, restart, pause/resume rollout, rollout history + rollback. **StatefulSet & DaemonSet:** rolling restart. **CronJob:** trigger now. |
 | FR-20 | Node operations. | ✅ | Cordon, uncordon, drain (evicts non-DaemonSet pods). |
-| FR-21 | Interactive **exec** and **port-forward** from the drawer. | ✅ | Line-mode terminal (TTY off); multiple concurrent port-forward tunnels. |
+| FR-21 | Interactive **exec** and **port-forward** from the drawer. | ✅ | Line-mode terminal (TTY off); multiple concurrent tunnels; a global manager keeps background forwards visible and stoppable after the resource drawer closes. A per-drawer option controls whether a new tunnel survives closing its drawer. |
 | FR-22 | Reveal decoded Secret values on demand. | ✅ | Values decoded server-side, shown per key with reveal/hide. |
 
 ### 7.5 Helm

@@ -199,7 +199,7 @@ export function StartExec(arg1:string,arg2:string,arg3:string,arg4:string):Promi
 
 export function StartLogStream(arg1:string,arg2:string,arg3:string):Promise<void>;
 
-export function StartPortForward(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number):Promise<main.PortForwardInfo>;
+export function StartPortForward(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number,arg6:boolean):Promise<main.PortForwardInfo>;
 
 export function StopExec():Promise<void>;
 

@@ -3,6 +3,13 @@ import './app.css';
 import './option-b.css';
 
 import { createYamlEditor, parseApplyFailures } from './editor.js';
+import {
+    canApplyForwardHydration,
+    forwardsToStopOnDrawerClose,
+    removeForward,
+    shouldRetainStartedForward,
+    upsertForward,
+} from './port-forward-state.js';
 import { createRequestScopes } from './request-scope.js';
 
 import {
@@ -108,6 +115,7 @@ import {
     SaveTextToFile,
     StartPortForward,
     StopPortForward,
+    ListPortForwards,
     StartExec,
     ExecWrite,
     StopExec,
@@ -313,6 +321,7 @@ function enterDashboard() {
     clearRenderedView();
     $('welcome').hidden = true;
     $('dashboard').hidden = false;
+    hydratePortForwards();
     return refreshClusterSwitcher()
         .then(() => loadNamespaceOptions())
         .then(() => {
@@ -344,11 +353,10 @@ $('cluster-select').addEventListener('change', (e) => {
     connectionOwnershipChanged();
     clearRenderedView();
     closeDrawer();
-    for (const f of activeForwards) StopPortForward(f.key);
-    activeForwards = [];
+    stopKnownPortForwards();
     clearAccessCache(); // a different cluster grants different things
     SwitchCluster(name)
-        .then(() => { currentNamespace = ''; return loadNamespaceOptions(); })
+        .then(() => { currentNamespace = ''; hydratePortForwards(); return loadNamespaceOptions(); })
         .then(() => {
             // A different cluster has different counts and different CRDs — both
             // must be rebuilt, or the sidebar keeps describing the old one.
@@ -379,8 +387,7 @@ $('btn-disconnect').addEventListener('click', () => {
     connectionOwnershipChanged();
     clearRenderedView();
     closeDrawer();
-    for (const f of activeForwards) StopPortForward(f.key);
-    activeForwards = [];
+    stopKnownPortForwards();
     clearAccessCache();
     DisconnectCluster(active).then((newActive) => {
         if (!newActive) {
@@ -1215,6 +1222,7 @@ function isCurrentDrawerRequest(scope) {
 
 function openDrawer(ref) {
     if (ref.kind === 'HelmRelease') { openHelmDetailModal(ref); return; }
+    if (drawerRef && !$('drawer').hidden) stopEphemeralForwards(drawerRef);
     stopFollow();
     stopExec();
     drawerRef = ref;
@@ -1285,6 +1293,7 @@ function applyDrawerAccess(ref) {
 }
 
 function closeDrawer() {
+    const closingRef = drawerRef;
     stopFollow();
     stopExec();
     requestScopes.closeDrawer();
@@ -1295,6 +1304,7 @@ function closeDrawer() {
     drawerRef = null;
     $('drawer').hidden = true;
     $('drawer-backdrop').hidden = true;
+    if (closingRef) stopEphemeralForwards(closingRef);
 }
 
 // ---- Scale / Restart (Deployment) ----
@@ -2172,40 +2182,130 @@ function stopExec() {
 }
 
 // ---- Port forward ----
+const PF_KEEP_PREF = 'kubby.portForward.keepRunning';
 let activeForwards = [];
+let forwardStateVersion = 0;
+let forwardStartId = 0;
+let toastForwardKey = '';
+let pfToastTimer = null;
+
+function preferredKeepRunning() {
+    try { return localStorage.getItem(PF_KEEP_PREF) !== 'false'; }
+    catch { return true; }
+}
+
+function saveKeepRunningPreference(value) {
+    try { localStorage.setItem(PF_KEEP_PREF, value ? 'true' : 'false'); }
+    catch { /* WebView storage can be unavailable in restricted profiles. */ }
+}
+
+function renderAllForwards() {
+    renderForwards();
+    renderPortForwardManager();
+}
+
+function hydratePortForwards() {
+    const token = requestScopes.connectionToken();
+    const version = forwardStateVersion;
+    return ListPortForwards()
+        .then((forwards) => {
+            if (!canApplyForwardHydration({
+                connectionCurrent: requestScopes.isCurrentConnection(token),
+                requestedVersion: version,
+                currentVersion: forwardStateVersion,
+            })) return;
+            activeForwards = [];
+            for (const forward of forwards ?? []) activeForwards = upsertForward(activeForwards, forward);
+            forwardStateVersion++;
+            renderAllForwards();
+        })
+        .catch((err) => {
+            if (requestScopes.isCurrentConnection(token)) showDashError(err);
+        });
+}
+
+function stopForward(key) {
+    activeForwards = removeForward(activeForwards, key);
+    forwardStateVersion++;
+    if (toastForwardKey === key) hideForwardToast();
+    renderAllForwards();
+    return Promise.resolve(StopPortForward(key)).catch((err) => showError(errMsg(err)));
+}
+
+function stopKnownPortForwards() {
+    const keys = activeForwards.map((forward) => forward.key);
+    activeForwards = [];
+    forwardStateVersion++;
+    hideForwardToast();
+    closePortForwardManager();
+    renderAllForwards();
+    for (const key of keys) Promise.resolve(StopPortForward(key)).catch(() => {});
+}
+
+function stopEphemeralForwards(ref) {
+    for (const key of forwardsToStopOnDrawerClose(activeForwards, ref)) stopForward(key);
+}
 
 EventsOn('portforward-closed', (key) => {
-    activeForwards = activeForwards.filter((f) => f.key !== key);
-    renderForwards();
+    activeForwards = removeForward(activeForwards, key);
+    forwardStateVersion++;
+    if (toastForwardKey === key) hideForwardToast();
+    renderAllForwards();
 });
 
 function prepareForward() {
+    forwardStartId++;
     $('pf-error').hidden = true;
     $('pf-local').value = '0';
     $('pf-remote').value = '';
-    renderForwards();
+    $('pf-keep-running').checked = preferredKeepRunning();
+    $('btn-pf-start').disabled = false;
+    $('btn-pf-start').textContent = 'Start forward';
+    renderAllForwards();
 }
 
+$('pf-keep-running').addEventListener('change', (event) => saveKeepRunningPreference(event.target.checked));
+
 $('btn-pf-start').addEventListener('click', () => {
-    const ref = drawerRef;
-    if (!ref) return;
+    const ref = drawerRef ? { ...drawerRef } : null;
+    const scope = activeDrawerScope;
+    const connectionToken = requestScopes.connectionToken();
+    if (!ref || !scope || !isCurrentDrawerRequest(scope)) return;
     const remote = parseInt($('pf-remote').value, 10);
     const local = parseInt($('pf-local').value, 10) || 0;
+    const keepRunning = $('pf-keep-running').checked;
     if (Number.isNaN(remote) || remote < 1 || remote > 65535) {
         showPfError('Enter a valid remote port (1–65535).');
         return;
     }
+    const requestId = ++forwardStartId;
     $('pf-error').hidden = true;
     const btn = $('btn-pf-start');
     btn.disabled = true;
     btn.textContent = 'Starting…';
-    StartPortForward(ref.kind, ref.namespace, ref.name, local, remote)
+    StartPortForward(ref.kind, ref.namespace, ref.name, local, remote, keepRunning)
         .then((info) => {
-            activeForwards.push(info);
-            renderForwards();
+            const drawerStillOwnsRequest = isCurrentDrawerRequest(scope);
+            if (!shouldRetainStartedForward({ drawerStillOwnsRequest, keepRunning })) {
+                StopPortForward(info.key);
+                return;
+            }
+            activeForwards = upsertForward(activeForwards, info);
+            forwardStateVersion++;
+            renderAllForwards();
+            showForwardToast(info);
         })
-        .catch((err) => showPfError(errMsg(err)))
-        .finally(() => { btn.disabled = false; btn.textContent = 'Start forward'; });
+        .catch((err) => {
+            if (isCurrentDrawerRequest(scope)) showPfError(errMsg(err));
+            else if (keepRunning && requestScopes.isCurrentConnection(connectionToken)) {
+                showError(errMsg(err), 'Port forward failed');
+            }
+        })
+        .finally(() => {
+            if (!isCurrentDrawerRequest(scope) || requestId !== forwardStartId) return;
+            btn.disabled = false;
+            btn.textContent = 'Start forward';
+        });
 });
 
 function showPfError(msg) {
@@ -2228,19 +2328,96 @@ function renderForwards() {
                 <span class="pf-addr mono">localhost:${f.localPort}</span>
                 <span class="pf-arrow">→</span>
                 <span class="mono">${esc(f.podName)}:${f.remotePort}</span>
+                <span class="pf-background-chip">${f.keepRunning ? 'background' : 'stops with drawer'}</span>
             </div>`;
         const stop = document.createElement('button');
         stop.className = 'btn btn-danger btn-sm';
         stop.textContent = 'Stop';
-        stop.addEventListener('click', () => {
-            StopPortForward(f.key);
-            activeForwards = activeForwards.filter((x) => x.key !== f.key);
-            renderForwards();
-        });
+        stop.addEventListener('click', () => stopForward(f.key));
         div.appendChild(stop);
         list.appendChild(div);
     }
 }
+
+function renderPortForwardManager() {
+    const count = activeForwards.length;
+    $('pf-global-count').textContent = String(count);
+    $('btn-port-forwards').classList.toggle('has-forwards', count > 0);
+    $('pf-manager-summary').textContent = count === 0 ? 'No port forwards' : `${count} running in this cluster`;
+    $('pf-stop-all').hidden = count === 0;
+    $('pf-global-empty').hidden = count > 0;
+    const list = $('pf-global-list');
+    list.innerHTML = '';
+    for (const forward of activeForwards) {
+        const item = document.createElement('div');
+        item.className = 'pf-global-item';
+        item.innerHTML = `<div class="pf-global-main">
+                <span class="pf-global-owner">${esc(forward.kind)} · ${esc(forward.namespace)}/${esc(forward.name)}</span>
+                <span class="pf-global-route mono"><strong>localhost:${forward.localPort}</strong> → ${esc(forward.podName)}:${forward.remotePort}</span>
+                ${forward.keepRunning ? '<span class="pf-background-chip">Keeps running after drawer closes</span>' : '<span class="pf-hint">Stops when its drawer closes</span>'}
+            </div>
+            <div class="pf-global-actions">
+                <button class="btn btn-secondary btn-sm pf-copy">Copy</button>
+                <button class="btn btn-secondary btn-sm pf-open">Open</button>
+                <button class="btn btn-danger btn-sm pf-stop">Stop</button>
+            </div>`;
+        const endpoint = `localhost:${forward.localPort}`;
+        item.querySelector('.pf-copy').addEventListener('click', (event) => {
+            const button = event.currentTarget;
+            Promise.resolve(CopyToClipboard(endpoint)).then(() => {
+                button.textContent = 'Copied';
+                setTimeout(() => { button.textContent = 'Copy'; }, 1200);
+            }).catch((err) => showError(errMsg(err)));
+        });
+        item.querySelector('.pf-open').addEventListener('click', () => BrowserOpenURL(`http://${endpoint}`));
+        item.querySelector('.pf-stop').addEventListener('click', () => stopForward(forward.key));
+        list.appendChild(item);
+    }
+}
+
+function setPortForwardManagerOpen(open) {
+    $('pf-manager').hidden = !open;
+    $('btn-port-forwards').setAttribute('aria-expanded', String(open));
+}
+
+function closePortForwardManager() { setPortForwardManagerOpen(false); }
+
+$('btn-port-forwards').addEventListener('click', () => setPortForwardManagerOpen($('pf-manager').hidden));
+$('pf-stop-all').addEventListener('click', () => {
+    showConfirm(`Stop all ${activeForwards.length} active port forwards?`, {
+        title: 'Stop all tunnels', icon: '⇄', okText: 'Stop all', danger: true,
+    }).then((ok) => { if (ok) stopKnownPortForwards(); });
+});
+document.addEventListener('click', (event) => {
+    if (!$('pf-manager').hidden && !event.target.closest('.pf-manager-wrap')) closePortForwardManager();
+});
+
+function hideForwardToast() {
+    if (pfToastTimer) clearTimeout(pfToastTimer);
+    pfToastTimer = null;
+    toastForwardKey = '';
+    $('pf-toast').hidden = true;
+}
+
+function showForwardToast(forward) {
+    hideForwardToast();
+    toastForwardKey = forward.key;
+    $('pf-toast-message').textContent = `localhost:${forward.localPort} → ${forward.namespace}/${forward.name}`;
+    $('pf-toast').hidden = false;
+    pfToastTimer = setTimeout(hideForwardToast, 7000);
+}
+
+$('pf-toast-manage').addEventListener('click', () => {
+    hideForwardToast();
+    setPortForwardManagerOpen(true);
+});
+$('pf-toast-stop').addEventListener('click', () => {
+    const key = toastForwardKey;
+    hideForwardToast();
+    if (key) stopForward(key);
+});
+
+renderAllForwards();
 
 // ============ Generic modal (scale / create / import) ============
 
@@ -2616,6 +2793,7 @@ document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
 
     if (e.key === 'Escape') {
+        if (!$('pf-manager').hidden) { closePortForwardManager(); return; }
         if (!$('modal').hidden) { closeModal(); return; }
         if (!$('drawer').hidden) closeDrawer();
         return;

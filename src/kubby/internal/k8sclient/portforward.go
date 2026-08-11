@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,14 +21,16 @@ type PortForwardSession struct {
 	PodName    string
 	Namespace  string
 	stopCh     chan struct{}
+	closeOnce  sync.Once
 }
 
 // Close tears down the forward.
 func (s *PortForwardSession) Close() {
-	if s.stopCh != nil {
-		close(s.stopCh)
-		s.stopCh = nil
-	}
+	s.closeOnce.Do(func() {
+		if s.stopCh != nil {
+			close(s.stopCh)
+		}
+	})
 }
 
 // resolvePodForForward returns a pod name that can back a forward for the given

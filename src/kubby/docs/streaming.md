@@ -56,6 +56,20 @@ Unlike the other two, **several tunnels run at once**: `App.pfSessions` is a map
 keyed by tunnel. A tunnel dying emits `portforward-closed` so the frontend removes
 its row. All tunnels are stopped on disconnect and on cluster switch.
 
+The tunnel registry is application/cluster state, not drawer state. The top bar's
+**Tunnels** manager is the global control surface: it hydrates from
+`ListPortForwards`, shows the original Pod/Service target, copies or opens the
+local endpoint, and can stop one or all tunnels. Starting a tunnel shows a toast
+that links back to this manager, so closing a resource drawer never makes a
+background session undiscoverable.
+
+The drawer's **Keep running after drawer closes** choice is captured when Start is
+clicked. When off, closing or replacing that exact drawer stops its tunnel; a
+late Start response is stopped immediately rather than resurrecting it. When on,
+the tunnel remains in the global manager. Cluster transitions invalidate pending
+starts and stop all registered tunnels. `pfSessions`, its cluster epoch, and
+session close are concurrency-safe because teardown also runs from goroutines.
+
 Local port `0` asks the OS to pick a free port.
 
 ## Verify

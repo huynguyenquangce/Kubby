@@ -232,6 +232,22 @@
                 <div class="topbar-actions">
                     <button id="btn-create" class="btn btn-primary btn-sm btn-icon"><svg class="btn-ico"><use href="#i-plus"/></svg>Create</button>
                     <button id="btn-import" class="btn btn-secondary btn-sm btn-icon"><svg class="btn-ico"><use href="#i-upload"/></svg>Import YAML</button>
+                    <div class="pf-manager-wrap">
+                        <button id="btn-port-forwards" class="btn btn-secondary btn-sm pf-manager-button" type="button"
+                                aria-haspopup="dialog" aria-expanded="false">
+                            <span class="pf-manager-glyph">⇄</span>
+                            <span class="pf-manager-label">Tunnels</span>
+                            <span id="pf-global-count" class="pf-manager-count">0</span>
+                        </button>
+                        <section id="pf-manager" class="pf-manager" hidden aria-label="Active port forwards">
+                            <header class="pf-manager-head">
+                                <div><strong>Active tunnels</strong><span id="pf-manager-summary">No port forwards</span></div>
+                                <button id="pf-stop-all" class="btn btn-secondary btn-sm" hidden>Stop all</button>
+                            </header>
+                            <div id="pf-global-list" class="pf-global-list"></div>
+                            <p id="pf-global-empty" class="empty-inline">No active port forwards.</p>
+                        </section>
+                    </div>
                     <span class="topbar-sep"></span>
                     <button id="btn-live" class="icon-btn live-button" title="Auto-refresh (Live)" aria-label="Toggle auto-refresh"><svg class="btn-ico live-play"><use href="#i-play"/></svg><svg class="btn-ico live-pause"><use href="#i-pause"/></svg><span>Live</span></button>
                     <button id="btn-refresh" class="icon-btn" title="Refresh" aria-label="Refresh"><svg class="btn-ico"><use href="#i-refresh"/></svg></button>
@@ -807,6 +823,10 @@
                         <input type="number" id="pf-local" class="pf-input" value="0" min="0" max="65535">
                     </label>
                     <button id="btn-pf-start" class="btn btn-primary btn-sm">Start forward</button>
+                    <label class="pf-keep-label">
+                        <input type="checkbox" id="pf-keep-running" checked>
+                        Keep running after drawer closes
+                    </label>
                 </div>
                 <p id="pf-error" class="error" hidden></p>
                 <h4 class="detail-section-title">Active forwards</h4>
@@ -855,6 +875,12 @@
 
         <!-- ============ Row actions menu ============ -->
         <div id="row-menu" class="row-menu" hidden></div>
+
+        <div id="pf-toast" class="pf-toast" hidden role="status">
+            <div><strong>Port forward is running</strong><span id="pf-toast-message"></span></div>
+            <button id="pf-toast-manage" class="btn btn-secondary btn-sm">Manage</button>
+            <button id="pf-toast-stop" class="btn btn-secondary btn-sm">Stop</button>
+        </div>
 
         <!-- ============ Command palette (Ctrl+K) ============ -->
         <div id="palette-backdrop" class="palette-backdrop" hidden></div>

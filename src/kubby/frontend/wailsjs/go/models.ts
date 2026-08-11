@@ -1562,6 +1562,7 @@ export namespace main {
 	    podName: string;
 	    localPort: number;
 	    remotePort: number;
+	    keepRunning: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new PortForwardInfo(source);
@@ -1576,6 +1577,7 @@ export namespace main {
 	        this.podName = source["podName"];
 	        this.localPort = source["localPort"];
 	        this.remotePort = source["remotePort"];
+	        this.keepRunning = source["keepRunning"];
 	    }
 	}
 	export class RecentConnection {

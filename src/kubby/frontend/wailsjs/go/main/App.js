@@ -394,8 +394,8 @@ export function StartLogStream(arg1, arg2, arg3) {
   return window['go']['main']['App']['StartLogStream'](arg1, arg2, arg3);
 }
 
-export function StartPortForward(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['main']['App']['StartPortForward'](arg1, arg2, arg3, arg4, arg5);
+export function StartPortForward(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['StartPortForward'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function StopExec() {

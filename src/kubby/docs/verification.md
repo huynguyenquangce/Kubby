@@ -20,7 +20,10 @@ cd ..
 | `internal/k8sclient/access_test.go` | **unknown permission == allowed**, explicit deny respected, pod subresources probed separately |
 | `internal/k8sclient/rightsizing_test.go` | unset never rendered as zero, threshold floors, severity order, quota parsing, advice grammar |
 | `internal/k8sclient/detail_test.go` | YAML Save cannot change kind, namespace, name, or cluster-scoped identity |
+| `internal/k8sclient/portforward_test.go` | concurrent/repeated tunnel close is idempotent and does not panic |
+| `app_portforward_test.go` | global tunnel registry preserves target metadata, lists deterministically, invalidates pending starts, and synchronizes List/Stop |
 | `frontend/src/request-scope.test.js` | late view/drawer/modal responses cannot overwrite a newer owner; stale Helm/chart values cannot cross modal or version boundaries |
+| `frontend/src/port-forward-state.test.js` | hydration/upsert, closed-event removal, drawer-close policy, and late Start ownership |
 
 None of them need a cluster. Everything else is still verified through
 `cmd/kubby-cli` against a real one — **that is a gap, not a design choice** — see
@@ -125,6 +128,12 @@ behaviour visually.** Do not try to automate clicks through native dialogs.
 Mechanical frontend checks that *do* work: the esbuild bundle above, and a script
 cross-checking every `$('id')` reference in `main.js` against the ids in
 `index.html`.
+
+Port-forward manager manual check: start one tunnel with **Keep running** enabled,
+close the resource drawer, and verify the top-bar badge still exposes and can stop
+it. Start another with the option disabled and verify drawer close removes it.
+Finally, switch clusters during a pending/active start and verify neither the old
+tunnel nor a late success appears in the new cluster's manager.
 
 ## This machine
 

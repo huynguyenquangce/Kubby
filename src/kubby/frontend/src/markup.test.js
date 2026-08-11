@@ -21,3 +21,11 @@ test('modal dismiss controls do not pass MouseEvent as a modal scope', () => {
     }
     assert.doesNotMatch(mainJS, /addEventListener\('click', closeModal\)/);
 });
+
+test('port-forward manager exposes global and drawer lifecycle controls', () => {
+    for (const id of ['btn-port-forwards', 'pf-manager', 'pf-global-list', 'pf-stop-all', 'pf-keep-running', 'pf-toast']) {
+        assert.match(indexHTML, new RegExp(`id="${id}"`));
+    }
+    assert.match(mainJS, /ListPortForwards\(\)/);
+    assert.match(mainJS, /StartPortForward\(ref\.kind, ref\.namespace, ref\.name, local, remote, keepRunning\)/);
+});
