@@ -453,7 +453,7 @@ func main() {
 				command = strings.Join(args[1:], " ")
 			}
 			done := make(chan error, 1)
-			session, err := k8sclient.StartExec(context.Background(), cluster, execNs, args[0], execContainer, execShell,
+			session, err := k8sclient.StartExec(context.Background(), cluster, execNs, args[0], execContainer, execShell, 80, 24,
 				func(out string) { fmt.Print(out) },
 				func(err error) { done <- err })
 			if err != nil {

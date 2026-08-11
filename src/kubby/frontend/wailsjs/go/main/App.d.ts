@@ -49,6 +49,8 @@ export function DisconnectCluster(arg1:string):Promise<string>;
 
 export function DrainNode(arg1:string):Promise<void>;
 
+export function ExecResize(arg1:number,arg2:number):Promise<void>;
+
 export function ExecWrite(arg1:string):Promise<void>;
 
 export function ForgetConnection(arg1:string,arg2:string):Promise<void>;
@@ -195,7 +197,7 @@ export function SidebarCounts(arg1:string,arg2:boolean):Promise<Array<k8sclient.
 
 export function Sizing(arg1:string):Promise<k8sclient.SizingReport>;
 
-export function StartExec(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+export function StartExec(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number):Promise<void>;
 
 export function StartLogStream(arg1:string,arg2:string,arg3:string):Promise<void>;
 

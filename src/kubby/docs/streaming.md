@@ -38,14 +38,24 @@ download-to-file. Non-follow reads use `PodLogs(..., tail)`.
 
 ## Exec (Terminal)
 
-**Line-mode, TTY off** — deliberately.
+Exec is a real remote PTY (`TTY: true`) rendered by `@xterm/xterm`. xterm's
+`onData` stream goes through `ExecWrite`, so Tab completion, history keys, Ctrl
+shortcuts, paste, ANSI colours, cursor motion, and full-screen programs are shell
+input/output rather than browser form events. `@xterm/addon-fit` measures the
+visible drawer panel and `ExecResize` feeds its columns/rows to client-go's
+`TerminalSizeQueue`.
 
-Output goes to a plain `<pre>`, so a PTY's ANSI and cursor escapes would render as
-garbage. The trade-off is that full-screen TUIs (`vi`, `top`) do not work, and that
-is accepted. **Do not flip `TTY: true`** without also adding a real terminal
-emulator (xterm.js); doing one without the other produces an unreadable panel.
+xterm only transports the keys. The selected shell owns line editing: Bash/Zsh
+normally interpret Tab and arrow sequences, while a minimal `/bin/sh` may insert a
+tab or print `^[[A`. Hidden paths also require their leading dot (`.a<Tab>`), just
+as they do in a native terminal. Do not label that transport working as an xterm
+failure.
 
-One session at a time. stdin goes through `ExecWrite`.
+One session at a time. Frontend writes are serialized because Wails calls are
+promises and input order must not depend on bridge completion order. The App layer
+also owns an exec generation: Stop, drawer close, connection change, or a new Start
+invalidates callbacks from the previous session. The session, its terminal-size
+queue, and Close paths must remain concurrency-safe.
 
 ## Port-forward
 
@@ -85,3 +95,8 @@ go run ./cmd/kubby-cli port-forward <pod> -n <ns> --remote 8080 --local 0 --hold
 The port-forward check that actually proves it: forward something with an HTTP
 endpoint (`coredns:9153` works on a bare cluster) and `curl` it while the tunnel is
 held.
+
+The GUI check that actually proves exec interactivity: connect to a shell, type
+part of an existing path and press Tab, use Up to recall the command, then run a
+cursor-addressing program such as `top` and resize the drawer/window. A headless
+bundle check cannot prove those WebView/PTY behaviours.

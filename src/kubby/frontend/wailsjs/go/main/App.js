@@ -94,6 +94,10 @@ export function DrainNode(arg1) {
   return window['go']['main']['App']['DrainNode'](arg1);
 }
 
+export function ExecResize(arg1, arg2) {
+  return window['go']['main']['App']['ExecResize'](arg1, arg2);
+}
+
 export function ExecWrite(arg1) {
   return window['go']['main']['App']['ExecWrite'](arg1);
 }
@@ -386,8 +390,8 @@ export function Sizing(arg1) {
   return window['go']['main']['App']['Sizing'](arg1);
 }
 
-export function StartExec(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['StartExec'](arg1, arg2, arg3, arg4);
+export function StartExec(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['StartExec'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function StartLogStream(arg1, arg2, arg3) {

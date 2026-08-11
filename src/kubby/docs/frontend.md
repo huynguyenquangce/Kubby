@@ -41,6 +41,22 @@ both depend on it.
 Registering a view in `PAGE_TITLES` is what puts it in the command palette. That is
 the whole mechanism; there is no separate palette registry.
 
+## Typography and Overview
+
+The application font is **Inter Variable**, bundled through
+`@fontsource-variable/inter` and imported by `main.js`. Declaring `Inter` without
+shipping it made WebView2 silently fall back to a different system face on each
+machine, changing density and alignment. Keep technical identifiers and measurements
+on the existing monospace stack; do not turn the whole UI into monospace.
+
+Overview is a dashboard, not a resource table. Its hierarchy is: one dark
+**Cluster pulse** for health/capacity, a compact KPI strip, then independently sized
+Node usage, Attention, Top consumers, and Events sections. Capacity uses comparable
+linear meters rather than decorative rings. Every Overview table still carries
+`class="plain"`, uses a fixed layout, and owns horizontal overflow so an event message
+cannot widen the page. The two side-by-side sections use `align-items: start`; an
+empty Attention panel must not stretch to the height of Top consumers.
+
 ## Drawer
 
 `openDrawer(ref)` where `ref = { kind, namespace, name, isPod?, tab? }`.
@@ -54,6 +70,13 @@ group-qualified kind, and the user should see `VirtualService`, not the whole
 reference.
 
 `closeDrawer()` must stop anything the drawer started (log follow, exec).
+
+The Terminal tab is an xterm.js surface, not an input below a `<pre>`. It must be
+opened/fitted only after its drawer panel is visible (xterm measures its parent),
+and raw `onData` chunks must stay ordered through the Wails bridge. The terminal
+uses an intentionally dark Nord surface in both app themes so ANSI colours and
+shell contrast remain stable. See [streaming.md](streaming.md) for the PTY and
+resize lifecycle.
 
 ### Async ownership
 
@@ -231,6 +254,10 @@ Do not replace the mark with the concept-board raster or the old Wails logo.
   drawer, but every running tunnel remains visible in the top-bar manager. The
   drawer's keep-running option decides whether its new tunnel survives drawer
   close; frontend state is rehydrated from the backend registry on connection.
+- **Tunnel rows are endpoint cards, not prose lines.** Keep the local endpoint as
+  the primary scannable value, truncate the long Pod target, and put lifecycle
+  policy on a quieter secondary line. Both the drawer and top-bar manager use this
+  hierarchy; shrinking the window must not force action buttons outside the card.
 
 ## Performance obligations
 

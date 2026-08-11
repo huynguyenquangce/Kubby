@@ -241,11 +241,18 @@
                         </button>
                         <section id="pf-manager" class="pf-manager" hidden aria-label="Active port forwards">
                             <header class="pf-manager-head">
-                                <div><strong>Active tunnels</strong><span id="pf-manager-summary">No port forwards</span></div>
-                                <button id="pf-stop-all" class="btn btn-secondary btn-sm" hidden>Stop all</button>
+                                <div class="pf-manager-title-row">
+                                    <span class="pf-manager-icon" aria-hidden="true">⇄</span>
+                                    <div><strong>Port forwards</strong><span id="pf-manager-summary">No active tunnels</span></div>
+                                </div>
+                                <button id="pf-stop-all" class="btn btn-quiet-danger btn-sm" hidden>Stop all</button>
                             </header>
                             <div id="pf-global-list" class="pf-global-list"></div>
-                            <p id="pf-global-empty" class="empty-inline">No active port forwards.</p>
+                            <div id="pf-global-empty" class="pf-manager-empty">
+                                <span aria-hidden="true">⇄</span>
+                                <strong>No active tunnels</strong>
+                                <small>Start one from a Pod or Service drawer.</small>
+                            </div>
                         </section>
                     </div>
                     <span class="topbar-sep"></span>
@@ -278,92 +285,82 @@
             <main id="content" class="content">
                 <!-- Overview -->
                 <section id="view-overview" class="view">
-                    <div class="overview-hero">
-                        <article class="health-card">
-                            <div class="health-card-head">
-                                <div>
-                                    <span class="card-kicker">Live workload health</span>
-                                    <h2>Cluster health</h2>
-                                </div>
-                                <span id="cluster-health-badge" class="health-state">Checking…</span>
-                            </div>
-                            <div class="health-card-body">
-                                <div class="health-score-wrap">
-                                    <strong id="cluster-health-score" class="health-score">–</strong><span>%</span>
-                                    <p id="cluster-health-summary">Loading pod status…</p>
-                                </div>
-                                <div class="health-progress-wrap">
-                                    <div class="health-progress-meta">
-                                        <span>Healthy pods</span>
-                                        <strong id="cluster-health-ratio">– / –</strong>
+                    <article id="overview-pulse" class="overview-pulse">
+                        <header class="overview-pulse-head">
+                            <div><span class="overview-eyebrow">Live cluster telemetry</span><h2>Cluster pulse</h2><p>Workload health and resource pressure at a glance.</p></div>
+                            <span id="cluster-health-badge" class="health-state">Checking…</span>
+                        </header>
+                        <div class="overview-pulse-grid">
+                            <section class="overview-health-block" aria-labelledby="overview-health-title">
+                                <div class="overview-block-title"><span class="overview-block-icon overview-block-icon-health" aria-hidden="true">✓</span><div><h3 id="overview-health-title">Workload health</h3><span id="cluster-health-summary">Loading pod status…</span></div></div>
+                                <div class="health-reading">
+                                    <div class="health-score-wrap"><strong id="cluster-health-score" class="health-score">–</strong><span>%</span></div>
+                                    <div class="health-progress-wrap">
+                                        <div class="health-progress-meta"><span>Healthy pods</span><strong id="cluster-health-ratio">– / –</strong></div>
+                                        <div class="health-progress" role="progressbar" aria-label="Healthy pods" aria-valuemin="0" aria-valuemax="100"><span id="cluster-health-fill"></span></div>
+                                        <p id="cluster-health-note">Calculated from the current pod status returned by the cluster.</p>
                                     </div>
-                                    <div class="health-progress" aria-hidden="true"><span id="cluster-health-fill"></span></div>
-                                    <p id="cluster-health-note">Calculated from the current pod status returned by the cluster.</p>
                                 </div>
-                            </div>
-                        </article>
+                            </section>
+                            <section class="overview-capacity-block" aria-labelledby="overview-capacity-title">
+                                <div class="overview-block-title"><span class="overview-block-icon" aria-hidden="true">↗</span><div><h3 id="overview-capacity-title">Capacity</h3><span>Current utilization across <strong id="capacity-node-count">Loading…</strong></span></div></div>
+                                <div class="capacity-bars">
+                                    <div class="capacity-metric">
+                                        <div id="capacity-cpu-ring" class="capacity-bar" style="--value:0">
+                                            <div><span>CPU</span><strong id="capacity-cpu-pct">–%</strong></div>
+                                            <div class="capacity-track" role="progressbar" aria-label="CPU utilization" aria-valuemin="0" aria-valuemax="100"><span></span></div>
+                                        </div>
+                                        <small id="capacity-cpu-value">Waiting for metrics</small>
+                                    </div>
+                                    <div class="capacity-metric">
+                                        <div id="capacity-memory-ring" class="capacity-bar capacity-bar-memory" style="--value:0">
+                                            <div><span>Memory</span><strong id="capacity-memory-pct">–%</strong></div>
+                                            <div class="capacity-track" role="progressbar" aria-label="Memory utilization" aria-valuemin="0" aria-valuemax="100"><span></span></div>
+                                        </div>
+                                        <small id="capacity-memory-value">Waiting for metrics</small>
+                                    </div>
+                                </div>
+                                <p id="capacity-hint" class="capacity-hint" hidden>Metrics Server is unavailable. Resource browsing still works normally.</p>
+                            </section>
+                        </div>
+                    </article>
 
-                        <article class="capacity-card">
-                            <div class="health-card-head">
-                                <div>
-                                    <span class="card-kicker">Current utilization</span>
-                                    <h2>Capacity</h2>
-                                </div>
-                                <span id="capacity-node-count" class="capacity-node-count">Loading…</span>
-                            </div>
-                            <div class="capacity-rings">
-                                <div class="capacity-metric">
-                                    <div id="capacity-cpu-ring" class="capacity-ring" style="--value:0">
-                                        <span>CPU</span><strong id="capacity-cpu-pct">–%</strong>
-                                    </div>
-                                    <small id="capacity-cpu-value">Waiting for metrics</small>
-                                </div>
-                                <div class="capacity-metric">
-                                    <div id="capacity-memory-ring" class="capacity-ring" style="--value:0">
-                                        <span>Memory</span><strong id="capacity-memory-pct">–%</strong>
-                                    </div>
-                                    <small id="capacity-memory-value">Waiting for metrics</small>
-                                </div>
-                            </div>
-                            <p id="capacity-hint" class="capacity-hint" hidden>Metrics Server is unavailable. Resource browsing still works normally.</p>
-                        </article>
-                    </div>
-
-                    <div class="stat-cards">
+                    <div class="stat-cards overview-kpis" aria-label="Cluster resource totals">
                         <div class="stat-card"><span class="stat-icon stat-icon-blue"><svg class="ico"><use href="#i-nodes"/></svg></span><div><div class="stat-label">Nodes</div><div class="stat-value" id="stat-nodes">–</div><div class="stat-meta">Cluster capacity</div></div></div>
                         <div class="stat-card"><span class="stat-icon stat-icon-purple"><svg class="ico"><use href="#i-namespaces"/></svg></span><div><div class="stat-label">Namespaces</div><div class="stat-value" id="stat-namespaces">–</div><div class="stat-meta">Logical scopes</div></div></div>
                         <div class="stat-card"><span class="stat-icon stat-icon-teal"><svg class="ico"><use href="#i-pods"/></svg></span><div><div class="stat-label">Pods</div><div class="stat-value" id="stat-pods">–</div><div class="stat-meta">Across all namespaces</div></div></div>
                         <div class="stat-card"><span class="stat-icon stat-icon-indigo"><svg class="ico"><use href="#i-deployments"/></svg></span><div><div class="stat-label">Deployments</div><div class="stat-value" id="stat-deployments">–</div><div class="stat-meta">Managed workloads</div></div></div>
                         <div class="stat-card stat-card-error"><span class="stat-icon stat-icon-error">!</span><div><div class="stat-label">Errors</div><div class="stat-value" id="stat-errors">–</div><div class="stat-meta">Requires attention</div></div></div>
                     </div>
-                    <div class="card">
-                        <div class="card-head"><h3>Node usage</h3><span class="nm-total" id="node-metrics-total"></span></div>
+
+                    <section class="overview-section overview-node-section">
+                        <header class="overview-section-head"><div><span class="overview-eyebrow">Infrastructure</span><h3>Node usage</h3><p>Live CPU and memory pressure by machine.</p></div><span class="nm-total" id="node-metrics-total"></span></header>
                         <div id="node-metrics" class="node-metrics"></div>
                         <p class="empty-inline" id="node-metrics-hint" hidden>metrics-server is not installed — install it to see live CPU/memory usage.</p>
-                    </div>
+                    </section>
 
                     <div class="overview-grid">
-                        <div class="card">
-                            <div class="card-head"><div><span class="card-kicker">Actionable now</span><h3>Attention needed</h3></div><button id="overview-ai-diagnose" class="btn btn-ai btn-sm" hidden><svg class="btn-ico"><use href="#i-sparkle"/></svg>Diagnose with AI</button></div>
-                            <table><thead><tr><th>Namespace</th><th>Pod</th><th>Status</th><th>Restarts</th></tr></thead>
+                        <section class="overview-section">
+                            <header class="overview-section-head"><div><span class="overview-eyebrow overview-eyebrow-danger">Actionable now</span><h3>Attention needed</h3><p>Failing pods that need investigation.</p></div><button id="overview-ai-diagnose" class="btn btn-ai btn-sm" hidden><svg class="btn-ico"><use href="#i-sparkle"/></svg>Diagnose with AI</button></header>
+                            <div class="overview-table-wrap"><table class="plain overview-table"><thead><tr><th>Namespace</th><th>Pod</th><th>Status</th><th>Restarts</th></tr></thead>
                                 <tbody id="overview-errors-body"></tbody></table>
-                            <p class="empty-inline" id="overview-errors-empty" hidden>No pods are currently failing 🎉</p>
-                        </div>
+                            <p class="overview-empty" id="overview-errors-empty" hidden><span>✓</span><strong>Everything looks healthy</strong><small>No pods currently need attention.</small></p></div>
+                        </section>
 
-                        <div class="card">
-                            <div class="card-head"><h3>Top pods by CPU</h3></div>
-                            <table><thead><tr><th>Namespace</th><th>Pod</th><th>CPU</th><th>Memory</th></tr></thead>
+                        <section class="overview-section">
+                            <header class="overview-section-head"><div><span class="overview-eyebrow">Resource pressure</span><h3>Top consumers</h3><p>Pods currently using the most CPU.</p></div></header>
+                            <div class="overview-table-wrap"><table class="plain overview-table"><thead><tr><th>Namespace</th><th>Pod</th><th>CPU</th><th>Memory</th></tr></thead>
                                 <tbody id="overview-toppods-body"></tbody></table>
-                            <p class="empty-inline" id="overview-toppods-empty" hidden>metrics-server is not installed — no usage data.</p>
-                        </div>
+                            <p class="overview-empty" id="overview-toppods-empty" hidden><span>—</span><strong>No live metrics</strong><small>Install Metrics Server to see resource usage.</small></p></div>
+                        </section>
                     </div>
 
-                    <div class="card">
-                        <div class="card-head"><h3>Recent events</h3></div>
-                        <table><thead><tr><th>Type</th><th>Object</th><th>Reason</th><th>Age</th><th>Message</th></tr></thead>
+                    <section class="overview-section">
+                        <header class="overview-section-head"><div><span class="overview-eyebrow">Activity</span><h3>Recent events</h3><p>The latest signals reported by workloads and controllers.</p></div></header>
+                        <div class="overview-table-wrap overview-events-wrap"><table class="plain overview-table"><thead><tr><th>Type</th><th>Object</th><th>Reason</th><th>Age</th><th>Message</th></tr></thead>
                             <tbody id="overview-events-body"></tbody></table>
-                        <p class="empty-inline" id="overview-events-empty" hidden>No recent events.</p>
-                    </div>
+                        <p class="overview-empty" id="overview-events-empty" hidden><span>—</span><strong>No recent events</strong><small>The cluster has not reported new activity.</small></p></div>
+                    </section>
                 </section>
 
                 <!-- Nodes -->
@@ -791,47 +788,70 @@
 
             <!-- Terminal panel (Pod) -->
             <div id="dpanel-terminal" class="drawer-panel" hidden>
-                <div class="drawer-toolbar">
-                    <label class="logs-container-label">Container
-                        <select id="term-container"></select>
-                    </label>
-                    <label class="logs-container-label">Shell
-                        <select id="term-shell">
-                            <option value="/bin/sh">/bin/sh</option>
-                            <option value="/bin/bash">/bin/bash</option>
-                            <option value="/bin/ash">/bin/ash</option>
-                        </select>
-                    </label>
-                    <button id="btn-term-start" class="btn btn-primary btn-sm">Connect</button>
-                    <button id="btn-term-stop" class="btn btn-secondary btn-sm" hidden>Disconnect</button>
-                    <span id="term-status" class="save-status"></span>
-                </div>
-                <pre id="term-view" class="logs-view term-view"></pre>
-                <div class="term-input-row">
-                    <span class="term-prompt">$</span>
-                    <input type="text" id="term-input" class="term-input" placeholder="Type a command and press Enter…" autocomplete="off" spellcheck="false" disabled>
-                </div>
+                <section class="term-workspace">
+                    <header class="term-toolbar">
+                        <div class="term-toolbar-copy">
+                            <span class="term-kicker">Remote shell</span>
+                            <strong>Interactive terminal</strong>
+                        </div>
+                        <div class="term-controls">
+                            <label>Container<select id="term-container"></select></label>
+                            <label>Shell<select id="term-shell">
+                                <option value="/bin/sh">/bin/sh</option>
+                                <option value="/bin/bash">/bin/bash</option>
+                                <option value="/bin/ash">/bin/ash</option>
+                            </select></label>
+                            <button id="btn-term-start" class="btn btn-primary btn-sm">Connect</button>
+                            <button id="btn-term-stop" class="btn btn-secondary btn-sm" hidden>Disconnect</button>
+                        </div>
+                    </header>
+                    <div class="term-frame">
+                        <div class="term-frame-head">
+                            <span class="term-window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                            <span id="term-session-label">Not connected</span>
+                            <span class="term-key-hint"><kbd>Tab</kbd> sent to shell · <kbd>Ctrl C</kbd> interrupt</span>
+                        </div>
+                        <div id="term-surface" class="term-surface" aria-label="Interactive container terminal"></div>
+                        <div id="term-placeholder" class="term-placeholder">
+                            <span class="term-placeholder-glyph" aria-hidden="true">›_</span>
+                            <strong>Ready for a remote shell</strong>
+                            <span>Choose a container and shell, then connect.</span>
+                        </div>
+                    </div>
+                    <footer class="term-footer">
+                        <span id="term-status" class="term-status"><i></i>Disconnected</span>
+                        <span>Input is sent directly to the container PTY.</span>
+                    </footer>
+                </section>
             </div>
 
             <!-- Port Forward panel (Pod/Service) -->
             <div id="dpanel-forward" class="drawer-panel drawer-panel-scroll">
-                <div class="pf-form">
-                    <label>Remote port
-                        <input type="number" id="pf-remote" class="pf-input" placeholder="e.g. 80" min="1" max="65535">
-                    </label>
-                    <label>Local port <span class="pf-hint">(0 = auto)</span>
-                        <input type="number" id="pf-local" class="pf-input" value="0" min="0" max="65535">
-                    </label>
-                    <button id="btn-pf-start" class="btn btn-primary btn-sm">Start forward</button>
+                <section class="pf-create-card">
+                    <header><div><span class="pf-section-kicker">New tunnel</span><h4>Forward a local port</h4></div><p>Route traffic from this machine to the selected workload.</p></header>
+                    <div class="pf-form">
+                        <label><span>Local port <small>0 picks a free port</small></span>
+                            <input type="number" id="pf-local" class="pf-input" value="0" min="0" max="65535">
+                        </label>
+                        <span class="pf-route-arrow" aria-hidden="true">→</span>
+                        <label><span>Remote port</span>
+                            <input type="number" id="pf-remote" class="pf-input" placeholder="8080" min="1" max="65535">
+                        </label>
+                        <button id="btn-pf-start" class="btn btn-primary pf-start-button">Start tunnel</button>
+                    </div>
                     <label class="pf-keep-label">
                         <input type="checkbox" id="pf-keep-running" checked>
-                        Keep running after drawer closes
+                        <span><strong>Keep running in background</strong><small>Closing this drawer will not stop the tunnel.</small></span>
                     </label>
-                </div>
-                <p id="pf-error" class="error" hidden></p>
-                <h4 class="detail-section-title">Active forwards</h4>
-                <div id="pf-list" class="pf-list"></div>
-                <p class="empty-inline" id="pf-empty" hidden>No active port forwards for this resource.</p>
+                    <p id="pf-error" class="error" hidden></p>
+                </section>
+                <section class="pf-active-section">
+                    <header><div><span class="pf-section-kicker">This resource</span><h4>Active forwards</h4></div><span id="pf-resource-count" class="pf-resource-count">0</span></header>
+                    <div id="pf-list" class="pf-list"></div>
+                    <div id="pf-empty" class="pf-empty-state">
+                        <span aria-hidden="true">⇄</span><strong>No active forwards</strong><small>New tunnels will appear here and in the top bar.</small>
+                    </div>
+                </section>
             </div>
 
             <!-- Ask AI panel — a conversation grounded in this resource's live state -->

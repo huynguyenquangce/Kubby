@@ -27,7 +27,9 @@ type App struct {
 	pfSessions map[string]*portForwardEntry
 	pfCluster  *k8sclient.Cluster
 	pfEpoch    uint64
+	execMu     sync.Mutex
 	execSess   *k8sclient.ExecSession // the active exec session, if any
+	execEpoch  uint64                 // invalidates callbacks from an older shell
 }
 
 func NewApp() *App {
@@ -112,6 +114,7 @@ func (a *App) verifyAndStore(name string, cluster *k8sclient.Cluster) error {
 		a.order = append(a.order, name)
 	}
 	a.clusters[name] = cluster
+	a.StopExec()
 	a.resetPortForwardsForCluster(cluster)
 	a.activeName = name
 	a.cluster = cluster
@@ -1042,15 +1045,42 @@ func (a *App) ListPortForwards() []PortForwardInfo {
 
 // StartExec opens an interactive shell into a container. Output is emitted as
 // "exec-output" events; "exec-closed" fires when the shell exits.
-func (a *App) StartExec(namespace, pod, container, shell string) error {
+func (a *App) StartExec(namespace, pod, container, shell string, cols, rows int) error {
 	if err := a.requireCluster(); err != nil {
 		return err
 	}
-	a.StopExec() // only one exec at a time
 
-	session, err := k8sclient.StartExec(a.ctx, a.cluster, namespace, pod, container, shell,
-		func(out string) { wailsruntime.EventsEmit(a.ctx, "exec-output", out) },
+	// Reserve a generation before opening the stream. Stop/switch can invalidate
+	// the pending session without allowing its output into a newer drawer.
+	a.execMu.Lock()
+	previous := a.execSess
+	a.execSess = nil
+	a.execEpoch++
+	epoch := a.execEpoch
+	cluster := a.cluster
+	a.execMu.Unlock()
+	if previous != nil {
+		previous.Close()
+	}
+
+	session, err := k8sclient.StartExec(a.ctx, cluster, namespace, pod, container, shell, cols, rows,
+		func(out string) {
+			a.execMu.Lock()
+			current := a.execEpoch == epoch
+			a.execMu.Unlock()
+			if current {
+				wailsruntime.EventsEmit(a.ctx, "exec-output", out)
+			}
+		},
 		func(err error) {
+			a.execMu.Lock()
+			if a.execEpoch != epoch {
+				a.execMu.Unlock()
+				return
+			}
+			a.execSess = nil
+			a.execEpoch++
+			a.execMu.Unlock()
 			msg := ""
 			if err != nil {
 				msg = err.Error()
@@ -1060,22 +1090,46 @@ func (a *App) StartExec(namespace, pod, container, shell string) error {
 	if err != nil {
 		return err
 	}
+	a.execMu.Lock()
+	if a.execEpoch != epoch {
+		a.execMu.Unlock()
+		session.Close()
+		return fmt.Errorf("exec session was cancelled while connecting")
+	}
 	a.execSess = session
+	a.execMu.Unlock()
 	return nil
 }
 
 // ExecWrite forwards keystrokes to the active exec session's stdin.
 func (a *App) ExecWrite(data string) error {
-	if a.execSess == nil {
+	a.execMu.Lock()
+	session := a.execSess
+	a.execMu.Unlock()
+	if session == nil {
 		return nil
 	}
-	return a.execSess.Write(data)
+	return session.Write(data)
+}
+
+// ExecResize propagates xterm's measured dimensions to the active remote PTY.
+func (a *App) ExecResize(cols, rows int) {
+	a.execMu.Lock()
+	session := a.execSess
+	a.execMu.Unlock()
+	if session != nil {
+		session.Resize(cols, rows)
+	}
 }
 
 // StopExec ends the active exec session, if any.
 func (a *App) StopExec() {
-	if a.execSess != nil {
-		a.execSess.Close()
-		a.execSess = nil
+	a.execMu.Lock()
+	session := a.execSess
+	a.execSess = nil
+	a.execEpoch++
+	a.execMu.Unlock()
+	if session != nil {
+		session.Close()
 	}
 }

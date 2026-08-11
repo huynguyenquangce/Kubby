@@ -6,6 +6,32 @@ Bug log — add one line per issue. Resolved items move to the bottom.
 
 ## Fixed
 
+- [2026-08-11] Typography varied by machine and Overview looked sparse and dated:
+  the intended Inter face was merely named in CSS but never shipped, so WebView2
+  fell back to whichever system font happened to exist; separate health/capacity
+  cards, decorative rings, equal-height grid stretching, and low-contrast tiny table
+  text left large dead areas with no clear reading order. Fix: bundle Inter Variable
+  (including Vietnamese glyphs), establish one UI type scale, combine health and
+  comparable linear capacity meters into Cluster pulse, compact the KPI strip, and
+  give Node usage/Attention/Top consumers/Events independent responsive sections and
+  fixed-layout plain tables.
+- [2026-08-11] The Terminal tab behaved like a command form: Tab moved focus
+  instead of completing a path, shell history/Ctrl keys were unavailable, ANSI
+  output was stripped, and the separate output/input boxes looked unlike a real
+  terminal. Cause: exec deliberately used `TTY: false` and rendered output into a
+  `<pre>` while submitting complete lines from a text input; CSS could not provide
+  terminal semantics that the transport and renderer did not have. Fix: client-go
+  exec now opens a resize-aware PTY, xterm.js owns raw keyboard and ANSI rendering,
+  Wails writes are serialized, and exec generations prevent a closed/old session
+  from writing into a newer drawer.
+- [2026-08-11] Port-forward controls were hard to scan and collapsed into a long
+  prose row: the keep-running checkbox floated beside the Start button, long Pod
+  names competed with the local endpoint, and the top-bar manager looked like a
+  dense miniature form. Cause: creation controls, lifecycle policy, endpoint
+  identity, and actions had equal visual weight in flex rows. Fix: the drawer now
+  separates a New tunnel card from resource-owned sessions, uses a local-endpoint
+  card hierarchy with a truncated target and secondary lifecycle text, and the
+  global manager uses the same hierarchy with actions on their own row.
 - [2026-08-11] A port-forward kept running after its resource drawer closed but
   became effectively hidden; stopping it required finding and reopening the same
   Pod/Service. Cause: the long-lived session correctly belonged to the application,

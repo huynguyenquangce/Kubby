@@ -1,6 +1,11 @@
 import './style.css';
 import './app.css';
 import './option-b.css';
+import '@fontsource-variable/inter/wght.css';
+import '@xterm/xterm/css/xterm.css';
+
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
 
 import { createYamlEditor, parseApplyFailures } from './editor.js';
 import {
@@ -11,6 +16,7 @@ import {
     upsertForward,
 } from './port-forward-state.js';
 import { createRequestScopes } from './request-scope.js';
+import { createSerialWriter, validTerminalSize } from './terminal-io.js';
 
 import {
     PickKubeconfigFile,
@@ -118,6 +124,7 @@ import {
     ListPortForwards,
     StartExec,
     ExecWrite,
+    ExecResize,
     StopExec,
 } from '../wailsjs/go/main/App';
 import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime';
@@ -852,6 +859,7 @@ function loadOverview(scope) {
             $('stat-pods').textContent = pods?.length ?? 0;
             $('stat-deployments').textContent = deployments?.length ?? 0;
             $('stat-errors').textContent = errored.length;
+            $('stat-errors').closest('.stat-card').classList.toggle('has-errors', errored.length > 0);
             updateClusterHealth(pods ?? [], errored);
 
             const body = $('overview-errors-body');
@@ -859,7 +867,7 @@ function loadOverview(scope) {
             $('overview-errors-empty').hidden = errored.length > 0;
             for (const p of errored) {
                 body.appendChild(row(
-                    `<td>${esc(p.namespace)}</td><td>${esc(p.name)}</td><td>${badge(p.status, false)}</td><td>${p.restarts}</td>`,
+                    `<td class="overview-namespace">${esc(p.namespace)}</td><td class="overview-resource-name" title="${esc(p.name)}">${esc(p.name)}</td><td>${badge(p.status, false)}</td><td class="overview-count">${p.restarts}</td>`,
                     { isError: true, actions: false, ref: { kind: 'Pod', namespace: p.namespace, name: p.name, isPod: true } },
                 ));
             }
@@ -887,6 +895,7 @@ function updateClusterHealth(pods, errored) {
         $('cluster-health-summary').textContent = 'Cluster health could not be loaded.';
         $('cluster-health-ratio').textContent = '– / –';
         fill.style.width = '0%';
+        fill.parentElement.removeAttribute('aria-valuenow');
         badgeEl.textContent = 'Unavailable';
         badgeEl.className = 'health-state health-state-warn';
         return;
@@ -900,6 +909,7 @@ function updateClusterHealth(pods, errored) {
         : 'No pods are running in the cluster yet';
     $('cluster-health-ratio').textContent = `${healthy} / ${total}`;
     fill.style.width = `${percent}%`;
+    fill.parentElement.setAttribute('aria-valuenow', String(percent));
     $('cluster-health-note').textContent = unhealthy > 0
         ? `${unhealthy} pod${unhealthy === 1 ? '' : 's'} need attention. Open a row below for live evidence.`
         : 'Calculated from live pod status returned by the connected cluster.';
@@ -916,7 +926,7 @@ function loadTopPods(scope) {
             $('overview-toppods-empty').hidden = (pods?.length ?? 0) > 0;
             for (const p of pods ?? []) {
                 body.appendChild(row(
-                    `<td>${esc(p.namespace)}</td><td>${esc(p.name)}</td><td class="mono">${p.cpuMilli}m</td><td class="mono">${p.memMi}Mi</td>`,
+                    `<td class="overview-namespace">${esc(p.namespace)}</td><td class="overview-resource-name" title="${esc(p.name)}">${esc(p.name)}</td><td><span class="overview-metric mono">${p.cpuMilli}m</span></td><td><span class="overview-metric mono">${p.memMi}Mi</span></td>`,
                     { actions: false, ref: { kind: 'Pod', namespace: p.namespace, name: p.name, isPod: true } },
                 ));
             }
@@ -939,7 +949,7 @@ function loadRecentEvents(scope) {
                 const tr = document.createElement('tr');
                 const cls = e.isWarn ? 'ev-type-warn' : 'ev-type-normal';
                 const count = e.count > 1 ? ` (x${e.count})` : '';
-                tr.innerHTML = `<td class="${cls}">${esc(e.type)}</td><td class="mono">${esc(e.object)}</td><td>${esc(e.reason)}</td><td>${esc(e.age)}${count}</td><td>${esc(e.message)}</td>`;
+                tr.innerHTML = `<td class="${cls}">${esc(e.type)}</td><td class="mono overview-resource-name" title="${esc(e.object)}">${esc(e.object)}</td><td>${esc(e.reason)}</td><td class="overview-count">${esc(e.age)}${count}</td><td class="overview-event-message" title="${esc(e.message)}">${esc(e.message)}</td>`;
                 body.appendChild(tr);
             }
         })
@@ -1000,6 +1010,8 @@ function updateCapacitySummary(metrics, sum) {
         $('capacity-memory-value').textContent = 'Resource capacity is still available per node';
         $('capacity-cpu-ring').style.setProperty('--value', 0);
         $('capacity-memory-ring').style.setProperty('--value', 0);
+        setCapacityState($('capacity-cpu-ring'), null);
+        setCapacityState($('capacity-memory-ring'), null);
         hint.hidden = false;
         return;
     }
@@ -1012,7 +1024,17 @@ function updateCapacitySummary(metrics, sum) {
     $('capacity-memory-value').textContent = `${fmtMem(sum.mem)} of ${fmtMem(sum.memCap)}`;
     $('capacity-cpu-ring').style.setProperty('--value', Math.min(cpuPercent, 100));
     $('capacity-memory-ring').style.setProperty('--value', Math.min(memoryPercent, 100));
+    setCapacityState($('capacity-cpu-ring'), cpuPercent);
+    setCapacityState($('capacity-memory-ring'), memoryPercent);
     hint.hidden = true;
+}
+
+function setCapacityState(bar, value) {
+    bar.classList.toggle('capacity-bar-warn', value !== null && value >= 70 && value < 90);
+    bar.classList.toggle('capacity-bar-critical', value !== null && value >= 90);
+    const progress = bar.querySelector('[role="progressbar"]');
+    if (value === null) progress.removeAttribute('aria-valuenow');
+    else progress.setAttribute('aria-valuenow', String(Math.min(value, 100)));
 }
 
 function nodeUsageCard(m) {
@@ -1400,6 +1422,11 @@ function setDrawerTab(name) {
     $('dpanel-forward').hidden = name !== 'forward';
     $('dpanel-ai').hidden = name !== 'ai';
     if (name === 'ai') { prepareAIPanel(); $('ai-input').focus(); }
+    if (name === 'terminal') requestAnimationFrame(() => {
+        ensureTerminal();
+        fitTerminal();
+        if (execConnected) execTerminal?.focus();
+    });
 }
 
 // ---- Details + Events ----
@@ -2090,18 +2117,98 @@ $('btn-logs-download').addEventListener('click', () => {
         .catch((err) => showError(errMsg(err)));
 });
 
-// ---- Terminal (interactive exec, line mode) ----
+// ---- Terminal (PTY-backed interactive exec) ----
 let execConnected = false;
-const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g; // strip CSI escape sequences
+let execAcceptOutput = false;
+let execTerminal = null;
+let execFitAddon = null;
+let execResizeObserver = null;
+let execInputEpoch = 0;
+let execWriter = () => Promise.resolve();
+let execHasOutput = false;
+
+function ensureTerminal() {
+    if (execTerminal) return execTerminal;
+    execTerminal = new Terminal({
+        allowProposedApi: false,
+        convertEol: false,
+        cursorBlink: true,
+        cursorStyle: 'bar',
+        fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
+        fontSize: 13,
+        lineHeight: 1.18,
+        scrollback: 5000,
+        theme: {
+            background: '#20242d', foreground: '#d8dee9', cursor: '#88c0d0', cursorAccent: '#20242d',
+            selectionBackground: '#4c566a99', black: '#3b4252', red: '#bf616a', green: '#a3be8c',
+            yellow: '#ebcb8b', blue: '#81a1c1', magenta: '#b48ead', cyan: '#88c0d0', white: '#e5e9f0',
+            brightBlack: '#4c566a', brightRed: '#d06f79', brightGreen: '#b1d196', brightYellow: '#f0d399',
+            brightBlue: '#8fafd2', brightMagenta: '#c19acb', brightCyan: '#9ad3df', brightWhite: '#eceff4',
+        },
+    });
+    execFitAddon = new FitAddon();
+    execTerminal.loadAddon(execFitAddon);
+    execTerminal.open($('term-surface'));
+    execTerminal.onData((data) => {
+        if (execConnected) execWriter(data);
+    });
+    execTerminal.onResize(({ cols, rows }) => {
+        const size = validTerminalSize(cols, rows);
+        if (execConnected && size) ExecResize(size.cols, size.rows);
+    });
+    execResizeObserver = new ResizeObserver(() => {
+        if (!$('dpanel-terminal').hidden) requestAnimationFrame(fitTerminal);
+    });
+    execResizeObserver.observe($('term-surface'));
+    return execTerminal;
+}
+
+function fitTerminal() {
+    if (!execTerminal || $('dpanel-terminal').hidden || $('term-surface').clientWidth < 1) return null;
+    try {
+        execFitAddon.fit();
+        return validTerminalSize(execTerminal.cols, execTerminal.rows);
+    } catch {
+        return null;
+    }
+}
+
+function setTerminalStatus(state, text) {
+    const status = $('term-status');
+    status.className = `term-status${state ? ` ${state}` : ''}`;
+    status.innerHTML = `<i></i>${esc(text)}`;
+}
+
+function resetTerminalUI({ clear = false, preserveOutput = false } = {}) {
+    execConnected = false;
+    execAcceptOutput = false;
+    execInputEpoch++;
+    execWriter = () => Promise.resolve();
+    $('btn-term-start').hidden = false;
+    $('btn-term-start').disabled = false;
+    $('btn-term-stop').hidden = true;
+    $('term-container').disabled = false;
+    $('term-shell').disabled = false;
+    $('term-session-label').textContent = 'Not connected';
+    setTerminalStatus('', 'Disconnected');
+    if (clear) {
+        execHasOutput = false;
+        if (execTerminal) execTerminal.reset();
+    }
+    $('term-placeholder').hidden = preserveOutput && execHasOutput;
+}
 
 EventsOn('exec-output', (chunk) => {
-    if (!execConnected) return;
-    appendTerm(String(chunk).replace(ANSI_RE, ''));
+    if (!execAcceptOutput) return;
+    execHasOutput = true;
+    ensureTerminal().write(String(chunk));
 });
 EventsOn('exec-closed', (msg) => {
-    if (msg) appendTerm(`\n[session ended: ${msg}]\n`);
-    else appendTerm(`\n[session ended]\n`);
-    resetTerminalUI();
+    if (!execAcceptOutput) return;
+    const suffix = msg ? `Session ended · ${msg}` : 'Session ended';
+    execHasOutput = true;
+    ensureTerminal().write(`\r\n\x1b[90m[${suffix}]\x1b[0m\r\n`);
+    resetTerminalUI({ preserveOutput: true });
 });
 
 function prepareTerminal(scope = activeDrawerScope) {
@@ -2109,9 +2216,7 @@ function prepareTerminal(scope = activeDrawerScope) {
     const ref = scope.ref;
     const select = $('term-container');
     select.innerHTML = '';
-    $('term-view').textContent = '';
-    $('term-status').textContent = '';
-    resetTerminalUI();
+    resetTerminalUI({ clear: true });
     PodContainers(ref.namespace, ref.name)
         .then((containers) => {
             if (!isCurrentDrawerRequest(scope)) return;
@@ -2122,22 +2227,10 @@ function prepareTerminal(scope = activeDrawerScope) {
                 select.appendChild(opt);
             }
         })
-        .catch((err) => { if (isCurrentDrawerRequest(scope)) $('term-status').textContent = errMsg(err); });
-}
-
-function appendTerm(text) {
-    const view = $('term-view');
-    view.textContent += text;
-    if (view.textContent.length > 200000) view.textContent = view.textContent.slice(-200000);
-    view.scrollTop = view.scrollHeight;
-}
-
-function resetTerminalUI() {
-    execConnected = false;
-    const input = $('term-input');
-    if (input) { input.disabled = true; input.value = ''; }
-    $('btn-term-start').hidden = false;
-    $('btn-term-stop').hidden = true;
+        .catch((err) => {
+            if (!isCurrentDrawerRequest(scope)) return;
+            setTerminalStatus('error', errMsg(err));
+        });
 }
 
 $('btn-term-start').addEventListener('click', () => {
@@ -2146,39 +2239,49 @@ $('btn-term-start').addEventListener('click', () => {
     if (!ref || !ref.isPod) return;
     const container = $('term-container').value;
     const shell = $('term-shell').value;
-    $('term-status').textContent = 'Connecting…';
-    $('term-view').textContent = '';
-    StartExec(ref.namespace, ref.name, container, shell)
+    const terminal = ensureTerminal();
+    const size = fitTerminal() ?? { cols: 80, rows: 24 };
+    const inputEpoch = ++execInputEpoch;
+    execAcceptOutput = true;
+    execConnected = false;
+    execHasOutput = false;
+    terminal.reset();
+    $('term-placeholder').hidden = true;
+    $('btn-term-start').disabled = true;
+    $('term-container').disabled = true;
+    $('term-shell').disabled = true;
+    $('term-session-label').textContent = `${ref.name} · ${container || 'default container'}`;
+    setTerminalStatus('connecting', 'Connecting…');
+    StartExec(ref.namespace, ref.name, container, shell, size.cols, size.rows)
         .then(() => {
-            if (!isCurrentDrawerRequest(scope)) { StopExec(); return; }
+            if (!isCurrentDrawerRequest(scope) || inputEpoch !== execInputEpoch) { StopExec(); return; }
             execConnected = true;
-            $('term-status').textContent = `connected (${shell})`;
+            execWriter = createSerialWriter(
+                (data) => inputEpoch === execInputEpoch ? ExecWrite(data) : Promise.resolve(),
+                (err) => {
+                    if (inputEpoch === execInputEpoch) setTerminalStatus('error', `Input failed: ${errMsg(err)}`);
+                },
+            );
+            setTerminalStatus('connected', `Connected via ${shell}`);
             $('btn-term-start').hidden = true;
+            $('btn-term-start').disabled = false;
             $('btn-term-stop').hidden = false;
-            const input = $('term-input');
-            input.disabled = false;
-            input.focus();
-            appendTerm(`Connected to ${ref.name} · ${container} via ${shell}\nType commands below. Full-screen apps (vi, top) are not supported.\n\n`);
+            ExecResize(terminal.cols, terminal.rows);
+            terminal.focus();
         })
-        .catch((err) => { if (isCurrentDrawerRequest(scope)) $('term-status').textContent = errMsg(err); });
+        .catch((err) => {
+            if (!isCurrentDrawerRequest(scope) || inputEpoch !== execInputEpoch) return;
+            resetTerminalUI({ preserveOutput: true });
+            setTerminalStatus('error', errMsg(err));
+        });
 });
 
 $('btn-term-stop').addEventListener('click', stopExec);
 
-$('term-input').addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' || !execConnected) return;
-    const cmd = e.target.value;
-    appendTerm(`$ ${cmd}\n`);
-    ExecWrite(cmd + '\n').catch((err) => appendTerm(`[write error: ${errMsg(err)}]\n`));
-    e.target.value = '';
-});
-
 function stopExec() {
-    if (execConnected) {
-        execConnected = false;
-        StopExec();
-    }
-    resetTerminalUI();
+    const hadSession = execConnected || execAcceptOutput;
+    resetTerminalUI({ preserveOutput: hadSession });
+    if (hadSession) StopExec();
 }
 
 // ---- Port forward ----
@@ -2319,19 +2422,23 @@ function renderForwards() {
     const list = $('pf-list');
     const mine = ref ? activeForwards.filter((f) => f.namespace === ref.namespace && f.name === ref.name) : [];
     $('pf-empty').hidden = mine.length > 0;
+    $('pf-resource-count').textContent = String(mine.length);
     list.innerHTML = '';
     for (const f of mine) {
         const div = document.createElement('div');
         div.className = 'pf-item';
         div.innerHTML =
-            `<div class="pf-item-main">
-                <span class="pf-addr mono">localhost:${f.localPort}</span>
-                <span class="pf-arrow">→</span>
-                <span class="mono">${esc(f.podName)}:${f.remotePort}</span>
-                <span class="pf-background-chip">${f.keepRunning ? 'background' : 'stops with drawer'}</span>
+            `<span class="pf-status-dot" aria-hidden="true"></span>
+            <div class="pf-item-main">
+                <div class="pf-item-route">
+                    <span class="pf-addr mono">localhost:${f.localPort}</span>
+                    <span class="pf-arrow">→</span>
+                    <span class="pf-target mono" title="${esc(f.podName)}:${f.remotePort}">${esc(f.podName)}:${f.remotePort}</span>
+                </div>
+                <span class="pf-item-meta">${f.keepRunning ? 'Runs in background' : 'Stops when this drawer closes'}</span>
             </div>`;
         const stop = document.createElement('button');
-        stop.className = 'btn btn-danger btn-sm';
+        stop.className = 'btn btn-secondary btn-sm';
         stop.textContent = 'Stop';
         stop.addEventListener('click', () => stopForward(f.key));
         div.appendChild(stop);
@@ -2343,7 +2450,7 @@ function renderPortForwardManager() {
     const count = activeForwards.length;
     $('pf-global-count').textContent = String(count);
     $('btn-port-forwards').classList.toggle('has-forwards', count > 0);
-    $('pf-manager-summary').textContent = count === 0 ? 'No port forwards' : `${count} running in this cluster`;
+    $('pf-manager-summary').textContent = count === 0 ? 'No active tunnels' : `${count} running in this cluster`;
     $('pf-stop-all').hidden = count === 0;
     $('pf-global-empty').hidden = count > 0;
     const list = $('pf-global-list');
@@ -2353,8 +2460,8 @@ function renderPortForwardManager() {
         item.className = 'pf-global-item';
         item.innerHTML = `<div class="pf-global-main">
                 <span class="pf-global-owner">${esc(forward.kind)} · ${esc(forward.namespace)}/${esc(forward.name)}</span>
-                <span class="pf-global-route mono"><strong>localhost:${forward.localPort}</strong> → ${esc(forward.podName)}:${forward.remotePort}</span>
-                ${forward.keepRunning ? '<span class="pf-background-chip">Keeps running after drawer closes</span>' : '<span class="pf-hint">Stops when its drawer closes</span>'}
+                <span class="pf-global-route mono"><strong>localhost:${forward.localPort}</strong><span>→</span><span class="pf-global-route-target" title="${esc(forward.podName)}:${forward.remotePort}">${esc(forward.podName)}:${forward.remotePort}</span></span>
+                ${forward.keepRunning ? '<span class="pf-background-chip">Background tunnel</span>' : '<span class="pf-hint">Drawer-owned tunnel</span>'}
             </div>
             <div class="pf-global-actions">
                 <button class="btn btn-secondary btn-sm pf-copy">Copy</button>

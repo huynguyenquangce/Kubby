@@ -24,6 +24,8 @@ cd ..
 | `app_portforward_test.go` | global tunnel registry preserves target metadata, lists deterministically, invalidates pending starts, and synchronizes List/Stop |
 | `frontend/src/request-scope.test.js` | late view/drawer/modal responses cannot overwrite a newer owner; stale Helm/chart values cannot cross modal or version boundaries |
 | `frontend/src/port-forward-state.test.js` | hydration/upsert, closed-event removal, drawer-close policy, and late Start ownership |
+| `frontend/src/terminal-io.test.js` | raw input ordering, write-error recovery, and valid PTY dimensions |
+| `internal/k8sclient/exec_test.go` | initial/coalesced terminal resize plus concurrent, unblocking queue close |
 
 None of them need a cluster. Everything else is still verified through
 `cmd/kubby-cli` against a real one — **that is a gap, not a design choice** — see
@@ -134,6 +136,23 @@ close the resource drawer, and verify the top-bar badge still exposes and can st
 it. Start another with the option disabled and verify drawer close removes it.
 Finally, switch clusters during a pending/active start and verify neither the old
 tunnel nor a late success appears in the new cluster's manager.
+
+Interactive terminal manual check: open a Pod's Terminal tab and connect, type a
+partial path or command and press **Tab**, use **Up** for history, send **Ctrl+C**,
+then run `top` (or another cursor-addressing program) and resize the window. Input,
+ANSI output, cursor placement, and the remote program's dimensions must all remain
+correct. This cannot be claimed from the Node tests or a headless Wails build.
+Completion/history are provided by the selected container shell; when checking a
+hidden path type its leading dot, and do not expect a minimal `/bin/sh` to behave
+like Bash.
+
+Overview visual check: inspect light and dark modes at roughly 1024 px and 1920 px
+width. Inter must be used consistently by navigation, buttons, form controls, KPI
+values, and tables; Cluster pulse must remain readable; capacity meters must match
+their percentages; the Attention panel must not stretch to Top consumers' height;
+long event messages must scroll inside their section rather than widening the page.
+Also confirm Vietnamese glyphs render without switching to a visibly different
+fallback face. These are manual WebView checks, not claims made by `npm test`.
 
 ## This machine
 

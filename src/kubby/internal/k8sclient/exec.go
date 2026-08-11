@@ -3,6 +3,7 @@ package k8sclient
 import (
 	"context"
 	"io"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -12,8 +13,10 @@ import (
 // ExecSession is one interactive exec into a container. Write() feeds stdin;
 // Close() ends the session.
 type ExecSession struct {
-	stdinW io.WriteCloser
-	cancel context.CancelFunc
+	stdinW    io.WriteCloser
+	cancel    context.CancelFunc
+	sizes     *terminalSizeQueue
+	closeOnce sync.Once
 }
 
 // Write forwards user keystrokes to the container's stdin.
@@ -25,14 +28,87 @@ func (s *ExecSession) Write(data string) error {
 	return err
 }
 
+// Resize updates the remote PTY dimensions. Invalid or out-of-range dimensions
+// are ignored rather than allowing a WebView measurement glitch to end a shell.
+func (s *ExecSession) Resize(cols, rows int) {
+	if s.sizes != nil {
+		s.sizes.Resize(cols, rows)
+	}
+}
+
 // Close ends the exec session.
 func (s *ExecSession) Close() {
-	if s.stdinW != nil {
-		s.stdinW.Close()
+	s.closeOnce.Do(func() {
+		if s.sizes != nil {
+			s.sizes.Close()
+		}
+		if s.stdinW != nil {
+			_ = s.stdinW.Close()
+		}
+		if s.cancel != nil {
+			s.cancel()
+		}
+	})
+}
+
+// terminalSizeQueue implements remotecommand.TerminalSizeQueue. A one-item
+// buffer keeps only the latest resize while the SPDY stream is busy.
+type terminalSizeQueue struct {
+	sizes     chan remotecommand.TerminalSize
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+func newTerminalSizeQueue(cols, rows int) *terminalSizeQueue {
+	q := &terminalSizeQueue{
+		sizes: make(chan remotecommand.TerminalSize, 1),
+		done:  make(chan struct{}),
 	}
-	if s.cancel != nil {
-		s.cancel()
+	q.Resize(cols, rows)
+	return q
+}
+
+func (q *terminalSizeQueue) Next() *remotecommand.TerminalSize {
+	select {
+	case <-q.done:
+		return nil
+	default:
 	}
+	select {
+	case <-q.done:
+		return nil
+	case size := <-q.sizes:
+		return &size
+	}
+}
+
+func (q *terminalSizeQueue) Resize(cols, rows int) {
+	if cols < 1 || rows < 1 || cols > 65535 || rows > 65535 {
+		return
+	}
+	size := remotecommand.TerminalSize{Width: uint16(cols), Height: uint16(rows)}
+	select {
+	case <-q.done:
+		return
+	default:
+	}
+	select {
+	case q.sizes <- size:
+		return
+	default:
+	}
+	select {
+	case <-q.sizes:
+	default:
+	}
+	select {
+	case q.sizes <- size:
+	case <-q.done:
+	}
+}
+
+func (q *terminalSizeQueue) Close() {
+	q.closeOnce.Do(func() { close(q.done) })
 }
 
 // emitWriter turns Write calls into a callback (used to stream output to the UI).
@@ -46,7 +122,7 @@ func (w emitWriter) Write(p []byte) (int, error) {
 // StartExec opens an interactive shell into a container and streams its output
 // via the emit callback. It tries the given shell (e.g. "/bin/sh"). The session
 // runs until the shell exits or Close() is called.
-func StartExec(ctx context.Context, c *Cluster, namespace, pod, container, shell string, emit func(string), onClose func(error)) (*ExecSession, error) {
+func StartExec(ctx context.Context, c *Cluster, namespace, pod, container, shell string, cols, rows int, emit func(string), onClose func(error)) (*ExecSession, error) {
 	if shell == "" {
 		shell = "/bin/sh"
 	}
@@ -55,16 +131,13 @@ func StartExec(ctx context.Context, c *Cluster, namespace, pod, container, shell
 		Resource("pods").Namespace(namespace).Name(pod).
 		SubResource("exec")
 
-	// TTY is off deliberately: output is rendered in a plain <pre>, so a PTY's
-	// ANSI/cursor escape codes would render as garbage. Line-mode gives clean,
-	// predictable output. Trade-off: full-screen programs (vi, top) won't work.
 	opts := &corev1.PodExecOptions{
 		Container: container,
 		Command:   []string{shell},
 		Stdin:     true,
 		Stdout:    true,
-		Stderr:    true,
-		TTY:       false,
+		Stderr:    false, // a TTY carries stderr on the stdout stream
+		TTY:       true,
 	}
 	req.VersionedParams(opts, scheme.ParameterCodec)
 
@@ -75,16 +148,18 @@ func StartExec(ctx context.Context, c *Cluster, namespace, pod, container, shell
 
 	stdinR, stdinW := io.Pipe()
 	execCtx, cancel := context.WithCancel(ctx)
-	session := &ExecSession{stdinW: stdinW, cancel: cancel}
+	sizes := newTerminalSizeQueue(cols, rows)
+	session := &ExecSession{stdinW: stdinW, cancel: cancel, sizes: sizes}
 
 	go func() {
 		err := exec.StreamWithContext(execCtx, remotecommand.StreamOptions{
-			Stdin:  stdinR,
-			Stdout: emitWriter{emit: emit},
-			Stderr: emitWriter{emit: emit},
-			Tty:    false,
+			Stdin:             stdinR,
+			Stdout:            emitWriter{emit: emit},
+			Tty:               true,
+			TerminalSizeQueue: sizes,
 		})
-		stdinR.Close()
+		_ = stdinR.Close()
+		sizes.Close()
 		if onClose != nil {
 			onClose(err)
 		}
