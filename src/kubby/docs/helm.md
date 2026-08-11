@@ -45,7 +45,7 @@ maintainer and home links.
 - **Legacy Helm OpenPGP verification stays disabled.** Helm v3 still links the
   deprecated `golang.org/x/crypto/openpgp` implementation, for which
   `govulncheck` reports GO-2026-5932 with no fixed version. Kubby never enables
-  `ChartPathOptions.Verify`; it explicitly uses `VerifyNever` and instead gates
+  `ChartPathOptions.Verify`; it explicitly keeps `Verify=false` and instead gates
   install on the previewed archive's SHA-256. Keep the scanner finding recorded
   until Helm removes/replaces that dependency.
 - **Chart default values are loaded from the chart**, not from Artifact Hub's
