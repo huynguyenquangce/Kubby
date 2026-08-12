@@ -1,0 +1,196 @@
+const DEFAULT_FIXTURES = {
+    RecentConnections: [],
+    ContextsFromContent: { contexts: ['kind-kubby-dev'], currentContext: 'kind-kubby-dev' },
+    ConnectedClusters: [{ id: 'cluster-1', name: 'kind-kubby-dev', active: true }],
+    ListPortForwards: [],
+    ListNamespaces: [
+        { name: 'default', status: 'Active' },
+        { name: 'payments', status: 'Active' },
+    ],
+    SidebarCounts: [
+        { view: 'nodes', count: 2, errors: 0 },
+        { view: 'namespaces', count: 2, errors: 0 },
+        { view: 'pods', count: 6, errors: 1 },
+        { view: 'deployments', count: 2, errors: 1 },
+        { view: 'services', count: 2, errors: 0 },
+    ],
+    CustomKinds: { kinds: [], overflow: 0, total: 0 },
+    CanI: {
+        verbs: {
+            get: true,
+            create: true,
+            update: true,
+            patch: true,
+            delete: true,
+            logs: true,
+            exec: true,
+            portforward: true,
+        },
+    },
+    OverviewSnapshot: {
+        stats: { nodes: 2, namespaces: 2, pods: 6, deployments: 2, podsAvailable: true },
+        failingPods: [
+            { namespace: 'payments', name: 'checkout-7b8d9f-2kw7p', status: 'CrashLoopBackOff', restarts: 7 },
+        ],
+        nodeMetrics: [
+            { name: 'kubby-control-plane', cpuMilli: 680, cpuCapacity: 4000, memMi: 2970, memCapacity: 8192 },
+            { name: 'kubby-worker', cpuMilli: 940, cpuCapacity: 4000, memMi: 3380, memCapacity: 8192 },
+        ],
+        nodeStatus: [
+            { name: 'kubby-control-plane', ready: true, schedulable: false, pods: 3, pressure: '', version: 'v1.34.0' },
+            { name: 'kubby-worker', ready: true, schedulable: true, pods: 3, pressure: '', version: 'v1.34.0' },
+        ],
+        topPods: [
+            { namespace: 'payments', name: 'api-6df7fdd9f8-4zj8g', cpuMilli: 420, memMi: 384 },
+            { namespace: 'default', name: 'web-5cf9d8b8d6-hv2lk', cpuMilli: 270, memMi: 211 },
+        ],
+        events: [
+            { type: 'Warning', object: 'Pod/checkout-7b8d9f-2kw7p', reason: 'BackOff', age: '2m', message: 'Back-off restarting failed container', count: 7, isWarn: true },
+            { type: 'Normal', object: 'Deployment/web', reason: 'ScalingReplicaSet', age: '8m', message: 'Scaled up replica set web-5cf9d8b8d6 to 2', count: 1, isWarn: false },
+        ],
+        warnings: [],
+    },
+    ClusterStructure: {
+        scope: 'All namespaces',
+        summary: { nodes: 2, namespaces: 2, pods: 3, unhealthy: 1 },
+        entries: [
+            {
+                kind: 'Ingress',
+                refKind: 'Ingress',
+                name: 'shop',
+                namespace: 'payments',
+                warning: '',
+                services: [
+                    {
+                        name: 'checkout',
+                        namespace: 'payments',
+                        type: 'ClusterIP',
+                        routes: ['shop.test/checkout → 8080'],
+                        warning: '',
+                        workloads: [
+                            {
+                                kind: 'Deployment',
+                                name: 'checkout',
+                                namespace: 'payments',
+                                status: '1 / 2 ready',
+                                isError: true,
+                                pods: [
+                                    { name: 'checkout-7b8d9f-2kw7p', namespace: 'payments', status: 'CrashLoopBackOff', ready: '0/1', restarts: 7, node: 'kubby-worker', isError: true },
+                                    { name: 'checkout-7b8d9f-v5lhn', namespace: 'payments', status: 'Running', ready: '1/1', restarts: 0, node: 'kubby-worker', isError: false },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+        internal: [
+            {
+                name: 'metrics', namespace: 'default', type: 'ClusterIP', routes: [], warning: '',
+                workloads: [{
+                    kind: 'Deployment', name: 'metrics', namespace: 'default', status: '1 / 1 ready', isError: false,
+                    pods: [{ name: 'metrics-5c947c7b7c-lm2qp', namespace: 'default', status: 'Running', ready: '1/1', restarts: 0, node: 'kubby-control-plane', isError: false }],
+                }],
+            },
+        ],
+        unexposed: [],
+        warnings: [],
+    },
+    ListPods: [
+        { namespace: 'payments', name: 'api-6df7fdd9f8-4zj8g', status: 'Running', ready: '1/1', restarts: 0, cpuMilli: 90, memMi: 128, podIP: '10.244.1.7', node: 'kubby-worker', age: '12m', isError: false },
+        { namespace: 'payments', name: 'checkout-7b8d9f-2kw7p', status: 'CrashLoopBackOff', ready: '0/1', restarts: 7, cpuMilli: 4, memMi: 32, podIP: '10.244.1.8', node: 'kubby-worker', age: '9m', isError: true },
+    ],
+    PodMetricsList: [
+        { namespace: 'payments', name: 'api-6df7fdd9f8-4zj8g', cpuMilli: 90, memMi: 128 },
+        { namespace: 'payments', name: 'checkout-7b8d9f-2kw7p', cpuMilli: 4, memMi: 32 },
+    ],
+    ListNodes: [
+        { name: 'kubby-control-plane', status: 'Ready', role: 'control-plane', version: 'v1.34.0', age: '3d', isError: false },
+        { name: 'kubby-worker', status: 'Ready', role: 'worker', version: 'v1.34.0', age: '3d', isError: false },
+    ],
+    GetDetail: {
+        kind: 'Pod', name: 'api-6df7fdd9f8-4zj8g', namespace: 'payments', created: '2026-08-12T03:20:00Z', age: '12m',
+        labels: { app: 'api', tier: 'backend' }, annotations: {},
+        info: [{ label: 'Status', value: 'Running' }, { label: 'Node', value: 'kubby-worker' }],
+    },
+    GetYAML: 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: api-6df7fdd9f8-4zj8g\n  namespace: payments\nspec:\n  containers:\n    - name: api\n      image: example.invalid/api:v1\n',
+    ListEvents: [{ type: 'Normal', reason: 'Started', age: '12m', message: 'Started container api', count: 1 }],
+    PodContainers: ['api'],
+    PodLogs: '2026-08-12T03:20:01Z server listening on :8080\n',
+    GetAIConfig: { provider: '', endpoint: '', model: '', language: 'auto', hasApiKey: false },
+    GetAIStatus: { configured: false, provider: '', model: '' },
+    AppVersion: 'Kubby 0.1.0-test linux/amd64',
+    NetworkFlows: { ingresses: [], services: [], routedCount: 0, endpointCount: 0, brokenCount: 0 },
+    Sizing: {
+        totals: { pods: 0, containers: 0, cpuRequest: 0, cpuUsage: 0, memRequest: 0, memUsage: 0 },
+        nodes: 2, allocCpu: 8000, allocMem: 16384, cpuReservedPct: 0, memReservedPct: 0,
+        metricsAvailable: true, namespaces: [], containers: [], advice: [], note: '',
+    },
+};
+
+export async function installWailsMock(page, overrides = {}) {
+    await page.addInitScript(({ fixtures, responseOverrides }) => {
+        const clone = (value) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+        const responses = { ...fixtures, ...responseOverrides };
+        const calls = [];
+        const listeners = new Map();
+        const app = new Proxy({}, {
+            get(_target, method) {
+                return (...args) => {
+                    calls.push({ method: String(method), args: clone(args) });
+                    const response = Object.prototype.hasOwnProperty.call(responses, method)
+                        ? responses[method]
+                        : [];
+                    return Promise.resolve(clone(response));
+                };
+            },
+        });
+
+        window.__wailsMock = {
+            calls,
+            emit(name, ...args) {
+                for (const listener of listeners.get(name) ?? []) listener(...args);
+            },
+        };
+        window.go = { main: { App: app } };
+        window.runtime = {
+            EventsOnMultiple(name, callback) {
+                const group = listeners.get(name) ?? [];
+                group.push(callback);
+                listeners.set(name, group);
+                return () => {
+                    listeners.set(name, (listeners.get(name) ?? []).filter((item) => item !== callback));
+                };
+            },
+            EventsOff(...names) { for (const name of names) listeners.delete(name); },
+            EventsOffAll() { listeners.clear(); },
+            EventsEmit(name, ...args) {
+                for (const listener of listeners.get(name) ?? []) listener(...args);
+            },
+            BrowserOpenURL(url) { calls.push({ method: 'BrowserOpenURL', args: [url] }); },
+            ClipboardSetText(value) { calls.push({ method: 'ClipboardSetText', args: [value] }); },
+            LogPrint() {}, LogTrace() {}, LogDebug() {}, LogInfo() {}, LogWarning() {}, LogError() {}, LogFatal() {},
+        };
+    }, { fixtures: DEFAULT_FIXTURES, responseOverrides: overrides });
+}
+
+export async function connectDashboard(page, options = {}) {
+    await installWailsMock(page, options.overrides);
+    if (options.theme) {
+        await page.addInitScript((theme) => localStorage.setItem('kubby-theme', theme), options.theme);
+    }
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Paste kubeconfig' }).click();
+    await page.locator('#paste-area').fill('apiVersion: v1\nkind: Config\ncurrent-context: kind-kubby-dev');
+    await page.locator('#btn-load-paste').click();
+    await page.locator('#context-row').waitFor({ state: 'visible' });
+    await page.locator('#btn-connect').click();
+    await page.locator('#dashboard').waitFor({ state: 'visible' });
+    await page.locator('#cluster-health-score').filter({ hasText: '83' }).waitFor();
+}
+
+export function collectPageErrors(page) {
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    return errors;
+}

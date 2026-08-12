@@ -28,6 +28,16 @@ Required for every target:
 
 Native Windows builds also require WebView2. Windows 11 normally provides it.
 
+Browser UI checks require Playwright's pinned Chromium. After `npm ci`, install
+it once per machine. On Windows use `npx playwright install chromium`; on
+WSL/Linux also install its system libraries:
+
+```bash
+cd frontend
+npx playwright install --with-deps chromium
+cd ..
+```
+
 Linux GUI builds require a C compiler, `pkg-config`, GTK3, and WebKitGTK. On an
 Ubuntu release that provides WebKitGTK 4.1:
 
@@ -120,6 +130,7 @@ gofmt -l *.go internal/k8sclient/*.go internal/buildinfo/*.go cmd/kubby-cli/*.go
 cd frontend
 npm test
 npm run build
+npm run test:e2e
 cd ..
 ```
 
@@ -132,6 +143,9 @@ Why run these separately from Wails:
 - Wails does not enforce `gofmt`.
 - `src/kubby/wails.json` uses `npm install`; the explicit `npm ci` verifies the
   lockfile reproducibly.
+- Playwright runs the real frontend through a deterministic Wails binding mock;
+  it needs no kubeconfig or cluster. Screenshots, traces, and videos on failure
+  are test evidence, not source artifacts.
 
 ## 5. Build the application
 

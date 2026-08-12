@@ -52,6 +52,10 @@ src/kubby/build/bin/
 **/node_modules/
 src/kubby/frontend/dist/
 src/kubby/frontend/.vite/
+src/kubby/frontend/test-results/
+src/kubby/frontend/playwright-report/
+src/kubby/frontend/blob-report/
+src/kubby/frontend/.playwright-browsers/
 src/kubby/frontend/package.json.md5
 src/kubby/frontend/nul.css
 

@@ -10,6 +10,7 @@ How to check that a change works. Read this before claiming something is done.
 go test ./...
 cd frontend
 npm test             # deferred-response ownership tests; no GUI required
+npm run test:e2e     # Chromium + deterministic Wails/Kubernetes mock
 cd ..
 ```
 
@@ -29,12 +30,15 @@ cd ..
 | `frontend/src/log-buffer.test.js` | 5,000-line cap and frame-coalesced live-log rendering |
 | `frontend/src/line-diff.test.js` | diff reconstruction, pathological fallback, and 10,000-line regression budget |
 | `frontend/src/responsive.test.js` | canonical off-canvas navigation, shrinkable top-bar labels, workspace container breakpoints, and viewport-bounded overlays |
+| `frontend/e2e/ui.spec.js` | paste/connect workflow, every built-in view, responsive/zoom matrix, mobile navigation ownership, Structure filtering, Pod drawer/YAML, and Settings modal dismissal |
+| `frontend/e2e/visual.spec.js` | stable Chromium baselines for light/dark Overview and Cluster Structure; failures retain screenshot, video, and trace evidence |
 | `internal/k8sclient/exec_test.go` | initial/coalesced terminal resize plus concurrent, unblocking queue close |
 | `internal/k8sclient/logstream_test.go` | batch size, quiet-stream timer flush, final flush and cancel semantics |
 | `internal/k8sclient/overview_test.go` | one Node/Pod list, partial failures, terminating-Pod exclusion, and 10k benchmark |
 | `internal/k8sclient/structure_test.go` | complete entry/internal/unexposed topology, ReplicaSet→Deployment collapse, unhealthy propagation, terminating-Pod exclusion, and one list per kind |
 
-None of them need a cluster. Everything else is still verified through
+None of them need a cluster. The Playwright suite needs its pinned Chromium and
+Linux system libraries installed as described in `docs/BUILD.md`. Everything else is still verified through
 `cmd/kubby-cli` against a real one — **that is a gap, not a design choice** — see
 *Worth adding* at the bottom.
 
@@ -127,7 +131,31 @@ This document owns behavioural verification after the source can build:
 automated tests, version diagnostics, `kubby-cli` checks, real-cluster setup,
 and the manual GUI limits below.
 
-## GUI verification is not reliable from a headless session
+## Browser automation is not native WebView verification
+
+The Playwright suite loads the production Vite entry point and injects a
+deterministic implementation of `window.go.main.App` plus Wails runtime events
+before `main.js` executes. It is safe to click and gives reproducible coverage of
+DOM behavior, async binding ownership, keyboard dismissal, CSS breakpoints, and
+visual layout without a kubeconfig or cluster:
+
+```bash
+cd frontend
+npm run test:e2e
+```
+
+The supported responsive matrix uses CSS-viewport equivalents of 80–200% zoom
+on 1366×768 and 1920×1080 windows, plus a 390 px narrow shell. Visual baselines
+live next to `visual.spec.js`; update them only after inspecting and approving an
+intentional UI change with `npm run test:e2e:update`. CI retains the HTML report,
+trace, screenshot, and video only on failure. Generated failure evidence is
+ignored by Git.
+
+This proves frontend behavior against the mocked binding contract. It does not
+prove native file dialogs, clipboard behavior, WebView2 focus/paint behavior,
+PTY/ANSI rendering, or Kubernetes correctness.
+
+Native window automation is still not reliable from a headless session.
 
 Screenshot automation works for a passively-rendered window, but
 `SetForegroundWindow` / `ShowWindow` / `MoveWindow` have triggered WebView2
@@ -136,9 +164,8 @@ focus-handling crashes and stale repaints here.
 **Prefer verifying the backend through `kubby-cli`, and ask the user to confirm GUI
 behaviour visually.** Do not try to automate clicks through native dialogs.
 
-Mechanical frontend checks that *do* work: the esbuild bundle above, and a script
-cross-checking every `$('id')` reference in `main.js` against the ids in
-`index.html`.
+The browser suite is therefore a release gate alongside the native manual checks
+below, not a replacement for them.
 
 Port-forward manager manual check: start one tunnel with **Keep running** enabled,
 close the resource drawer, and verify the top-bar badge still exposes and can stop

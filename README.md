@@ -62,7 +62,7 @@ operate.
 | **Diagnostics** | Logs, exec, port-forward, traffic topology, resource evidence, and provider-selectable AI assistance. |
 | **Operations** | Create/apply, delete, scale, restart, pause/resume, rollback, cordon/drain, and CronJob triggering. |
 | **Helm** | Releases, history, rollback, repositories, Artifact Hub search, chart installation, and dry-run previews. |
-| **Developer tooling** | `kubby-cli` exercises the same Go Kubernetes layer as the desktop application. |
+| **Developer tooling** | `kubby-cli` exercises the same Go Kubernetes layer as the desktop application; Playwright covers mocked browser workflows, responsive/zoom behavior, and visual regression in CI. |
 
 ## Architecture at a glance
 

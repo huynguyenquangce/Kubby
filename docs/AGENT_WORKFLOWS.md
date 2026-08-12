@@ -1,6 +1,6 @@
 # Kubby agent workflows
 
-This repository defines durable project rules in `AGENTS.md` and six custom
+This repository defines durable project rules in `AGENTS.md` and seven custom
 Codex agents in `.codex/agents/`. Codex discovers project agents when the
 repository is trusted and the session starts from this repository.
 
@@ -13,6 +13,7 @@ implementation.
 | Agent | Use it for | Source changes |
 |---|---|---|
 | `test_engineer` | Functional/integration/regression testing and test gaps | No; build/test artifacts only |
+| `ui_test_engineer` | Browser E2E, responsive/zoom, visual regression, accessibility, and native WebView2 smoke checks | No; Playwright evidence only |
 | `code_reviewer` | Correctness, architecture boundaries, error handling, concurrency and maintainability | Read-only |
 | `performance_engineer` | Kubernetes API latency, fan-out, payloads, Wails calls, bundle cost | No; measurement artifacts only |
 | `requirements_auditor` | Spec → docs → code → test traceability | Read-only |
@@ -61,6 +62,14 @@ Agents are spawned through a direct prompt; do not try to execute the TOML file.
 
 ```text
 Use the test_engineer agent to test FR-17 and FR-34 end to end. Do not change source. Run every safe automated check available, identify missing coverage, and return commands plus pass/fail/blocker evidence. Wait for the agent and summarize its result.
+```
+
+### UI automation audit
+
+```text
+Use the ui_test_engineer agent to run the mocked Playwright UI suite, inspect
+responsive and visual-regression evidence, and report the native WebView2 checks
+that remain. Do not change source or claim Kubernetes behavior from browser mocks.
 ```
 
 ### Performance audit

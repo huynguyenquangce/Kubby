@@ -6,6 +6,13 @@ Bug log — add one line per issue. Resolved items move to the bottom.
 
 ## Fixed
 
+- [2026-08-12] The shared modal and confirmation dialog had no accessible name,
+  so assistive technology announced only a generic dialog even though a visible
+  title was present. Cause: both elements declared their ARIA dialog role but did
+  not connect that role to the existing heading. Fix: add `aria-labelledby` for
+  `modal-title` and `dialog-title`, with the Settings Playwright workflow pinning
+  the shared modal contract.
+
 - [2026-08-12] App connection/session lifecycle could race, duplicate context
   names overwrote one another, and exec/port-forward startup could complete after
   its drawer or cluster owner was gone. Cause: the cluster registry used display

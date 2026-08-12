@@ -90,6 +90,8 @@ the corresponding audit, or for a release/readiness review spanning multiple
 independent quality dimensions.
 
 - `test_engineer`: functional, integration, regression, and test-gap analysis.
+- `ui_test_engineer`: Playwright E2E, responsive/zoom, visual regression,
+  accessibility, and native WebView2 smoke coverage.
 - `code_reviewer`: correctness, architecture boundaries, maintainability, error
   handling, concurrency, and resource lifecycle.
 - `performance_engineer`: latency, API fan-out, allocations, bundle/build size,
