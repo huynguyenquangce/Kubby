@@ -50,6 +50,10 @@ export function ClusterEvents(arg1) {
   return window['go']['main']['App']['ClusterEvents'](arg1);
 }
 
+export function ClusterStructure(arg1) {
+  return window['go']['main']['App']['ClusterStructure'](arg1);
+}
+
 export function ConnectWithContent(arg1, arg2) {
   return window['go']['main']['App']['ConnectWithContent'](arg1, arg2);
 }

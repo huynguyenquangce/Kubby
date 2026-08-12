@@ -24,9 +24,11 @@ func TestOverviewSnapshotSharesListsAndBuildsSections(t *testing.T) {
 	now := metav1.NewTime(time.Now())
 	deleting := metav1.NewTime(time.Now().Add(-time.Minute))
 	client := kubefake.NewSimpleClientset(
-		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Status: corev1.NodeStatus{Capacity: corev1.ResourceList{
-			corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("8Gi"),
-		}}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Status: corev1.NodeStatus{
+			Capacity:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("8Gi")},
+			NodeInfo:   corev1.NodeSystemInfo{KubeletVersion: "v1.34.0"},
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+		}},
 		healthyPod("team-a", "healthy"),
 		failingPod("team-a", "crashing", nil),
 		failingPod("team-a", "terminating", &deleting),
@@ -70,6 +72,9 @@ func TestOverviewSnapshotSharesListsAndBuildsSections(t *testing.T) {
 	if len(snapshot.NodeMetrics) != 1 || snapshot.NodeMetrics[0].CPUCapacity != 4000 {
 		t.Fatalf("node metrics = %#v", snapshot.NodeMetrics)
 	}
+	if len(snapshot.NodeStatus) != 1 || !snapshot.NodeStatus[0].Ready || snapshot.NodeStatus[0].Pods != 2 || snapshot.NodeStatus[0].Version != "v1.34.0" {
+		t.Fatalf("node status = %#v", snapshot.NodeStatus)
+	}
 	if len(snapshot.TopPods) != 2 || snapshot.TopPods[0].Name != "crashing" {
 		t.Fatalf("top live pods = %#v", snapshot.TopPods)
 	}
@@ -105,6 +110,33 @@ func TestOverviewSnapshotKeepsPartialDataWhenPodsOrMetricsFail(t *testing.T) {
 	}
 	if len(snapshot.Warnings) == 0 || !strings.HasPrefix(snapshot.Warnings[0], "pods:") {
 		t.Fatalf("warnings = %#v", snapshot.Warnings)
+	}
+}
+
+func TestOverviewNodeStatusesExposeSchedulingPressureAndIgnoreTerminatingPods(t *testing.T) {
+	deleting := metav1.NewTime(time.Now())
+	nodes := []corev1.Node{{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-a"},
+		Spec:       corev1.NodeSpec{Unschedulable: true},
+		Status: corev1.NodeStatus{
+			NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.34.1"},
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionFalse},
+				{Type: corev1.NodeMemoryPressure, Status: corev1.ConditionTrue},
+			},
+		},
+	}}
+	pods := &corev1.PodList{Items: []corev1.Pod{
+		{ObjectMeta: metav1.ObjectMeta{Name: "live"}, Spec: corev1.PodSpec{NodeName: "worker-a"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "terminating", DeletionTimestamp: &deleting}, Spec: corev1.PodSpec{NodeName: "worker-a"}},
+	}}
+
+	got := overviewNodeStatuses(nodes, pods)
+	if len(got) != 1 || got[0].Ready || got[0].Schedulable || got[0].Pods != 1 {
+		t.Fatalf("node status = %#v", got)
+	}
+	if len(got[0].Pressure) != 1 || got[0].Pressure[0] != string(corev1.NodeMemoryPressure) {
+		t.Fatalf("pressure = %#v", got[0].Pressure)
 	}
 }
 
@@ -145,6 +177,7 @@ func partialMetadata(apiVersion, kind, namespace, name string) *metav1.PartialOb
 func healthyPod(namespace, name string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec:       corev1.PodSpec{NodeName: "node-a"},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
 			Name: "app", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
 		}}},
@@ -154,6 +187,7 @@ func healthyPod(namespace, name string) *corev1.Pod {
 func failingPod(namespace, name string, deletion *metav1.Time) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, DeletionTimestamp: deletion},
+		Spec:       corev1.PodSpec{NodeName: "node-a"},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
 			Name: "app", RestartCount: 4,
 			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},

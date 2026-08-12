@@ -31,6 +31,7 @@ cd ..
 | `internal/k8sclient/exec_test.go` | initial/coalesced terminal resize plus concurrent, unblocking queue close |
 | `internal/k8sclient/logstream_test.go` | batch size, quiet-stream timer flush, final flush and cancel semantics |
 | `internal/k8sclient/overview_test.go` | one Node/Pod list, partial failures, terminating-Pod exclusion, and 10k benchmark |
+| `internal/k8sclient/structure_test.go` | complete entry/internal/unexposed topology, ReplicaSet→Deployment collapse, unhealthy propagation, terminating-Pod exclusion, and one list per kind |
 
 None of them need a cluster. Everything else is still verified through
 `cmd/kubby-cli` against a real one — **that is a gap, not a design choice** — see
@@ -86,6 +87,7 @@ go run ./cmd/kubby-cli ns-summary <namespace>
 go run ./cmd/kubby-cli search <query>
 go run ./cmd/kubby-cli counts [-n <ns>] [--cluster=false]     # timed — the perf path
 go run ./cmd/kubby-cli overview                               # timed single-call dashboard snapshot
+go run ./cmd/kubby-cli structure [-n <ns>]                   # full debug topology snapshot
 go run ./cmd/kubby-cli custom-kinds
 go run ./cmd/kubby-cli list-custom <Kind.group> [-n <ns>]
 go run ./cmd/kubby-cli netflows [-n <ns>]
@@ -159,10 +161,19 @@ like Bash.
 Overview visual check: inspect light and dark modes at roughly 1024 px and 1920 px
 width. Inter must be used consistently by navigation, buttons, form controls, KPI
 values, and tables; Cluster pulse must remain readable; capacity meters must match
-their percentages; the Attention panel must not stretch to Top consumers' height;
+their percentages; Node status must show readiness/pressure without repeating the
+capacity meters; the Attention panel must not stretch to Top consumers' height;
 long event messages must scroll inside their section rather than widening the page.
 Also confirm Vietnamese glyphs render without switching to a visibly different
 fallback face. These are manual WebView checks, not claims made by `npm test`.
+
+Cluster structure visual check: open it from Overview, switch between all namespaces
+and a busy namespace, filter by a pod/service name, then enable **Only unhealthy
+paths**. At 1024 px and 1920 px in light/dark mode, all four lanes must stay legible;
+select each hop and confirm the inspector identity matches it. **Open full details**
+must open the same resource, and **View logs** must appear only for Pods. Confirm
+internal Services and unexposed workloads remain present. This requires a native
+WebView and is not proven by the headless build.
 
 ## This machine
 

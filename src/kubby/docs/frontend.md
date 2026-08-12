@@ -51,11 +51,19 @@ on the existing monospace stack; do not turn the whole UI into monospace.
 
 Overview is a dashboard, not a resource table. Its hierarchy is: one dark
 **Cluster pulse** for health/capacity, a compact KPI strip, then independently sized
-Node usage, Attention, Top consumers, and Events sections. Capacity uses comparable
-linear meters rather than decorative rings. Every Overview table still carries
+Node status, Attention, Top consumers, and Events sections. Cluster pulse is the
+only owner of aggregate CPU/memory; Node status deliberately shows readiness,
+scheduling, pressure, pod count and kubelet version instead of repeating utilization.
+Capacity uses comparable linear meters rather than decorative rings. Every Overview table still carries
 `class="plain"`, uses a fixed layout, and owns horizontal overflow so an event message
 cannot widen the page. The two side-by-side sections use `align-items: start`; an
 empty Attention panel must not stretch to the height of Top consumers.
+
+The contextual **Cluster structure** button opens a separate debug canvas, not a
+resource table. `ClusterStructure()` supplies Entry point → Service → Workload → Pod
+paths in one payload plus internal Services and unexposed workloads. Search and the
+unhealthy-only toggle filter whole paths; selecting a node fills the local inspector,
+while full detail and logs continue through the shared drawer.
 
 ## Drawer
 

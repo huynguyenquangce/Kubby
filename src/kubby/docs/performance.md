@@ -42,11 +42,16 @@ were converted for the same reason.
 
 Overview follows it too: one `OverviewSnapshot()` bound call fans out under a
 fixed semaphore, lists full Nodes and Pods once, and reuses those objects for
-counts, failing Pods, capacity and metrics joins. Namespace and Deployment counts
+counts, failing Pods, capacity, operational Node status and metrics joins. Namespace and Deployment counts
 are metadata-only. A failed section becomes a warning and does not blank the
 other cards. The 5-second live refresh updates the current screen; expensive
 sidebar tallies have their own 30-second live TTL (manual refresh, writes and
 namespace/cluster changes still refresh immediately).
+
+Cluster structure follows the same rule: one bound call concurrently lists
+Services, Pods, Ingresses, ReplicaSets and metadata-only Nodes/Namespaces, then
+joins selectors and owner chains in memory. It must never list per Service or per
+workload. The existing traffic join is shared so topology semantics cannot drift.
 
 ## Rule 3 — metadata-only where a number or a name is enough
 

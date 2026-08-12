@@ -95,6 +95,7 @@ import {
     CustomKinds,
     ListCustom,
     NetworkFlows,
+    ClusterStructure,
     AskAboutResource,
     AIResourceContext,
     GetAIStatus,
@@ -135,6 +136,7 @@ import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime';
 
 const PAGE_TITLES = {
     overview: 'Overview',
+    structure: 'Cluster structure',
     nodes: 'Nodes',
     namespaces: 'Namespaces',
     sizing: 'Right-sizing',
@@ -166,6 +168,7 @@ const PAGE_TITLES = {
 
 const PAGE_SUBTITLES = {
     overview: 'Live health and capacity across the connected cluster.',
+    structure: 'Debug how entry points, services, workloads, and pods connect across the cluster.',
     nodes: 'Inspect cluster machines, readiness, versions, and scheduled workloads.',
     namespaces: 'Browse logical scopes and the resources running inside them.',
     sizing: 'Compare requested resources with live usage and find waste or risk.',
@@ -196,6 +199,7 @@ const PAGE_SUBTITLES = {
 };
 
 const NAMESPACED_VIEWS = new Set([
+    'structure',
     'pods', 'deployments', 'services', 'configmaps', 'secrets',
     'statefulsets', 'daemonsets', 'jobs', 'cronjobs', 'ingresses', 'pvcs', 'serviceaccounts',
     'roles', 'rolebindings', 'helm', 'resourcequotas', 'limitranges',
@@ -513,6 +517,9 @@ $('namespace-select').addEventListener('change', (e) => {
 });
 
 $('btn-refresh').addEventListener('click', () => { loadSidebarCounts(); refreshCurrentView(); });
+$('btn-cluster-structure').addEventListener('click', () => selectView(currentView === 'structure' ? 'overview' : 'structure'));
+$('structure-filter').addEventListener('input', applyStructureFilter);
+$('structure-only-unhealthy').addEventListener('change', applyStructureFilter);
 
 // ---- Custom-resource sections (built from the cluster's CRDs) ----
 //
@@ -606,7 +613,12 @@ function selectView(view) {
     $('page-subtitle').textContent = PAGE_SUBTITLES[view]
         ?? (String(view).startsWith('custom:') ? 'Browse this custom API and inspect its live resources.' : 'Browse and manage live cluster resources.');
     const navItem = document.querySelector(`.nav-item[data-view="${view}"]`);
-    $('page-eyebrow').textContent = navItem?.closest('.nav-section')?.querySelector('.nav-group span')?.textContent ?? 'Workspace';
+    $('page-eyebrow').textContent = view === 'structure'
+        ? 'Cluster'
+        : (navItem?.closest('.nav-section')?.querySelector('.nav-group span')?.textContent ?? 'Workspace');
+    const structureButton = $('btn-cluster-structure');
+    structureButton.hidden = view !== 'overview' && view !== 'structure';
+    structureButton.querySelector('span:last-child').textContent = view === 'structure' ? 'Back to overview' : 'Cluster structure';
     const createKind = VIEW_KIND[view];
     $('btn-create').hidden = !createKind;
     // Warm the permission probe for this view's kind — the row menus opened from
@@ -624,7 +636,7 @@ function selectView(view) {
         });
     }
     // The instant filter applies to table views only (not the dashboard-style views).
-    const hasTable = view !== 'overview' && view !== 'traffic' && view !== 'sizing';
+    const hasTable = view !== 'overview' && view !== 'structure' && view !== 'traffic' && view !== 'sizing';
     $('view-search').hidden = !hasTable;
     $('view-filter').value = '';
     updateNsScope();
@@ -661,13 +673,26 @@ function refreshCurrentView() {
 
 function clearRenderedView(view = currentView) {
     document.querySelectorAll(`#${viewSectionId(view)} tbody`).forEach((body) => { body.innerHTML = ''; });
+    // These dashboard canvases contain actionable buttons rather than table
+    // rows. Remove the previous owner immediately so a slow cluster/namespace
+    // response cannot leave a clickable topology from the old scope.
+    if (view === 'overview') {
+        $('node-status').innerHTML = '';
+        $('node-status-total').textContent = '';
+    }
+    if (view === 'structure') {
+        for (const id of ['structure-summary', 'structure-entries', 'structure-internal', 'structure-unexposed']) $(id).innerHTML = '';
+        $('structure-warnings').hidden = true;
+        $('structure-updated').textContent = '';
+        resetStructureInspector();
+    }
 }
 
 // Instant client-side filter over the current view's table rows.
 $('view-filter').addEventListener('input', filterCurrentTable);
 
 function filterCurrentTable() {
-    if (currentView === 'overview') { $('view-count').textContent = ''; return; }
+    if (currentView === 'overview' || currentView === 'structure') { $('view-count').textContent = ''; return; }
     const body = document.querySelector(`#${viewSectionId(currentView)} tbody`);
     if (!body) { $('view-count').textContent = ''; return; }
     const term = $('view-filter').value.trim().toLowerCase();
@@ -685,6 +710,7 @@ function doRefresh(scope) {
     if (String(scope.view).startsWith('custom:')) return loadCustom(scope);
     switch (scope.view) {
         case 'overview': return loadOverview(scope);
+        case 'structure': return loadClusterStructure(scope);
         case 'nodes': return loadNodes(scope);
         case 'namespaces': return loadNamespaces(scope);
         case 'sizing': return loadSizing(scope);
@@ -880,14 +906,16 @@ function loadOverview(scope) {
                 openDrawer({ kind: 'Pod', namespace: pod.namespace, name: pod.name, isPod: true, tab: 'ai' });
             };
 
-            renderNodeMetrics(snapshot?.nodeMetrics ?? []);
+            renderCapacityMetrics(snapshot?.nodeMetrics ?? []);
+            renderNodeStatus(snapshot?.nodeStatus ?? []);
             renderTopPods(snapshot?.topPods ?? []);
             renderRecentEvents(snapshot?.events ?? []);
         })
         .catch((err) => {
             if (!isCurrentViewRequest(scope)) return;
             updateClusterHealth(null, []);
-            renderNodeMetrics([]);
+            renderCapacityMetrics([]);
+            renderNodeStatus([]);
             renderTopPods([]);
             renderRecentEvents([]);
             showDashError(err);
@@ -950,32 +978,52 @@ function renderRecentEvents(events) {
     }
 }
 
-function renderNodeMetrics(metrics) {
-    const box = $('node-metrics');
-    const hint = $('node-metrics-hint');
-    const total = $('node-metrics-total');
+function renderCapacityMetrics(metrics) {
     if (!metrics || metrics.length === 0) {
-        box.innerHTML = '';
-        total.textContent = '';
-        hint.hidden = false;
         updateCapacitySummary(null);
         return;
     }
-    hint.hidden = true;
-
-    // Cluster-wide first: with a dozen nodes the per-node cards answer
-    // "which node is hot", but not "how much room is left overall".
     const sum = metrics.reduce((a, m) => ({
         cpu: a.cpu + (m.cpuMilli || 0), cpuCap: a.cpuCap + (m.cpuCapacity || 0),
         mem: a.mem + (m.memMi || 0), memCap: a.memCap + (m.memCapacity || 0),
     }), { cpu: 0, cpuCap: 0, mem: 0, memCap: 0 });
     updateCapacitySummary(metrics, sum);
-    total.textContent = `${metrics.length} nodes · CPU ${pct(sum.cpu, sum.cpuCap)}% of ${fmtCores(sum.cpuCap)} cores`
-        + ` · Memory ${pct(sum.mem, sum.memCap)}% of ${fmtMem(sum.memCap)}`;
+}
 
-    box.innerHTML = metrics.map(nodeUsageCard).join('');
-    box.querySelectorAll('.nm-name').forEach((el) => {
-        el.addEventListener('click', () => openDrawer({ kind: 'Node', namespace: '', name: el.dataset.name }));
+function renderNodeStatus(nodes) {
+    const box = $('node-status');
+    const empty = $('node-status-empty');
+    const total = $('node-status-total');
+    box.innerHTML = '';
+    empty.hidden = (nodes?.length ?? 0) > 0;
+    if (!nodes?.length) {
+        total.textContent = '';
+        return;
+    }
+    const troubled = nodes.filter((node) => !node.ready || !node.schedulable || (node.pressure?.length ?? 0) > 0).length;
+    total.textContent = troubled > 0
+        ? `${nodes.length} nodes · ${troubled} need attention`
+        : `${nodes.length} nodes · all operational`;
+    box.innerHTML = nodes.map((node) => {
+        const pressure = node.pressure?.length
+            ? node.pressure.map((signal) => `<span class="node-signal node-signal-bad">${esc(signal.replace('Pressure', ' pressure'))}</span>`).join('')
+            : '<span class="node-signal">No pressure</span>';
+        const unhealthy = !node.ready || (node.pressure?.length ?? 0) > 0;
+        return `<article class="node-status-card${unhealthy ? ' node-status-card-bad' : ''}">
+            <header>
+                <button class="node-status-name" type="button" data-name="${esc(node.name)}">${nodeNameHtml(node.name)}</button>
+                ${badge(node.ready ? 'Ready' : 'Not ready', node.ready)}
+            </header>
+            <div class="node-status-facts">
+                <span><strong>${node.pods ?? 0}</strong> scheduled pods</span>
+                <span class="${node.schedulable ? '' : 'node-fact-warn'}">${node.schedulable ? 'Schedulable' : 'Scheduling disabled'}</span>
+                <span class="mono">${esc(node.version || 'version unknown')}</span>
+            </div>
+            <div class="node-signals">${pressure}</div>
+        </article>`;
+    }).join('');
+    box.querySelectorAll('.node-status-name').forEach((button) => {
+        button.addEventListener('click', () => openDrawer({ kind: 'Node', namespace: '', name: button.dataset.name }));
     });
 }
 
@@ -1014,34 +1062,6 @@ function setCapacityState(bar, value) {
     const progress = bar.querySelector('[role="progressbar"]');
     if (value === null) progress.removeAttribute('aria-valuenow');
     else progress.setAttribute('aria-valuenow', String(Math.min(value, 100)));
-}
-
-function nodeUsageCard(m) {
-    const cpuPct = pct(m.cpuMilli, m.cpuCapacity);
-    const memPct = pct(m.memMi, m.memCapacity);
-    const hot = Math.max(cpuPct, memPct) >= 90 ? ' nm-node-hot' : '';
-    return `<article class="nm-node${hot}">
-        <button type="button" class="nm-name" data-name="${esc(m.name)}" title="${esc(m.name)}">${nodeNameHtml(m.name)}</button>
-        <div class="nm-meters">
-            ${meter('CPU', cpuPct, `${fmtCores(m.cpuMilli)} / ${fmtCores(m.cpuCapacity)} cores`)}
-            ${meter('Memory', memPct, `${fmtMem(m.memMi)} / ${fmtMem(m.memCapacity)}`)}
-        </div>
-    </article>`;
-}
-
-// One usage meter: label, percentage, bar, absolute values.
-function meter(label, value, valText) {
-    // Thresholds, not a gradient: a node at 71% and one at 88% should look
-    // different at a glance, and only real pressure should read as red.
-    const level = value >= 90 ? 'crit' : (value >= 70 ? 'warn' : 'ok');
-    return `<div class="nm-meter nm-lvl-${level}">
-        <div class="nm-meter-head">
-            <span class="nm-meter-label">${esc(label)}</span>
-            <span class="nm-meter-pct">${value}%</span>
-        </div>
-        <div class="nm-track"><div class="nm-fill" style="width:${Math.min(value, 100)}%"></div></div>
-        <div class="nm-meter-val">${esc(valText)}</div>
-    </div>`;
 }
 
 // Cloud node names share a long generated prefix and differ only in the last
@@ -1579,6 +1599,188 @@ function setNamespaceScope(ns) {
         updateNsScope();
         loadSidebarCounts({ includeCluster: false });
     }
+}
+
+// ============ Cluster structure (Entry point → Service → Workload → Pod) ============
+
+let structureReqId = 0;
+
+function loadClusterStructure(scope) {
+    const reqId = ++structureReqId;
+    resetStructureInspector();
+    return ClusterStructure(scope.namespace || '')
+        .then((snapshot) => {
+            if (reqId !== structureReqId || !isCurrentViewRequest(scope)) return;
+            renderStructureSummary(snapshot);
+            const warnings = snapshot?.warnings ?? [];
+            $('structure-warnings').hidden = warnings.length === 0;
+            $('structure-warnings').textContent = warnings.length ? `Partial snapshot: ${warnings.join(' · ')}` : '';
+
+            const entries = snapshot?.entries ?? [];
+            const internal = snapshot?.internal ?? [];
+            const unexposed = snapshot?.unexposed ?? [];
+            $('structure-entries').innerHTML = entries.flatMap(structureEntryPaths).join('');
+            $('structure-internal').innerHTML = internal.flatMap((service) => structureServicePaths(service, null)).join('');
+            $('structure-unexposed').innerHTML = unexposed.map((workload) => structureWorkloadPath(workload)).join('');
+            $('structure-internal-count').textContent = String(internal.length);
+            $('structure-unexposed-count').textContent = String(unexposed.length);
+            $('structure-internal-section').hidden = internal.length === 0;
+            $('structure-unexposed-section').hidden = unexposed.length === 0;
+            $('structure-updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+            wireStructureNodes();
+            applyStructureFilter();
+        })
+        .catch((err) => {
+            if (reqId !== structureReqId || !isCurrentViewRequest(scope)) return;
+            $('structure-summary').innerHTML = '';
+            $('structure-entries').innerHTML = '';
+            $('structure-internal').innerHTML = '';
+            $('structure-unexposed').innerHTML = '';
+            $('structure-updated').textContent = '';
+            showDashError(err);
+        });
+}
+
+function renderStructureSummary(snapshot) {
+    const summary = snapshot?.summary ?? {};
+    const tiles = [
+        { n: summary.nodes ?? 0, label: 'Nodes', hint: 'cluster machines' },
+        { n: summary.namespaces ?? 0, label: 'Namespaces', hint: snapshot?.scope ? 'cluster total' : 'visible scopes' },
+        { n: summary.pods ?? 0, label: 'Pods', hint: snapshot?.scope ? `in ${snapshot.scope}` : 'live across cluster' },
+        { n: summary.unhealthy ?? 0, label: 'Unhealthy', hint: 'not ready or failing', bad: true },
+    ];
+    $('structure-summary').innerHTML = tiles.map((tile) => `<article class="structure-stat${tile.bad && tile.n > 0 ? ' structure-stat-bad' : ''}">
+        <strong>${tile.n}</strong><span>${esc(tile.label)}</span><small>${esc(tile.hint)}</small>
+    </article>`).join('');
+}
+
+function structureEntryPaths(entry) {
+    if (!(entry.services?.length)) {
+        return [structurePath({ entry, problem: true, search: structureSearch(entry) })];
+    }
+    return entry.services.flatMap((service) => structureServicePaths(service, entry));
+}
+
+function structureServicePaths(service, entry) {
+    const workloads = service.workloads ?? [];
+    if (workloads.length === 0) {
+        return [structurePath({ entry, service, problem: true, search: `${structureSearch(entry)} ${structureSearch(service)}` })];
+    }
+    return workloads.map((workload) => structurePath({
+        entry, service, workload,
+        problem: !!entry?.warning || !!service.warning || !!workload.isError,
+        search: `${structureSearch(entry)} ${structureSearch(service)} ${structureSearch(workload)} ${(workload.pods ?? []).map(structureSearch).join(' ')}`,
+    }));
+}
+
+function structureWorkloadPath(workload) {
+    return structurePath({
+        workload, problem: !!workload.isError,
+        search: `${structureSearch(workload)} ${(workload.pods ?? []).map(structureSearch).join(' ')}`,
+    });
+}
+
+function structurePath({ entry, service, workload, problem, search }) {
+    const entryNode = entry
+        ? structureNode(entry.refKind || entry.kind, entry.name, entry.namespace, entry.warning || 'Routing', !!entry.warning, { label: entry.kind })
+        : '<span class="structure-lane-empty">Internal</span>';
+    const serviceNode = service
+        ? structureNode('Service', service.name, service.namespace, service.warning || service.type || 'Service', !!service.warning, { label: 'Service' })
+        : '<span class="structure-lane-empty">No Service</span>';
+    const workloadNode = workload
+        ? structureNode(workload.kind, workload.name, workload.namespace, workload.status, !!workload.isError, { label: workload.kind })
+        : '<span class="structure-void">No matching workload</span>';
+    const podNodes = workload?.pods?.length
+        ? workload.pods.map((pod) => structureNode('Pod', pod.name, pod.namespace, `${pod.ready} · ${pod.status}`, !!pod.isError, {
+            label: 'Pod', node: pod.node, restarts: pod.restarts, isPod: true,
+        })).join('')
+        : '<span class="structure-void">No live pods</span>';
+    return `<article class="structure-path${problem ? ' structure-path-bad' : ''}" data-problem="${problem ? '1' : '0'}" data-search="${esc(search)}">
+        <div class="structure-lane">${entryNode}</div><span class="structure-arrow" aria-hidden="true">→</span>
+        <div class="structure-lane">${serviceNode}</div><span class="structure-arrow" aria-hidden="true">→</span>
+        <div class="structure-lane">${workloadNode}</div><span class="structure-arrow" aria-hidden="true">→</span>
+        <div class="structure-lane structure-pods">${podNodes}</div>
+    </article>`;
+}
+
+function structureNode(kind, name, namespace, status, isError, extra = {}) {
+    const bare = String(extra.label || kind).split('.')[0];
+    return `<button type="button" class="structure-node${isError ? ' structure-node-bad' : ''}"
+        data-kind="${esc(kind)}" data-name="${esc(name)}" data-namespace="${esc(namespace || '')}"
+        data-status="${esc(status || '')}" data-node="${esc(extra.node || '')}" data-restarts="${extra.restarts ?? ''}" data-pod="${extra.isPod ? '1' : '0'}">
+        <span class="structure-node-kind">${esc(bare)}</span>
+        <strong title="${esc(name)}">${esc(name)}</strong>
+        ${status ? `<small>${esc(status)}</small>` : ''}
+    </button>`;
+}
+
+function structureSearch(resource) {
+    if (!resource) return '';
+    return [resource.kind, resource.name, resource.namespace, resource.status, resource.warning, resource.node].filter(Boolean).join(' ');
+}
+
+function wireStructureNodes() {
+    document.querySelectorAll('#view-structure .structure-node').forEach((button) => {
+        button.addEventListener('click', () => {
+            document.querySelectorAll('#view-structure .structure-node').forEach((node) => node.classList.toggle('selected', node === button));
+            const ref = {
+                kind: button.dataset.kind, name: button.dataset.name, namespace: button.dataset.namespace,
+                isPod: button.dataset.pod === '1',
+            };
+            showStructureInspector(ref, {
+                status: button.dataset.status, node: button.dataset.node, restarts: button.dataset.restarts,
+                isError: button.classList.contains('structure-node-bad'),
+            });
+        });
+    });
+}
+
+function resetStructureInspector() {
+    $('structure-inspector-empty').hidden = false;
+    $('structure-inspector-content').hidden = true;
+    $('structure-inspector-content').innerHTML = '';
+}
+
+function showStructureInspector(ref, detail) {
+    $('structure-inspector-empty').hidden = true;
+    const content = $('structure-inspector-content');
+    content.hidden = false;
+    content.innerHTML = `<div class="structure-inspector-head">
+            <span class="structure-inspector-kind">${esc(String(ref.kind).split('.')[0])}</span>
+            ${badge(detail.status || (detail.isError ? 'Needs attention' : 'Healthy'), !detail.isError)}
+        </div>
+        <h3 title="${esc(ref.name)}">${esc(ref.name)}</h3>
+        <p class="mono structure-inspector-ns">${esc(ref.namespace || 'cluster-scoped')}</p>
+        <dl class="structure-inspector-facts">
+            ${detail.status ? `<div><dt>Status</dt><dd>${esc(detail.status)}</dd></div>` : ''}
+            ${detail.node ? `<div><dt>Node</dt><dd>${esc(detail.node)}</dd></div>` : ''}
+            ${detail.restarts !== '' ? `<div><dt>Restarts</dt><dd>${esc(detail.restarts)}</dd></div>` : ''}
+        </dl>
+        <div class="structure-inspector-actions">
+            <button id="structure-open-detail" class="btn btn-primary btn-sm">Open full details</button>
+            ${ref.isPod ? '<button id="structure-open-logs" class="btn btn-secondary btn-sm">View logs</button>' : ''}
+        </div>`;
+    $('structure-open-detail').addEventListener('click', () => openDrawer(ref));
+    if (ref.isPod) $('structure-open-logs').addEventListener('click', () => openDrawer({ ...ref, tab: 'logs' }));
+}
+
+function applyStructureFilter() {
+    const term = $('structure-filter').value.trim().toLowerCase();
+    const onlyProblems = $('structure-only-unhealthy').checked;
+    const paths = [...document.querySelectorAll('#view-structure .structure-path')];
+    let visible = 0;
+    for (const path of paths) {
+        const matches = (!term || path.dataset.search.toLowerCase().includes(term))
+            && (!onlyProblems || path.dataset.problem === '1');
+        path.hidden = !matches;
+        if (matches) visible++;
+    }
+    for (const sectionId of ['structure-internal-section', 'structure-unexposed-section']) {
+        const section = $(sectionId);
+        const hasVisible = [...section.querySelectorAll('.structure-path')].some((path) => !path.hidden);
+        section.hidden = !hasVisible;
+    }
+    $('structure-empty').hidden = visible > 0;
 }
 
 // ============ Traffic view (Ingress → Service → Pod) ============

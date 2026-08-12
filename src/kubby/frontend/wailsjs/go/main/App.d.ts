@@ -27,6 +27,8 @@ export function ChartDetails(arg1:string,arg2:string):Promise<k8sclient.ChartDet
 
 export function ClusterEvents(arg1:number):Promise<Array<k8sclient.EventInfo>>;
 
+export function ClusterStructure(arg1:string):Promise<k8sclient.ClusterStructureData>;
+
 export function ConnectWithContent(arg1:string,arg2:string):Promise<void>;
 
 export function ConnectWithPath(arg1:string,arg2:string):Promise<void>;

@@ -327,3 +327,12 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   lists, metadata-only counts, partial-section warnings, and a 30-second sidebar
   live TTL. Synthetic 10,000-Pod backend processing measured about 33 ms/op and
   54.6 MB/op on the development machine.
+- [2026-08-12] Overview repeated the same CPU/memory story in Cluster pulse and
+  Node usage, so a one-node cluster displayed nearly identical values twice while
+  hiding the node signals needed for debugging. Cause: both sections rendered the
+  same `NodeMetrics` payload at different aggregation levels. Fix: Cluster pulse
+  remains the single capacity owner; the lower section now derives readiness,
+  schedulability, pressure, pod count and kubelet version from the Node/Pod lists
+  already present in `OverviewSnapshot`. A separate Cluster structure view adds the
+  complete Entry point → Service → Workload → Pod debug path without per-resource
+  API fan-out, retaining internal Services and unexposed workloads.

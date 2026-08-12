@@ -36,12 +36,25 @@ type OverviewStats struct {
 // section-local failures: one forbidden or unavailable API must not blank the
 // remaining dashboard.
 type OverviewData struct {
-	Stats       OverviewStats `json:"stats"`
-	FailingPods []PodInfo     `json:"failingPods"`
-	NodeMetrics []NodeMetric  `json:"nodeMetrics"`
-	TopPods     []PodMetric   `json:"topPods"`
-	Events      []EventInfo   `json:"events"`
-	Warnings    []string      `json:"warnings"`
+	Stats       OverviewStats        `json:"stats"`
+	FailingPods []PodInfo            `json:"failingPods"`
+	NodeMetrics []NodeMetric         `json:"nodeMetrics"`
+	NodeStatus  []OverviewNodeStatus `json:"nodeStatus"`
+	TopPods     []PodMetric          `json:"topPods"`
+	Events      []EventInfo          `json:"events"`
+	Warnings    []string             `json:"warnings"`
+}
+
+// OverviewNodeStatus keeps the infrastructure section operational: readiness,
+// scheduling and pressure are more useful for debugging than repeating the CPU
+// and memory utilization already shown in Cluster pulse.
+type OverviewNodeStatus struct {
+	Name        string   `json:"name"`
+	Ready       bool     `json:"ready"`
+	Schedulable bool     `json:"schedulable"`
+	Pods        int      `json:"pods"`
+	Pressure    []string `json:"pressure"`
+	Version     string   `json:"version"`
 }
 
 type overviewTask struct {
@@ -151,6 +164,9 @@ func OverviewSnapshot(ctx context.Context, c *Cluster) (*OverviewData, error) {
 	if nodes != nil && nodeUsage != nil {
 		result.NodeMetrics = nodeMetricsFrom(nodes.Items, nodeUsage.Items)
 	}
+	if nodes != nil {
+		result.NodeStatus = overviewNodeStatuses(nodes.Items, pods)
+	}
 	if podUsage != nil {
 		result.TopPods = topLivePodMetrics(podUsage.Items, pods, overviewTopPods)
 	}
@@ -158,6 +174,39 @@ func OverviewSnapshot(ctx context.Context, c *Cluster) (*OverviewData, error) {
 		result.Events = recentEventInfos(events.Items, overviewRecentEvents)
 	}
 	return result, nil
+}
+
+func overviewNodeStatuses(nodes []corev1.Node, pods *corev1.PodList) []OverviewNodeStatus {
+	podCounts := map[string]int{}
+	if pods != nil {
+		for i := range pods.Items {
+			pod := &pods.Items[i]
+			if pod.DeletionTimestamp == nil && pod.Spec.NodeName != "" {
+				podCounts[pod.Spec.NodeName]++
+			}
+		}
+	}
+	out := make([]OverviewNodeStatus, 0, len(nodes))
+	for i := range nodes {
+		node := &nodes[i]
+		status := OverviewNodeStatus{
+			Name: node.Name, Schedulable: !node.Spec.Unschedulable,
+			Pods: podCounts[node.Name], Pressure: []string{}, Version: node.Status.NodeInfo.KubeletVersion,
+		}
+		for _, condition := range node.Status.Conditions {
+			switch condition.Type {
+			case corev1.NodeReady:
+				status.Ready = condition.Status == corev1.ConditionTrue
+			case corev1.NodeMemoryPressure, corev1.NodeDiskPressure, corev1.NodePIDPressure, corev1.NodeNetworkUnavailable:
+				if condition.Status == corev1.ConditionTrue {
+					status.Pressure = append(status.Pressure, string(condition.Type))
+				}
+			}
+		}
+		out = append(out, status)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 func runOverviewTasks(ctx context.Context, tasks []overviewTask) []string {

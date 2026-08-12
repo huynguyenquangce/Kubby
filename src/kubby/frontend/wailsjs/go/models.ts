@@ -250,6 +250,208 @@ export namespace k8sclient {
 	        this.age = source["age"];
 	    }
 	}
+	export class StructurePod {
+	    name: string;
+	    namespace: string;
+	    status: string;
+	    ready: string;
+	    restarts: number;
+	    node: string;
+	    isError: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new StructurePod(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.namespace = source["namespace"];
+	        this.status = source["status"];
+	        this.ready = source["ready"];
+	        this.restarts = source["restarts"];
+	        this.node = source["node"];
+	        this.isError = source["isError"];
+	    }
+	}
+	export class StructureWorkload {
+	    kind: string;
+	    name: string;
+	    namespace: string;
+	    status: string;
+	    isError: boolean;
+	    pods: StructurePod[];
+	
+	    static createFrom(source: any = {}) {
+	        return new StructureWorkload(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.name = source["name"];
+	        this.namespace = source["namespace"];
+	        this.status = source["status"];
+	        this.isError = source["isError"];
+	        this.pods = this.convertValues(source["pods"], StructurePod);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class StructureService {
+	    name: string;
+	    namespace: string;
+	    type: string;
+	    routes: string[];
+	    warning: string;
+	    workloads: StructureWorkload[];
+	
+	    static createFrom(source: any = {}) {
+	        return new StructureService(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.namespace = source["namespace"];
+	        this.type = source["type"];
+	        this.routes = source["routes"];
+	        this.warning = source["warning"];
+	        this.workloads = this.convertValues(source["workloads"], StructureWorkload);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class StructureEntry {
+	    kind: string;
+	    refKind: string;
+	    name: string;
+	    namespace: string;
+	    warning: string;
+	    services: StructureService[];
+	
+	    static createFrom(source: any = {}) {
+	        return new StructureEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.refKind = source["refKind"];
+	        this.name = source["name"];
+	        this.namespace = source["namespace"];
+	        this.warning = source["warning"];
+	        this.services = this.convertValues(source["services"], StructureService);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class StructureSummary {
+	    nodes: number;
+	    namespaces: number;
+	    pods: number;
+	    unhealthy: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new StructureSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.nodes = source["nodes"];
+	        this.namespaces = source["namespaces"];
+	        this.pods = source["pods"];
+	        this.unhealthy = source["unhealthy"];
+	    }
+	}
+	export class ClusterStructureData {
+	    scope: string;
+	    summary: StructureSummary;
+	    entries: StructureEntry[];
+	    internal: StructureService[];
+	    unexposed: StructureWorkload[];
+	    warnings: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ClusterStructureData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.scope = source["scope"];
+	        this.summary = this.convertValues(source["summary"], StructureSummary);
+	        this.entries = this.convertValues(source["entries"], StructureEntry);
+	        this.internal = this.convertValues(source["internal"], StructureService);
+	        this.unexposed = this.convertValues(source["unexposed"], StructureWorkload);
+	        this.warnings = source["warnings"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ConfigMapInfo {
 	    namespace: string;
 	    name: string;
@@ -501,8 +703,11 @@ export namespace k8sclient {
 	    namespace: string;
 	    status: string;
 	    ready: string;
+	    restarts: number;
 	    node: string;
 	    ip: string;
+	    ownerKind: string;
+	    ownerName: string;
 	    isError: boolean;
 	    isReady: boolean;
 	
@@ -516,8 +721,11 @@ export namespace k8sclient {
 	        this.namespace = source["namespace"];
 	        this.status = source["status"];
 	        this.ready = source["ready"];
+	        this.restarts = source["restarts"];
 	        this.node = source["node"];
 	        this.ip = source["ip"];
+	        this.ownerKind = source["ownerKind"];
+	        this.ownerName = source["ownerName"];
 	        this.isError = source["isError"];
 	        this.isReady = source["isReady"];
 	    }
@@ -1040,6 +1248,28 @@ export namespace k8sclient {
 	        this.memMi = source["memMi"];
 	    }
 	}
+	export class OverviewNodeStatus {
+	    name: string;
+	    ready: boolean;
+	    schedulable: boolean;
+	    pods: number;
+	    pressure: string[];
+	    version: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new OverviewNodeStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.ready = source["ready"];
+	        this.schedulable = source["schedulable"];
+	        this.pods = source["pods"];
+	        this.pressure = source["pressure"];
+	        this.version = source["version"];
+	    }
+	}
 	export class PodInfo {
 	    namespace: string;
 	    name: string;
@@ -1094,6 +1324,7 @@ export namespace k8sclient {
 	    stats: OverviewStats;
 	    failingPods: PodInfo[];
 	    nodeMetrics: NodeMetric[];
+	    nodeStatus: OverviewNodeStatus[];
 	    topPods: PodMetric[];
 	    events: EventInfo[];
 	    warnings: string[];
@@ -1107,6 +1338,7 @@ export namespace k8sclient {
 	        this.stats = this.convertValues(source["stats"], OverviewStats);
 	        this.failingPods = this.convertValues(source["failingPods"], PodInfo);
 	        this.nodeMetrics = this.convertValues(source["nodeMetrics"], NodeMetric);
+	        this.nodeStatus = this.convertValues(source["nodeStatus"], OverviewNodeStatus);
 	        this.topPods = this.convertValues(source["topPods"], PodMetric);
 	        this.events = this.convertValues(source["events"], EventInfo);
 	        this.warnings = source["warnings"];
@@ -1130,6 +1362,7 @@ export namespace k8sclient {
 		    return a;
 		}
 	}
+	
 	
 	export class PVCInfo {
 	    namespace: string;
@@ -1534,6 +1767,10 @@ export namespace k8sclient {
 	        this.age = source["age"];
 	    }
 	}
+	
+	
+	
+	
 
 }
 

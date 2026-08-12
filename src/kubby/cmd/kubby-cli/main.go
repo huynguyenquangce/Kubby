@@ -92,6 +92,32 @@ func main() {
 	}
 	root.AddCommand(overviewCmd)
 
+	var structureNamespace string
+	structureCmd := &cobra.Command{
+		Use:   "structure",
+		Short: "Kiểm tra topology Entry point → Service → Workload → Pod (read-only)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			started := time.Now()
+			structure, err := k8sclient.ClusterStructure(context.Background(), cluster, structureNamespace)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%d entry points, %d internal services, %d unexposed workloads · %d pods, %d unhealthy · %s\n",
+				len(structure.Entries), len(structure.Internal), len(structure.Unexposed),
+				structure.Summary.Pods, structure.Summary.Unhealthy, time.Since(started).Round(time.Millisecond))
+			for _, warning := range structure.Warnings {
+				fmt.Printf("warning: %s\n", warning)
+			}
+			return nil
+		},
+	}
+	structureCmd.Flags().StringVarP(&structureNamespace, "namespace", "n", "", "namespace (rỗng = toàn cluster)")
+	root.AddCommand(structureCmd)
+
 	getCmd := &cobra.Command{Use: "get", Short: "Xem resource trong cluster"}
 
 	var podsNamespace string

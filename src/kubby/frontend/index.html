@@ -273,10 +273,15 @@
                     </div>
                     <p id="page-subtitle">Live health and capacity across the connected cluster.</p>
                 </div>
-                <div id="view-search" class="view-search" hidden>
-                    <svg class="view-search-ico"><use href="#i-search"/></svg>
-                    <input id="view-filter" type="text" placeholder="Filter this view…" autocomplete="off" spellcheck="false">
-                    <span id="view-count" class="view-count"></span>
+                <div class="page-heading-actions">
+                    <button id="btn-cluster-structure" class="btn btn-secondary btn-icon" type="button" hidden>
+                        <span class="structure-button-icon" aria-hidden="true">⌘</span><span>Cluster structure</span>
+                    </button>
+                    <div id="view-search" class="view-search" hidden>
+                        <svg class="view-search-ico"><use href="#i-search"/></svg>
+                        <input id="view-filter" type="text" placeholder="Filter this view…" autocomplete="off" spellcheck="false">
+                        <span id="view-count" class="view-count"></span>
+                    </div>
                 </div>
             </section>
 
@@ -334,9 +339,9 @@
                     </div>
 
                     <section class="overview-section overview-node-section">
-                        <header class="overview-section-head"><div><span class="overview-eyebrow">Infrastructure</span><h3>Node usage</h3><p>Live CPU and memory pressure by machine.</p></div><span class="nm-total" id="node-metrics-total"></span></header>
-                        <div id="node-metrics" class="node-metrics"></div>
-                        <p class="empty-inline" id="node-metrics-hint" hidden>metrics-server is not installed — install it to see live CPU/memory usage.</p>
+                        <header class="overview-section-head"><div><span class="overview-eyebrow">Infrastructure</span><h3>Node status</h3><p>Readiness, scheduling and pressure signals by machine.</p></div><span class="nm-total" id="node-status-total"></span></header>
+                        <div id="node-status" class="node-status-grid"></div>
+                        <p class="empty-inline" id="node-status-empty" hidden>No node status is available for this connection.</p>
                     </section>
 
                     <div class="overview-grid">
@@ -361,6 +366,40 @@
                             <tbody id="overview-events-body"></tbody></table>
                         <p class="overview-empty" id="overview-events-empty" hidden><span>—</span><strong>No recent events</strong><small>The cluster has not reported new activity.</small></p></div>
                     </section>
+                </section>
+
+                <!-- Whole-cluster debug topology: Entry point → Service → Workload → Pod. -->
+                <section id="view-structure" class="view structure-view" hidden>
+                    <div id="structure-summary" class="structure-summary"></div>
+                    <p id="structure-warnings" class="structure-warning" hidden></p>
+                    <div class="structure-toolbar">
+                        <div class="flow-search structure-search">
+                            <svg class="ico"><use href="#i-search"/></svg>
+                            <input id="structure-filter" type="text" class="no-enter-submit" placeholder="Filter entry points, services, workloads or pods…">
+                        </div>
+                        <label class="flow-toggle"><input type="checkbox" id="structure-only-unhealthy"><span>Only unhealthy paths</span></label>
+                        <span id="structure-updated" class="flow-updated"></span>
+                    </div>
+                    <div class="structure-layout">
+                        <div class="structure-map">
+                            <div class="structure-lane-head" aria-hidden="true"><span>Entry point</span><span>Service</span><span>Workload</span><span>Pod</span></div>
+                            <div id="structure-entries" class="structure-stack"></div>
+                            <section id="structure-internal-section" class="structure-group">
+                                <header><div><span class="overview-eyebrow">Internal traffic</span><h3>Services without an entry point</h3></div><span id="structure-internal-count" class="section-count"></span></header>
+                                <div id="structure-internal" class="structure-stack"></div>
+                            </section>
+                            <section id="structure-unexposed-section" class="structure-group">
+                                <header><div><span class="overview-eyebrow">No service selector</span><h3>Unexposed workloads</h3></div><span id="structure-unexposed-count" class="section-count"></span></header>
+                                <div id="structure-unexposed" class="structure-stack"></div>
+                            </section>
+                            <p id="structure-empty" class="flow-empty" hidden><strong>No matching paths.</strong>Change the filter or include healthy resources.</p>
+                        </div>
+                        <aside id="structure-inspector" class="structure-inspector">
+                            <span class="overview-eyebrow">Debug inspector</span>
+                            <div id="structure-inspector-empty" class="structure-inspector-empty"><span aria-hidden="true">⌁</span><strong>Select any resource</strong><p>Inspect its identity and live health, then open full details when needed.</p></div>
+                            <div id="structure-inspector-content" hidden></div>
+                        </aside>
+                    </div>
                 </section>
 
                 <!-- Nodes -->

@@ -464,7 +464,7 @@ input:focus { outline: none; border-color: #8fb0ff; box-shadow: 0 0 0 3px var(--
 .overview-empty > span { display: grid; place-items: center; width: 30px; height: 30px; margin-bottom: 0.5rem; border-radius: 9px; background: var(--ok-bg); color: var(--ok); font-weight: 750; }
 .overview-empty strong { color: var(--ink); font-size: 0.76rem; }
 .overview-empty small { margin-top: 0.14rem; font-size: 0.65rem; }
-.overview-node-section .node-metrics { padding-top: 0.8rem; }
+.overview-node-section .node-status-grid { padding-top: 0.8rem; }
 .overview-node-section .empty-inline { margin: 0; padding: 1.5rem 1rem; }
 .nm-total { max-width: 55%; text-align: right; line-height: 1.35; }
 
@@ -482,17 +482,13 @@ th {
 }
 td { padding: 0.68rem 1rem; }
 tbody tr:hover { background: #f8faff; }
-.view:not(#view-overview) tbody tr:nth-child(even) { background: #fcfcfd; }
+.view:not(#view-overview):not(#view-structure) tbody tr:nth-child(even) { background: #fcfcfd; }
 tbody tr.clickable:hover { background: #f3f6ff; box-shadow: inset 3px 0 0 var(--blue); }
 tr.error-row { background: #fff8f8; }
 tr.error-row:hover { background: var(--err-bg); }
 .status-badge { border-radius: 6px; padding: 0.18rem 0.48rem; font-size: 0.7rem; }
 .status-badge::before { width: 6px; height: 6px; }
-.node-metrics { grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 0.7rem; padding: 0.45rem 1.1rem 1rem; }
-.nm-node { border-radius: 9px; padding: 0.75rem; background: #fbfcfe; }
-.nm-name { color: var(--ink); }
-.nm-track { background: #e8edf4; height: 6px; }
-.nm-fill { background: var(--blue); }
+.node-status-grid { grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 0.7rem; padding: 0.45rem 1.1rem 1rem; }
 
 /* Drawer, palette, dialogs, and editors remain fully functional but adopt B. */
 .drawer-backdrop { background: rgba(16, 24, 40, 0.22); backdrop-filter: blur(1px); }
@@ -532,11 +528,10 @@ tr.error-row:hover { background: var(--err-bg); }
 :root[data-theme="dark"] .rail-button.active,
 :root[data-theme="dark"] .nav-item.active { background: rgba(121, 164, 255, 0.13); color: var(--blue); }
 :root[data-theme="dark"] .command-search,
-:root[data-theme="dark"] .view-search,
-:root[data-theme="dark"] .nm-node { background: #202838; }
+:root[data-theme="dark"] .view-search { background: #202838; }
 :root[data-theme="dark"] .command-search:hover { background: #252f43; }
 :root[data-theme="dark"] th { background: #202838; }
-:root[data-theme="dark"] .view:not(#view-overview) tbody tr:nth-child(even) { background: #1f2735; }
+:root[data-theme="dark"] .view:not(#view-overview):not(#view-structure) tbody tr:nth-child(even) { background: #1f2735; }
 :root[data-theme="dark"] tbody tr:hover,
 :root[data-theme="dark"] tbody tr.clickable:hover { background: #252f43; }
 :root[data-theme="dark"] tr.error-row { background: var(--err-bg); }

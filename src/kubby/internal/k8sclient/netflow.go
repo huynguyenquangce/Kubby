@@ -23,8 +23,11 @@ type FlowPod struct {
 	Namespace string `json:"namespace"`
 	Status    string `json:"status"`
 	Ready     string `json:"ready"` // "1/1"
+	Restarts  int32  `json:"restarts"`
 	Node      string `json:"node"`
 	IP        string `json:"ip"`
+	OwnerKind string `json:"ownerKind"`
+	OwnerName string `json:"ownerName"`
 	IsError   bool   `json:"isError"`
 	IsReady   bool   `json:"isReady"` // all containers ready — i.e. actually serving
 }
@@ -84,8 +87,6 @@ type NetworkFlows struct {
 // Objects with a deletion timestamp are dropped — a deleted-but-still-finalizing
 // Ingress or Service must not keep showing up as live routing.
 func NetworkTopology(ctx context.Context, c *Cluster, namespace string) (*NetworkFlows, error) {
-	out := &NetworkFlows{Ingresses: []FlowIngress{}, Services: []FlowService{}, Scope: namespace}
-
 	svcList, err := c.Clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -98,6 +99,21 @@ func NetworkTopology(ctx context.Context, c *Cluster, namespace string) (*Networ
 	if err != nil {
 		return nil, err
 	}
+	return networkTopologyFromLists(ctx, c, namespace, svcList, podList, ingList), nil
+}
+
+// networkTopologyFromLists is shared by Traffic and Cluster structure. Keeping
+// the join separate lets the structure snapshot fetch all required kinds in
+// parallel while preserving exactly one List per core kind.
+func networkTopologyFromLists(
+	ctx context.Context,
+	c *Cluster,
+	namespace string,
+	svcList *corev1.ServiceList,
+	podList *corev1.PodList,
+	ingList *netv1.IngressList,
+) *NetworkFlows {
+	out := &NetworkFlows{Ingresses: []FlowIngress{}, Services: []FlowService{}, Scope: namespace}
 
 	svcByKey := map[string]*corev1.Service{}
 	for i := range svcList.Items {
@@ -110,6 +126,9 @@ func NetworkTopology(ctx context.Context, c *Cluster, namespace string) (*Networ
 	podsByNs := map[string][]*corev1.Pod{}
 	for i := range podList.Items {
 		pod := &podList.Items[i]
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
 		podsByNs[pod.Namespace] = append(podsByNs[pod.Namespace], pod)
 	}
 
@@ -165,7 +184,7 @@ func NetworkTopology(ctx context.Context, c *Cluster, namespace string) (*Networ
 			out.BrokenCount++
 		}
 	}
-	return out, nil
+	return out
 }
 
 func flowIngress(
@@ -287,10 +306,12 @@ func flowService(svc *corev1.Service, nsPods []*corev1.Pod, endpoints map[string
 		if !sel.Matches(labels.Set(pod.Labels)) {
 			continue
 		}
-		status, _, ready := podStatus(*pod)
+		status, restarts, ready := podStatus(*pod)
+		ownerKind, ownerName := podOwner(pod)
 		fp := FlowPod{
 			Name: pod.Name, Namespace: pod.Namespace, Status: status, Ready: ready,
-			Node: pod.Spec.NodeName, IP: pod.Status.PodIP,
+			Restarts: restarts, Node: pod.Spec.NodeName, IP: pod.Status.PodIP,
+			OwnerKind: ownerKind, OwnerName: ownerName,
 			IsError: erroredStatuses[status],
 			IsReady: status == string(corev1.PodRunning) && isFullyReady(ready),
 		}
@@ -309,6 +330,18 @@ func flowService(svc *corev1.Service, nsPods []*corev1.Pod, endpoints map[string
 		fs.Warning = "No Pod is ready — traffic here fails"
 	}
 	return fs
+}
+
+func podOwner(pod *corev1.Pod) (string, string) {
+	for _, owner := range pod.OwnerReferences {
+		if owner.Controller != nil && *owner.Controller {
+			return owner.Kind, owner.Name
+		}
+	}
+	if len(pod.OwnerReferences) > 0 {
+		return pod.OwnerReferences[0].Kind, pod.OwnerReferences[0].Name
+	}
+	return "Pod", pod.Name
 }
 
 // isFullyReady reports whether a "n/m" ready string has every container ready.

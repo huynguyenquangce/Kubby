@@ -840,6 +840,17 @@ func (a *App) NetworkFlows(namespace string) (*k8sclient.NetworkFlows, error) {
 	return k8sclient.NetworkTopology(a.ctx, cluster, namespace)
 }
 
+// ClusterStructure returns the debug topology in one bound call. The backend
+// owns the cross-resource joins so the WebView never talks to Kubernetes or
+// creates an N+1 request pattern.
+func (a *App) ClusterStructure(namespace string) (*k8sclient.ClusterStructureData, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.ClusterStructure(a.ctx, cluster, namespace)
+}
+
 // ---- FR-7: AI assistant (resource-scoped Q&A) ----
 
 func (a *App) GetAIConfig() AIConfigView {

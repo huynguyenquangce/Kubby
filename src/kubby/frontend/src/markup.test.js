@@ -57,6 +57,22 @@ test('overview loads through one snapshot binding', () => {
     assert.doesNotMatch(loader, /Promise\.all|\bListNodes\(|\bListNamespaces\(|\bListPods\(|\bListDeployments\(|\bNodeMetrics\(|\bTopPods\(|\bClusterEvents\(/);
 });
 
+test('overview avoids duplicate node usage and exposes a one-call cluster structure', () => {
+    const overview = indexHTML.match(/<section id="view-overview"[\s\S]*?<section id="view-structure"/)?.[0] ?? '';
+    assert.match(overview, /<h3>Node status<\/h3>/);
+    assert.doesNotMatch(overview, /<h3>Node usage<\/h3>|id="node-metrics"/);
+    for (const id of ['btn-cluster-structure', 'view-structure', 'structure-filter', 'structure-only-unhealthy', 'structure-inspector']) {
+        assert.match(indexHTML, new RegExp(`id="${id}"`));
+    }
+    const loader = mainJS.match(/function loadClusterStructure\(scope\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    assert.match(loader, /return ClusterStructure\(scope\.namespace \|\| ''\)/);
+    assert.doesNotMatch(loader, /Promise\.all|\bListServices\(|\bListPods\(|\bListIngresses\(/);
+    const clear = mainJS.match(/function clearRenderedView\(view = currentView\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    assert.match(clear, /view === 'structure'/);
+    assert.match(clear, /structure-entries/);
+    assert.match(clear, /resetStructureInspector\(\)/);
+});
+
 test('live logs use owned batches and a bounded buffer', () => {
     assert.match(mainJS, /EventsOn\('loglines'/);
     assert.match(mainJS, /new LineRingBuffer\(5000\)/);
