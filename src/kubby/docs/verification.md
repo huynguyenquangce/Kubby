@@ -22,6 +22,7 @@ cd ..
 | `internal/k8sclient/detail_test.go` | YAML Save cannot change kind, namespace, name, or cluster-scoped identity |
 | `internal/k8sclient/portforward_test.go` | concurrent/repeated tunnel close is idempotent and does not panic |
 | `app_portforward_test.go` | global tunnel registry preserves target metadata, lists deterministically, invalidates pending starts, and synchronizes List/Stop |
+| `app_connection_test.go` | duplicate context names retain stable independent IDs; registry switching is race-safe; pending exec/port-forward cannot survive drawer cancellation or cluster transitions |
 | `frontend/src/request-scope.test.js` | late view/drawer/modal responses cannot overwrite a newer owner; stale Helm/chart values cannot cross modal or version boundaries |
 | `frontend/src/port-forward-state.test.js` | hydration/upsert, closed-event removal, drawer-close policy, and late Start ownership |
 | `frontend/src/terminal-io.test.js` | raw input ordering, write-error recovery, and valid PTY dimensions |
@@ -141,6 +142,10 @@ close the resource drawer, and verify the top-bar badge still exposes and can st
 it. Start another with the option disabled and verify drawer close removes it.
 Finally, switch clusters during a pending/active start and verify neither the old
 tunnel nor a late success appears in the new cluster's manager.
+
+Multi-cluster identity manual check: add two kubeconfigs whose selected context is
+named `default`. The dropdown must show `default` and `default (2)`; switching each
+must reach its own API server, and disconnecting one must leave the other usable.
 
 Interactive terminal manual check: open a Pod's Terminal tab and connect, type a
 partial path or command and press **Tab**, use **Up** for history, send **Ctrl+C**,

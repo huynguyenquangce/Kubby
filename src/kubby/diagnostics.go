@@ -42,12 +42,16 @@ func (a *App) Diagnostics(lastError string) string {
 	row(&b, "platform", info.Platform)
 
 	b.WriteString("\n## Clusters\n")
-	row(&b, "connected", fmt.Sprintf("%d", len(a.clusters)))
-	if a.cluster == nil {
+	a.stateMu.RLock()
+	connected := len(a.clusters)
+	a.stateMu.RUnlock()
+	_, activeName, cluster, _ := a.activeConnectionSnapshot()
+	row(&b, "connected", fmt.Sprintf("%d", connected))
+	if cluster == nil {
 		row(&b, "active", "(none — not connected)")
 	} else {
-		row(&b, "active", a.activeName)
-		d := k8sclient.Diagnose(a.ctx, a.cluster, a.activeName)
+		row(&b, "active", activeName)
+		d := k8sclient.Diagnose(a.ctx, cluster, activeName)
 		row(&b, "reachable", yesNo(d.Reachable))
 		row(&b, "endpoint", d.Endpoint)
 		row(&b, "server", orElse(d.Version, "(unknown)"))

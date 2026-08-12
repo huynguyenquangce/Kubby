@@ -35,7 +35,12 @@ func TestDiagnosticsReportShape(t *testing.T) {
 }
 
 func TestUpdateYAMLRejectsChangedActiveCluster(t *testing.T) {
-	a := &App{activeName: "cluster-b", cluster: &k8sclient.Cluster{}}
+	a := NewApp()
+	a.clusters["connection-b"] = &clusterEntry{
+		id: "connection-b", name: "cluster-b", context: "cluster-b", cluster: &k8sclient.Cluster{},
+	}
+	a.order = []string{"connection-b"}
+	a.activeID = "connection-b"
 	err := a.UpdateYAML("cluster-a", "ConfigMap", "default", "settings", "ignored")
 	if err == nil || !strings.Contains(err.Error(), "refusing stale YAML update") {
 		t.Fatalf("expected stale-cluster rejection, got %v", err)

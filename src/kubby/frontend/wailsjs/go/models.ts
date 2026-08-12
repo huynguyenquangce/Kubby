@@ -1594,6 +1594,7 @@ export namespace main {
 	    }
 	}
 	export class ClusterInfo {
+	    id: string;
 	    name: string;
 	    active: boolean;
 	
@@ -1603,6 +1604,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.active = source["active"];
 	    }
@@ -1622,6 +1624,7 @@ export namespace main {
 	    }
 	}
 	export class PortForwardInfo {
+	    connectionId: string;
 	    key: string;
 	    kind: string;
 	    namespace: string;
@@ -1637,6 +1640,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.connectionId = source["connectionId"];
 	        this.key = source["key"];
 	        this.kind = source["kind"];
 	        this.namespace = source["namespace"];

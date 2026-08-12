@@ -17,27 +17,51 @@ import (
 // App is the Wails application backend. Its exported methods are bound and
 // callable from the frontend as async JS functions.
 type App struct {
-	ctx        context.Context
-	cluster    *k8sclient.Cluster // the active cluster (nil if none)
-	activeName string             // display name (context) of the active cluster
-	clusters   map[string]*k8sclient.Cluster
-	order      []string // connection order, for a stable dropdown
-	logMu      sync.Mutex
-	logCancel  context.CancelFunc // cancels the active log stream, if any
-	logEpoch   uint64             // invalidates callbacks from an older stream
-	pfMu       sync.Mutex
-	pfSessions map[string]*portForwardEntry
-	pfCluster  *k8sclient.Cluster
-	pfEpoch    uint64
-	execMu     sync.Mutex
-	execSess   *k8sclient.ExecSession // the active exec session, if any
-	execEpoch  uint64                 // invalidates callbacks from an older shell
+	ctx context.Context
+
+	// transitionMu makes add/switch/disconnect one lifecycle boundary. Session
+	// starts reserve their ownership through the same mutex, so a transition
+	// cannot leave a newly-started stream attached to the previous connection.
+	transitionMu       sync.Mutex
+	stateMu            sync.RWMutex
+	clusters           map[string]*clusterEntry // stable connection ID -> connection
+	order              []string                 // connection IDs in dropdown order
+	activeID           string
+	connectionSeq      uint64
+	connectionEpoch    uint64
+	portForwardStarter portForwardStarter
+	execStarter        execStarter
+	logMu              sync.Mutex
+	logCancel          context.CancelFunc // cancels the active log stream, if any
+	logEpoch           uint64             // invalidates callbacks from an older stream
+	pfMu               sync.Mutex
+	pfSessions         map[string]*portForwardEntry
+	pfPending          map[string]*pendingPortForward
+	pfCluster          *k8sclient.Cluster
+	pfEpoch            uint64
+	execMu             sync.Mutex
+	execSess           *k8sclient.ExecSession // the active exec session, if any
+	execEpoch          uint64                 // invalidates callbacks from an older shell
+}
+
+type portForwardStarter func(context.Context, *k8sclient.Cluster, string, string, string, int, int) (*k8sclient.PortForwardSession, <-chan struct{}, <-chan error, error)
+type execStarter func(context.Context, *k8sclient.Cluster, string, string, string, string, int, int, func(string), func(error)) (*k8sclient.ExecSession, error)
+
+type clusterEntry struct {
+	id      string
+	name    string
+	context string
+	cluster *k8sclient.Cluster
 }
 
 func NewApp() *App {
 	return &App{
-		pfSessions: map[string]*portForwardEntry{},
-		clusters:   map[string]*k8sclient.Cluster{},
+		ctx:                context.Background(),
+		pfSessions:         map[string]*portForwardEntry{},
+		pfPending:          map[string]*pendingPortForward{},
+		clusters:           map[string]*clusterEntry{},
+		portForwardStarter: k8sclient.StartPortForward,
+		execStarter:        k8sclient.StartExec,
 	}
 }
 
@@ -91,7 +115,8 @@ func (a *App) ConnectWithPath(path, kubeContext string) error {
 	if err := a.verifyAndStore(kubeContext, cluster); err != nil {
 		return err
 	}
-	a.rememberConnection(a.activeName, path, kubeContext)
+	_, displayName, _, _ := a.activeConnectionSnapshot()
+	a.rememberConnection(displayName, path, kubeContext)
 	return nil
 }
 
@@ -112,381 +137,490 @@ func (a *App) verifyAndStore(name string, cluster *k8sclient.Cluster) error {
 	if name == "" {
 		name = "default"
 	}
-	if _, exists := a.clusters[name]; !exists {
-		a.order = append(a.order, name)
-	}
-	a.clusters[name] = cluster
+	a.storeVerifiedCluster(name, cluster)
+	return nil
+}
+
+func (a *App) storeVerifiedCluster(name string, cluster *k8sclient.Cluster) {
+	a.transitionMu.Lock()
+	defer a.transitionMu.Unlock()
+
+	// Invalidate all lifecycle state before publishing the replacement active
+	// connection. New starts cannot interleave because they also reserve through
+	// transitionMu.
 	a.StopLogStream()
 	a.StopExec()
+	a.stopAllPortForwards()
+
+	a.stateMu.Lock()
+	a.connectionSeq++
+	id := fmt.Sprintf("connection-%d", a.connectionSeq)
+	displayName := a.uniqueConnectionNameLocked(name)
+	a.clusters[id] = &clusterEntry{id: id, name: displayName, context: name, cluster: cluster}
+	a.order = append(a.order, id)
+	a.activeID = id
+	a.connectionEpoch++
+	a.stateMu.Unlock()
 	a.resetPortForwardsForCluster(cluster)
-	a.activeName = name
-	a.cluster = cluster
-	return nil
+}
+
+func (a *App) uniqueConnectionNameLocked(contextName string) string {
+	count := 0
+	for _, id := range a.order {
+		if entry := a.clusters[id]; entry != nil && entry.context == contextName {
+			count++
+		}
+	}
+	if count == 0 {
+		return contextName
+	}
+	return fmt.Sprintf("%s (%d)", contextName, count+1)
 }
 
 // ClusterInfo describes a connected cluster for the switcher dropdown.
 type ClusterInfo struct {
+	ID     string `json:"id"`
 	Name   string `json:"name"`
 	Active bool   `json:"active"`
 }
 
 // ConnectedClusters lists all currently-connected clusters (FR-6).
 func (a *App) ConnectedClusters() []ClusterInfo {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
 	out := make([]ClusterInfo, 0, len(a.order))
-	for _, name := range a.order {
-		out = append(out, ClusterInfo{Name: name, Active: name == a.activeName})
+	for _, id := range a.order {
+		entry := a.clusters[id]
+		if entry != nil {
+			out = append(out, ClusterInfo{ID: id, Name: entry.name, Active: id == a.activeID})
+		}
 	}
 	return out
 }
 
 // SwitchCluster makes an already-connected cluster the active one (FR-6).
-func (a *App) SwitchCluster(name string) error {
-	c, ok := a.clusters[name]
+func (a *App) SwitchCluster(id string) error {
+	a.transitionMu.Lock()
+	defer a.transitionMu.Unlock()
+
+	a.stateMu.RLock()
+	entry, ok := a.clusters[id]
+	a.stateMu.RUnlock()
 	if !ok {
-		return fmt.Errorf("cluster %q is not connected", name)
+		return fmt.Errorf("connection %q is not connected", id)
 	}
 	// Stop anything tied to the previous cluster.
 	a.StopLogStream()
 	a.StopExec()
-	a.resetPortForwardsForCluster(c)
-	a.activeName = name
-	a.cluster = c
+	a.stopAllPortForwards()
+	a.stateMu.Lock()
+	a.activeID = id
+	a.connectionEpoch++
+	a.stateMu.Unlock()
+	a.resetPortForwardsForCluster(entry.cluster)
 	return nil
 }
 
 // DisconnectCluster drops a connected cluster. Returns the name of the new
 // active cluster ("" if none remain, meaning the UI should show Welcome).
-func (a *App) DisconnectCluster(name string) string {
-	if _, ok := a.clusters[name]; !ok {
-		return a.activeName
+func (a *App) DisconnectCluster(id string) string {
+	a.transitionMu.Lock()
+	defer a.transitionMu.Unlock()
+
+	a.stateMu.RLock()
+	_, exists := a.clusters[id]
+	activeID := a.activeID
+	a.stateMu.RUnlock()
+	if !exists {
+		return activeID
 	}
-	if name == a.activeName {
+	if id == activeID {
 		a.StopLogStream()
 		a.StopExec()
-		a.resetPortForwardsForCluster(nil)
+		a.stopAllPortForwards()
 	}
-	delete(a.clusters, name)
-	for i, n := range a.order {
-		if n == name {
+
+	a.stateMu.Lock()
+	delete(a.clusters, id)
+	for i, connectionID := range a.order {
+		if connectionID == id {
 			a.order = append(a.order[:i], a.order[i+1:]...)
 			break
 		}
 	}
-	if name == a.activeName {
+	var nextCluster *k8sclient.Cluster
+	if id == a.activeID {
 		if len(a.order) > 0 {
-			a.activeName = a.order[0]
-			a.cluster = a.clusters[a.activeName]
+			a.activeID = a.order[0]
+			nextCluster = a.clusters[a.activeID].cluster
 		} else {
-			a.activeName = ""
-			a.cluster = nil
+			a.activeID = ""
 		}
-		a.resetPortForwardsForCluster(a.cluster)
+		a.connectionEpoch++
 	}
-	return a.activeName
+	nextID := a.activeID
+	a.stateMu.Unlock()
+	if id == activeID {
+		a.resetPortForwardsForCluster(nextCluster)
+	}
+	return nextID
 }
 
-func (a *App) requireCluster() error {
-	if a.cluster == nil {
-		return fmt.Errorf("not connected to any cluster")
+func (a *App) activeConnectionSnapshot() (id, name string, cluster *k8sclient.Cluster, epoch uint64) {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	entry := a.clusters[a.activeID]
+	if entry == nil {
+		return "", "", nil, a.connectionEpoch
 	}
-	return nil
+	return entry.id, entry.name, entry.cluster, a.connectionEpoch
+}
+
+func (a *App) requireCluster() (*k8sclient.Cluster, error) {
+	_, _, cluster, _ := a.activeConnectionSnapshot()
+	if cluster == nil {
+		return nil, fmt.Errorf("not connected to any cluster")
+	}
+	return cluster, nil
 }
 
 func (a *App) ListNodes() ([]k8sclient.NodeInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListNodes(a.ctx, a.cluster.Clientset)
+	return k8sclient.ListNodes(a.ctx, cluster.Clientset)
 }
 
 func (a *App) ListNamespaces() ([]k8sclient.NamespaceInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListNamespaces(a.ctx, a.cluster.Clientset)
+	return k8sclient.ListNamespaces(a.ctx, cluster.Clientset)
 }
 
 // ListPods lists pods in a namespace ("" means all namespaces) (FR-2, FR-3).
 func (a *App) ListPods(namespace string) ([]k8sclient.PodInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListPods(a.ctx, a.cluster.Clientset, namespace)
+	return k8sclient.ListPods(a.ctx, cluster.Clientset, namespace)
 }
 
 func (a *App) ListDeployments(namespace string) ([]k8sclient.DeploymentInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListDeployments(a.ctx, a.cluster.Clientset, namespace)
+	return k8sclient.ListDeployments(a.ctx, cluster.Clientset, namespace)
 }
 
 func (a *App) ListServices(namespace string) ([]k8sclient.ServiceInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListServices(a.ctx, a.cluster.Clientset, namespace)
+	return k8sclient.ListServices(a.ctx, cluster.Clientset, namespace)
 }
 
 func (a *App) ListConfigMaps(namespace string) ([]k8sclient.ConfigMapInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListConfigMaps(a.ctx, a.cluster.Clientset, namespace)
+	return k8sclient.ListConfigMaps(a.ctx, cluster.Clientset, namespace)
 }
 
 func (a *App) ListSecrets(namespace string) ([]k8sclient.SecretInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListSecrets(a.ctx, a.cluster.Clientset, namespace)
+	return k8sclient.ListSecrets(a.ctx, cluster.Clientset, namespace)
 }
 
 // GetDetail returns structured details for the drawer's Details tab.
 func (a *App) GetDetail(kind, namespace, name string) (*k8sclient.ResourceDetail, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.GetDetail(a.ctx, a.cluster, kind, namespace, name)
+	return k8sclient.GetDetail(a.ctx, cluster, kind, namespace, name)
 }
 
 // ListEvents returns events involving a specific resource (like kubectl describe).
 func (a *App) ListEvents(kind, namespace, name string) ([]k8sclient.EventInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListEvents(a.ctx, a.cluster, kind, namespace, name)
+	return k8sclient.ListEvents(a.ctx, cluster, kind, namespace, name)
 }
 
 // DeleteResource deletes a resource by kind/namespace/name.
 func (a *App) DeleteResource(kind, namespace, name string) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.DeleteResource(a.ctx, a.cluster, kind, namespace, name)
+	return k8sclient.DeleteResource(a.ctx, cluster, kind, namespace, name)
 }
 
 // ---- Feature 1: deployment actions ----
 
 func (a *App) ScaleDeployment(namespace, name string, replicas int) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.ScaleDeployment(a.ctx, a.cluster, namespace, name, int32(replicas))
+	return k8sclient.ScaleDeployment(a.ctx, cluster, namespace, name, int32(replicas))
 }
 
 func (a *App) RestartDeployment(namespace, name string) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.RestartDeployment(a.ctx, a.cluster, namespace, name, time.Now().Format(time.RFC3339))
+	return k8sclient.RestartDeployment(a.ctx, cluster, namespace, name, time.Now().Format(time.RFC3339))
 }
 
 func (a *App) RestartStatefulSet(namespace, name string) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.RestartStatefulSet(a.ctx, a.cluster, namespace, name, time.Now().Format(time.RFC3339))
+	return k8sclient.RestartStatefulSet(a.ctx, cluster, namespace, name, time.Now().Format(time.RFC3339))
 }
 
 func (a *App) RestartDaemonSet(namespace, name string) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.RestartDaemonSet(a.ctx, a.cluster, namespace, name, time.Now().Format(time.RFC3339))
+	return k8sclient.RestartDaemonSet(a.ctx, cluster, namespace, name, time.Now().Format(time.RFC3339))
 }
 
 func (a *App) SetDeploymentPaused(namespace, name string, paused bool) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.SetDeploymentPaused(a.ctx, a.cluster, namespace, name, paused)
+	return k8sclient.SetDeploymentPaused(a.ctx, cluster, namespace, name, paused)
 }
 
 func (a *App) RolloutHistory(namespace, name string) ([]k8sclient.RolloutRevision, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.RolloutHistory(a.ctx, a.cluster, namespace, name)
+	return k8sclient.RolloutHistory(a.ctx, cluster, namespace, name)
 }
 
 func (a *App) RollbackDeployment(namespace, name string, revision int64) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.RollbackDeployment(a.ctx, a.cluster, namespace, name, revision)
+	return k8sclient.RollbackDeployment(a.ctx, cluster, namespace, name, revision)
 }
 
 // ---- Node actions ----
 
 func (a *App) SetNodeSchedulable(name string, schedulable bool) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.SetNodeSchedulable(a.ctx, a.cluster, name, schedulable)
+	return k8sclient.SetNodeSchedulable(a.ctx, cluster, name, schedulable)
 }
 
 func (a *App) DrainNode(name string) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.DrainNode(a.ctx, a.cluster, name)
+	return k8sclient.DrainNode(a.ctx, cluster, name)
 }
 
 // ---- CronJob run-now ----
 
 func (a *App) RunCronJobNow(namespace, name string) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.RunCronJobNow(a.ctx, a.cluster, namespace, name, time.Now().Format("20060102-150405"))
+	return k8sclient.RunCronJobNow(a.ctx, cluster, namespace, name, time.Now().Format("20060102-150405"))
 }
 
 // ---- Secret reveal ----
 
 func (a *App) SecretData(namespace, name string) ([]k8sclient.SecretEntry, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.SecretData(a.ctx, a.cluster, namespace, name)
+	return k8sclient.SecretData(a.ctx, cluster, namespace, name)
 }
 
 // ---- Feature 3: more resource types ----
 
 func (a *App) ListStatefulSets(ns string) ([]k8sclient.StatefulSetInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListStatefulSets(a.ctx, a.cluster.Clientset, ns)
+	return k8sclient.ListStatefulSets(a.ctx, cluster.Clientset, ns)
 }
 func (a *App) ListDaemonSets(ns string) ([]k8sclient.DaemonSetInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListDaemonSets(a.ctx, a.cluster.Clientset, ns)
+	return k8sclient.ListDaemonSets(a.ctx, cluster.Clientset, ns)
 }
 func (a *App) ListJobs(ns string) ([]k8sclient.JobInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListJobs(a.ctx, a.cluster.Clientset, ns)
+	return k8sclient.ListJobs(a.ctx, cluster.Clientset, ns)
 }
 func (a *App) ListCronJobs(ns string) ([]k8sclient.CronJobInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListCronJobs(a.ctx, a.cluster.Clientset, ns)
+	return k8sclient.ListCronJobs(a.ctx, cluster.Clientset, ns)
 }
 func (a *App) ListIngresses(ns string) ([]k8sclient.IngressInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListIngresses(a.ctx, a.cluster.Clientset, ns)
+	return k8sclient.ListIngresses(a.ctx, cluster.Clientset, ns)
 }
 func (a *App) ListPVCs(ns string) ([]k8sclient.PVCInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListPVCs(a.ctx, a.cluster.Clientset, ns)
+	return k8sclient.ListPVCs(a.ctx, cluster.Clientset, ns)
 }
 func (a *App) ListServiceAccounts(ns string) ([]k8sclient.ServiceAccountInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListServiceAccounts(a.ctx, a.cluster.Clientset, ns)
+	return k8sclient.ListServiceAccounts(a.ctx, cluster.Clientset, ns)
 }
 
 // ---- Storage + RBAC resource types ----
 
 func (a *App) ListPersistentVolumes() ([]k8sclient.PersistentVolumeInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListPersistentVolumes(a.ctx, a.cluster.Clientset)
+	return k8sclient.ListPersistentVolumes(a.ctx, cluster.Clientset)
 }
 func (a *App) ListStorageClasses() ([]k8sclient.StorageClassInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListStorageClasses(a.ctx, a.cluster.Clientset)
+	return k8sclient.ListStorageClasses(a.ctx, cluster.Clientset)
 }
 func (a *App) ListRoles(ns string) ([]k8sclient.RoleInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListRoles(a.ctx, a.cluster.Clientset, ns)
+	return k8sclient.ListRoles(a.ctx, cluster.Clientset, ns)
 }
 func (a *App) ListRoleBindings(ns string) ([]k8sclient.RoleBindingInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListRoleBindings(a.ctx, a.cluster.Clientset, ns)
+	return k8sclient.ListRoleBindings(a.ctx, cluster.Clientset, ns)
 }
 func (a *App) ListClusterRoles() ([]k8sclient.ClusterRoleInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListClusterRoles(a.ctx, a.cluster.Clientset)
+	return k8sclient.ListClusterRoles(a.ctx, cluster.Clientset)
 }
 func (a *App) ListClusterRoleBindings() ([]k8sclient.ClusterRoleBindingInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListClusterRoleBindings(a.ctx, a.cluster.Clientset)
+	return k8sclient.ListClusterRoleBindings(a.ctx, cluster.Clientset)
 }
 
 // ---- Ecosystem: CRDs, Helm, quotas ----
 
 func (a *App) ListCRDs() ([]k8sclient.CRDInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListCRDs(a.ctx, a.cluster)
+	return k8sclient.ListCRDs(a.ctx, cluster)
 }
 func (a *App) ListHelmReleases(ns string) ([]k8sclient.HelmReleaseInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListHelmReleases(a.ctx, a.cluster.Clientset, ns)
+	return k8sclient.ListHelmReleases(a.ctx, cluster.Clientset, ns)
 }
 
 // ---- Helm SDK: release management + search + install ----
 
 func (a *App) HelmGet(namespace, name string) (*k8sclient.HelmReleaseDetail, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmGet(a.cluster, namespace, name)
+	return k8sclient.HelmGet(cluster, namespace, name)
 }
 func (a *App) HelmHistory(namespace, name string) ([]k8sclient.HelmRevision, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmHistory(a.cluster, namespace, name)
+	return k8sclient.HelmHistory(cluster, namespace, name)
 }
 func (a *App) HelmRollback(namespace, name string, revision int) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.HelmRollback(a.cluster, namespace, name, revision)
+	return k8sclient.HelmRollback(cluster, namespace, name, revision)
 }
 func (a *App) HelmUninstall(namespace, name string) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.HelmUninstall(a.cluster, namespace, name)
+	return k8sclient.HelmUninstall(cluster, namespace, name)
 }
 func (a *App) HelmUpgradeValues(namespace, name, valuesYAML string) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.HelmUpgradeValues(a.cluster, namespace, name, valuesYAML)
+	return k8sclient.HelmUpgradeValues(cluster, namespace, name, valuesYAML)
 }
 func (a *App) HelmInstall(namespace, releaseName, repoURL, chartName, version, valuesYAML, expectedDigest string) error {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return err
 	}
-	return k8sclient.HelmInstall(a.cluster, namespace, releaseName, repoURL, chartName, version, valuesYAML, expectedDigest)
+	return k8sclient.HelmInstall(cluster, namespace, releaseName, repoURL, chartName, version, valuesYAML, expectedDigest)
 }
 
 // SearchCharts queries Artifact Hub (needs internet). No cluster required.
@@ -500,34 +634,39 @@ func (a *App) ChartDefaultValues(repoURL, chartName, version string) (string, er
 	return k8sclient.ChartDefaultValues(repoURL, chartName, version)
 }
 func (a *App) HelmInstallPreview(namespace, releaseName, repoURL, chartName, version, valuesYAML string) (*k8sclient.HelmDiff, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmInstallPreview(a.cluster, namespace, releaseName, repoURL, chartName, version, valuesYAML)
+	return k8sclient.HelmInstallPreview(cluster, namespace, releaseName, repoURL, chartName, version, valuesYAML)
 }
 func (a *App) HelmUpgradePreview(namespace, name, valuesYAML string) (*k8sclient.HelmDiff, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmUpgradePreview(a.cluster, namespace, name, valuesYAML)
+	return k8sclient.HelmUpgradePreview(cluster, namespace, name, valuesYAML)
 }
 func (a *App) HelmGetRevision(namespace, name string, revision int) (*k8sclient.HelmReleaseDetail, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmGetRevision(a.cluster, namespace, name, revision)
+	return k8sclient.HelmGetRevision(cluster, namespace, name, revision)
 }
 func (a *App) HelmReleaseResources(namespace, name string) ([]k8sclient.HelmResource, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmReleaseResources(a.ctx, a.cluster, namespace, name)
+	return k8sclient.HelmReleaseResources(a.ctx, cluster, namespace, name)
 }
 func (a *App) HelmTest(namespace, name string) (string, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return "", err
 	}
-	return k8sclient.HelmTest(a.cluster, namespace, name)
+	return k8sclient.HelmTest(cluster, namespace, name)
 }
 
 // ---- Helm repositories ----
@@ -548,16 +687,18 @@ func (a *App) BrowseHelmRepo(name string) ([]k8sclient.ChartSearchResult, error)
 	return k8sclient.BrowseHelmRepo(name)
 }
 func (a *App) ListResourceQuotas(ns string) ([]k8sclient.ResourceQuotaInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListResourceQuotas(a.ctx, a.cluster.Clientset, ns)
+	return k8sclient.ListResourceQuotas(a.ctx, cluster.Clientset, ns)
 }
 func (a *App) ListLimitRanges(ns string) ([]k8sclient.LimitRangeInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListLimitRanges(a.ctx, a.cluster.Clientset, ns)
+	return k8sclient.ListLimitRanges(a.ctx, cluster.Clientset, ns)
 }
 
 // ---- Feature 4: relations + metrics ----
@@ -565,87 +706,98 @@ func (a *App) ListLimitRanges(ns string) ([]k8sclient.LimitRangeInfo, error) {
 // OverviewSnapshot returns the complete dashboard payload in one bound call;
 // Kubernetes fan-out and partial-error handling live in k8sclient.
 func (a *App) OverviewSnapshot() (*k8sclient.OverviewData, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.OverviewSnapshot(a.ctx, a.cluster)
+	return k8sclient.OverviewSnapshot(a.ctx, cluster)
 }
 
 func (a *App) DeploymentTree(namespace, name string) (*k8sclient.RelationNode, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.DeploymentTree(a.ctx, a.cluster, namespace, name)
+	return k8sclient.DeploymentTree(a.ctx, cluster, namespace, name)
 }
 
 func (a *App) NodeMetrics() ([]k8sclient.NodeMetric, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.NodeMetrics(a.ctx, a.cluster)
+	return k8sclient.NodeMetrics(a.ctx, cluster)
 }
 
 // TopPods returns the top N pods by CPU usage (Overview dashboard).
 func (a *App) TopPods(limit int) ([]k8sclient.PodMetric, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.TopPods(a.ctx, a.cluster, limit)
+	return k8sclient.TopPods(a.ctx, cluster, limit)
 }
 
 // PodMetricsList returns per-pod CPU/mem for a namespace (merged into the pods table).
 func (a *App) PodMetricsList(namespace string) ([]k8sclient.PodMetric, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.PodMetricsList(a.ctx, a.cluster, namespace)
+	return k8sclient.PodMetricsList(a.ctx, cluster, namespace)
 }
 
 // ClusterEvents returns the most recent events across the cluster (Overview).
 func (a *App) ClusterEvents(limit int) ([]k8sclient.EventInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ClusterEvents(a.ctx, a.cluster, limit)
+	return k8sclient.ClusterEvents(a.ctx, cluster, limit)
 }
 
 // ServiceTree returns a Service → Pod relations tree.
 func (a *App) ServiceTree(namespace, name string) (*k8sclient.RelationNode, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ServiceTree(a.ctx, a.cluster, namespace, name)
+	return k8sclient.ServiceTree(a.ctx, cluster, namespace, name)
 }
 
 // IngressTree returns an Ingress → Service → Pod relations tree.
 func (a *App) IngressTree(namespace, name string) (*k8sclient.RelationNode, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.IngressTree(a.ctx, a.cluster, namespace, name)
+	return k8sclient.IngressTree(a.ctx, cluster, namespace, name)
 }
 
 // ---- Explore: node pods, namespace summary, global search, network topology ----
 
 func (a *App) PodsOnNode(nodeName string) ([]k8sclient.PodInfo, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.PodsOnNode(a.ctx, a.cluster, nodeName)
+	return k8sclient.PodsOnNode(a.ctx, cluster, nodeName)
 }
 
 func (a *App) NamespaceSummary(ns string) ([]k8sclient.NsKindCount, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.NamespaceSummary(a.ctx, a.cluster, ns)
+	return k8sclient.NamespaceSummary(a.ctx, cluster, ns)
 }
 
 func (a *App) SearchResources(query string) ([]k8sclient.SearchHit, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.SearchResources(a.ctx, a.cluster, query)
+	return k8sclient.SearchResources(a.ctx, cluster, query)
 }
 
 // SidebarCounts returns every sidebar tally in one call. The frontend used to
@@ -654,34 +806,38 @@ func (a *App) SearchResources(query string) ([]k8sclient.SearchHit, error) {
 // includeCluster=false skips the cluster-scoped kinds, whose counts cannot
 // change when only the namespace does.
 func (a *App) SidebarCounts(namespace string, includeCluster bool) ([]k8sclient.NavCount, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.SidebarCounts(a.ctx, a.cluster, namespace, includeCluster)
+	return k8sclient.SidebarCounts(a.ctx, cluster, namespace, includeCluster)
 }
 
 // CustomKinds lists the kinds this cluster's CRDs define, so each becomes its own
 // sidebar section (and command-palette entry). No counts — see CustomKinds' doc.
 func (a *App) CustomKinds() (*k8sclient.CustomKindList, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.CustomKinds(a.ctx, a.cluster)
+	return k8sclient.CustomKinds(a.ctx, cluster)
 }
 
 // ListCustom lists the objects of a custom kind ("Kind.group"), namespace "" = all.
 func (a *App) ListCustom(refKind, namespace string) ([]k8sclient.CustomObject, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListCustom(a.ctx, a.cluster, refKind, namespace)
+	return k8sclient.ListCustom(a.ctx, cluster, refKind, namespace)
 }
 
 func (a *App) NetworkFlows(namespace string) (*k8sclient.NetworkFlows, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.NetworkTopology(a.ctx, a.cluster, namespace)
+	return k8sclient.NetworkTopology(a.ctx, cluster, namespace)
 }
 
 // ---- FR-7: AI assistant (resource-scoped Q&A) ----
@@ -733,10 +889,11 @@ func (a *App) GetAIStatus() AIStatus {
 // AIResourceContext returns the exact evidence Kubby would send about a
 // resource, so the assistant can show it before anything is transmitted.
 func (a *App) AIResourceContext(kind, namespace, name string) (*k8sclient.AIContext, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.DiagnosticContext(a.ctx, a.cluster, kind, namespace, name)
+	return k8sclient.DiagnosticContext(a.ctx, cluster, kind, namespace, name)
 }
 
 // AskAboutResource answers a question about one resource. The resource's
@@ -744,7 +901,8 @@ func (a *App) AIResourceContext(kind, namespace, name string) (*k8sclient.AICont
 // follow-up is grounded in the same snapshot and the frontend only has to replay
 // the visible conversation.
 func (a *App) AskAboutResource(kind, namespace, name string, history []AIMessage) (string, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return "", err
 	}
 	cfg := loadAIConfig()
@@ -754,7 +912,7 @@ func (a *App) AskAboutResource(kind, namespace, name string, history []AIMessage
 	if len(history) == 0 {
 		return "", fmt.Errorf("no question to ask")
 	}
-	diag, err := k8sclient.DiagnosticContext(a.ctx, a.cluster, kind, namespace, name)
+	diag, err := k8sclient.DiagnosticContext(a.ctx, cluster, kind, namespace, name)
 	if err != nil {
 		return "", err
 	}
@@ -808,17 +966,30 @@ type LogStreamError struct {
 	Message  string `json:"message"`
 }
 
+type ExecOutputEvent struct {
+	SessionID string `json:"sessionId"`
+	Data      string `json:"data"`
+}
+
+type ExecClosedEvent struct {
+	SessionID string `json:"sessionId"`
+	Message   string `json:"message"`
+}
+
 // StartLogStream begins following a container's logs. Batches are emitted as
 // "loglines" events; the stream stops on StopLogStream, a new stream, or
 // disconnect.
 func (a *App) StartLogStream(namespace, name, container, streamID string) error {
-	if err := a.requireCluster(); err != nil {
-		return err
-	}
 	if strings.TrimSpace(streamID) == "" {
 		return fmt.Errorf("log stream ID is required")
 	}
 
+	a.transitionMu.Lock()
+	cluster, err := a.requireCluster()
+	if err != nil {
+		a.transitionMu.Unlock()
+		return err
+	}
 	a.logMu.Lock()
 	if a.logCancel != nil {
 		a.logCancel()
@@ -827,8 +998,8 @@ func (a *App) StartLogStream(namespace, name, container, streamID string) error 
 	epoch := a.logEpoch
 	ctx, cancel := context.WithCancel(a.ctx)
 	a.logCancel = cancel
-	cluster := a.cluster
 	a.logMu.Unlock()
+	a.transitionMu.Unlock()
 
 	go func() {
 		err := k8sclient.StreamLogs(ctx, cluster, namespace, name, container, func(lines []string) {
@@ -878,23 +1049,24 @@ func (a *App) SaveTextToFile(defaultName, content string) (string, error) {
 
 // GetYAML returns a resource rendered as YAML for the detail/edit panel.
 func (a *App) GetYAML(kind, namespace, name string) (string, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return "", err
 	}
-	return k8sclient.GetYAML(a.ctx, a.cluster, kind, namespace, name)
+	return k8sclient.GetYAML(a.ctx, cluster, kind, namespace, name)
 }
 
 // UpdateYAML applies edited YAML only when the active cluster and resource still
 // match the drawer that loaded it.  The local cluster pointer is captured after
 // the check so a later UI switch cannot redirect this call to the new cluster.
 func (a *App) UpdateYAML(expectedCluster, expectedKind, expectedNamespace, expectedName, yamlText string) error {
-	if err := a.requireCluster(); err != nil {
-		return err
+	activeID, activeName, cluster, _ := a.activeConnectionSnapshot()
+	if cluster == nil {
+		return fmt.Errorf("not connected to any cluster")
 	}
-	if expectedCluster == "" || expectedCluster != a.activeName {
-		return fmt.Errorf("refusing stale YAML update: expected cluster %q, active cluster is %q; reload the open resource", expectedCluster, a.activeName)
+	if expectedCluster == "" || expectedCluster != activeID {
+		return fmt.Errorf("refusing stale YAML update: expected connection %q, active connection is %q (%s); reload the open resource", expectedCluster, activeID, activeName)
 	}
-	cluster := a.cluster
 	return k8sclient.UpdateYAML(a.ctx, cluster, expectedKind, expectedNamespace, expectedName, yamlText)
 }
 
@@ -902,68 +1074,75 @@ func (a *App) UpdateYAML(expectedCluster, expectedKind, expectedNamespace, expec
 // update, multi-document, any kind the cluster serves including CRDs). Backs the
 // "Create" and "Import YAML" flows. Returns a per-document report of what it did.
 func (a *App) ApplyYAML(yamlText string) (string, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return "", err
 	}
-	return k8sclient.ApplyYAML(a.ctx, a.cluster, yamlText)
+	return k8sclient.ApplyYAML(a.ctx, cluster, yamlText)
 }
 
 // ApplyPreview answers "what would this YAML change?" without changing anything,
 // via a server-side dry run diffed against the live objects. Backs the Preview
 // step of "Import YAML", the same way HelmUpgradePreview backs Helm's.
 func (a *App) ApplyPreview(yamlText string) (*k8sclient.ApplyDiff, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ApplyPreview(a.ctx, a.cluster, yamlText)
+	return k8sclient.ApplyPreview(a.ctx, cluster, yamlText)
 }
 
 // Sizing reports declared requests/limits against actual usage for a namespace
 // ("" = whole cluster). Backs the Right-sizing view.
 func (a *App) Sizing(namespace string) (*k8sclient.SizingReport, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.Sizing(a.ctx, a.cluster, namespace)
+	return k8sclient.Sizing(a.ctx, cluster, namespace)
 }
 
 // CanI reports what the connected token may do to a kind in a namespace, so the
 // UI can disable actions instead of offering them and failing at the API.
 func (a *App) CanI(kind, namespace string) (*k8sclient.AccessSet, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.CanI(a.ctx, a.cluster, kind, namespace)
+	return k8sclient.CanI(a.ctx, cluster, kind, namespace)
 }
 
 // PodContainers lists a pod's container names (for the log container picker).
 func (a *App) PodContainers(namespace, name string) ([]string, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return nil, err
 	}
-	return k8sclient.PodContainers(a.ctx, a.cluster, namespace, name)
+	return k8sclient.PodContainers(a.ctx, cluster, namespace, name)
 }
 
 // PodLogs returns the last `tailLines` log lines for a pod container.
 func (a *App) PodLogs(namespace, name, container string, tailLines int) (string, error) {
-	if err := a.requireCluster(); err != nil {
+	cluster, err := a.requireCluster()
+	if err != nil {
 		return "", err
 	}
-	return k8sclient.PodLogs(a.ctx, a.cluster, namespace, name, container, int64(tailLines))
+	return k8sclient.PodLogs(a.ctx, cluster, namespace, name, container, int64(tailLines))
 }
 
 // ---- Port-forward ----
 
 // PortForwardInfo describes an active forward for the UI.
 type PortForwardInfo struct {
-	Key         string `json:"key"`
-	Kind        string `json:"kind"`
-	Namespace   string `json:"namespace"`
-	Name        string `json:"name"`
-	PodName     string `json:"podName"`
-	LocalPort   int    `json:"localPort"`
-	RemotePort  int    `json:"remotePort"`
-	KeepRunning bool   `json:"keepRunning"`
+	ConnectionID string `json:"connectionId"`
+	Key          string `json:"key"`
+	Kind         string `json:"kind"`
+	Namespace    string `json:"namespace"`
+	Name         string `json:"name"`
+	PodName      string `json:"podName"`
+	LocalPort    int    `json:"localPort"`
+	RemotePort   int    `json:"remotePort"`
+	KeepRunning  bool   `json:"keepRunning"`
 }
 
 type portForwardEntry struct {
@@ -971,19 +1150,44 @@ type portForwardEntry struct {
 	info    PortForwardInfo
 }
 
-func (a *App) detachPortForwardsLocked() []*k8sclient.PortForwardSession {
+type pendingPortForward struct {
+	cancel  context.CancelFunc
+	session *k8sclient.PortForwardSession
+	cluster *k8sclient.Cluster
+	epoch   uint64
+}
+
+type PortForwardClosedEvent struct {
+	ConnectionID string `json:"connectionId"`
+	Key          string `json:"key"`
+}
+
+func (a *App) detachPortForwardsLocked() ([]*k8sclient.PortForwardSession, []context.CancelFunc) {
 	sessions := make([]*k8sclient.PortForwardSession, 0, len(a.pfSessions))
 	for _, entry := range a.pfSessions {
 		if entry.session != nil {
 			sessions = append(sessions, entry.session)
 		}
 	}
+	cancels := make([]context.CancelFunc, 0, len(a.pfPending))
+	for _, pending := range a.pfPending {
+		if pending.cancel != nil {
+			cancels = append(cancels, pending.cancel)
+		}
+		if pending.session != nil {
+			sessions = append(sessions, pending.session)
+		}
+	}
 	a.pfSessions = map[string]*portForwardEntry{}
+	a.pfPending = map[string]*pendingPortForward{}
 	a.pfEpoch++
-	return sessions
+	return sessions, cancels
 }
 
-func closePortForwardSessions(sessions []*k8sclient.PortForwardSession) {
+func closePortForwardSessions(sessions []*k8sclient.PortForwardSession, cancels []context.CancelFunc) {
+	for _, cancel := range cancels {
+		cancel()
+	}
 	for _, session := range sessions {
 		session.Close()
 	}
@@ -993,17 +1197,17 @@ func closePortForwardSessions(sessions []*k8sclient.PortForwardSession) {
 // cluster new starts belong to, and detaches every existing tunnel.
 func (a *App) resetPortForwardsForCluster(cluster *k8sclient.Cluster) {
 	a.pfMu.Lock()
-	sessions := a.detachPortForwardsLocked()
+	sessions, cancels := a.detachPortForwardsLocked()
 	a.pfCluster = cluster
 	a.pfMu.Unlock()
-	closePortForwardSessions(sessions)
+	closePortForwardSessions(sessions, cancels)
 }
 
 func (a *App) stopAllPortForwards() {
 	a.pfMu.Lock()
-	sessions := a.detachPortForwardsLocked()
+	sessions, cancels := a.detachPortForwardsLocked()
 	a.pfMu.Unlock()
-	closePortForwardSessions(sessions)
+	closePortForwardSessions(sessions, cancels)
 }
 
 func (a *App) portForwardEpoch() uint64 {
@@ -1015,43 +1219,94 @@ func (a *App) portForwardEpoch() uint64 {
 // StartPortForward opens a forward from localPort (0 = auto) to remotePort of a
 // pod backing the target Pod/Service. Returns the info including the bound local
 // port once the tunnel is ready.
-func (a *App) StartPortForward(kind, namespace, name string, localPort, remotePort int, keepRunning bool) (*PortForwardInfo, error) {
+func (a *App) StartPortForward(operationID, kind, namespace, name string, localPort, remotePort int, keepRunning bool) (*PortForwardInfo, error) {
+	if strings.TrimSpace(operationID) == "" {
+		return nil, fmt.Errorf("port-forward operation ID is required")
+	}
+
+	a.transitionMu.Lock()
+	connectionID, _, activeCluster, _ := a.activeConnectionSnapshot()
 	a.pfMu.Lock()
 	cluster, epoch := a.pfCluster, a.pfEpoch
-	a.pfMu.Unlock()
-	if cluster == nil {
+	if cluster == nil || cluster != activeCluster {
+		a.pfMu.Unlock()
+		a.transitionMu.Unlock()
 		return nil, fmt.Errorf("not connected to any cluster")
 	}
-	session, ready, errCh, err := k8sclient.StartPortForward(a.ctx, cluster, kind, namespace, name, localPort, remotePort)
+	if _, exists := a.pfPending[operationID]; exists {
+		a.pfMu.Unlock()
+		a.transitionMu.Unlock()
+		return nil, fmt.Errorf("port-forward operation %q already exists", operationID)
+	}
+	startCtx, cancel := context.WithCancel(a.ctx)
+	pending := &pendingPortForward{cancel: cancel, cluster: cluster, epoch: epoch}
+	a.pfPending[operationID] = pending
+	a.pfMu.Unlock()
+	a.transitionMu.Unlock()
+
+	removePending := func() {
+		a.pfMu.Lock()
+		if a.pfPending[operationID] == pending {
+			delete(a.pfPending, operationID)
+		}
+		a.pfMu.Unlock()
+		cancel()
+	}
+
+	starter := a.portForwardStarter
+	if starter == nil {
+		starter = k8sclient.StartPortForward
+	}
+	session, ready, errCh, err := starter(startCtx, cluster, kind, namespace, name, localPort, remotePort)
 	if err != nil {
+		removePending()
 		return nil, err
 	}
+	a.pfMu.Lock()
+	if a.pfPending[operationID] != pending || epoch != a.pfEpoch || cluster != a.pfCluster {
+		a.pfMu.Unlock()
+		session.Close()
+		cancel()
+		return nil, fmt.Errorf("port-forward start was cancelled")
+	}
+	pending.session = session
+	a.pfMu.Unlock()
 
 	select {
 	case <-ready:
 	case err := <-errCh:
 		session.Close()
+		removePending()
 		return nil, fmt.Errorf("port-forward failed: %w", err)
+	case <-startCtx.Done():
+		session.Close()
+		removePending()
+		return nil, fmt.Errorf("port-forward start was cancelled")
 	case <-time.After(15 * time.Second):
 		session.Close()
+		removePending()
 		return nil, fmt.Errorf("port-forward did not become ready in time")
 	}
 
-	key := fmt.Sprintf("%s/%s/%s:%d→%d", kind, namespace, name, session.LocalPort, remotePort)
+	key := fmt.Sprintf("%s:%s/%s/%s:%d→%d", connectionID, kind, namespace, name, session.LocalPort, remotePort)
 	info := PortForwardInfo{
-		Key: key, Kind: kind, Namespace: namespace, Name: name,
+		ConnectionID: connectionID,
+		Key:          key, Kind: kind, Namespace: namespace, Name: name,
 		PodName: session.PodName, LocalPort: session.LocalPort, RemotePort: remotePort,
 		KeepRunning: keepRunning,
 	}
 	entry := &portForwardEntry{session: session, info: info}
 	a.pfMu.Lock()
-	if epoch != a.pfEpoch || cluster != a.pfCluster {
+	if a.pfPending[operationID] != pending || epoch != a.pfEpoch || cluster != a.pfCluster {
 		a.pfMu.Unlock()
 		session.Close()
+		cancel()
 		return nil, fmt.Errorf("port-forward start was superseded by a cluster change")
 	}
+	delete(a.pfPending, operationID)
 	a.pfSessions[key] = entry
 	a.pfMu.Unlock()
+	cancel()
 
 	// Report an async teardown if the tunnel dies later.
 	go func(expected *portForwardEntry) {
@@ -1063,11 +1318,29 @@ func (a *App) StartPortForward(kind, namespace, name string, localPort, remotePo
 		}
 		a.pfMu.Unlock()
 		if ok && current == expected {
-			wailsruntime.EventsEmit(a.ctx, "portforward-closed", key)
+			wailsruntime.EventsEmit(a.ctx, "portforward-closed", PortForwardClosedEvent{ConnectionID: connectionID, Key: key})
 		}
 	}(entry)
 
 	return &info, nil
+}
+
+// CancelPortForwardStart cancels a StartPortForward call that has not reached
+// readiness yet. It is safe to call after completion or more than once.
+func (a *App) CancelPortForwardStart(operationID string) {
+	a.pfMu.Lock()
+	pending := a.pfPending[operationID]
+	if pending != nil {
+		delete(a.pfPending, operationID)
+	}
+	a.pfMu.Unlock()
+	if pending == nil {
+		return
+	}
+	pending.cancel()
+	if pending.session != nil {
+		pending.session.Close()
+	}
 }
 
 // StopPortForward tears down a forward by its key.
@@ -1099,11 +1372,16 @@ func (a *App) ListPortForwards() []PortForwardInfo {
 
 // StartExec opens an interactive shell into a container. Output is emitted as
 // "exec-output" events; "exec-closed" fires when the shell exits.
-func (a *App) StartExec(namespace, pod, container, shell string, cols, rows int) error {
-	if err := a.requireCluster(); err != nil {
+func (a *App) StartExec(sessionID, namespace, pod, container, shell string, cols, rows int) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return fmt.Errorf("exec session ID is required")
+	}
+	a.transitionMu.Lock()
+	cluster, err := a.requireCluster()
+	if err != nil {
+		a.transitionMu.Unlock()
 		return err
 	}
-
 	// Reserve a generation before opening the stream. Stop/switch can invalidate
 	// the pending session without allowing its output into a newer drawer.
 	a.execMu.Lock()
@@ -1111,19 +1389,23 @@ func (a *App) StartExec(namespace, pod, container, shell string, cols, rows int)
 	a.execSess = nil
 	a.execEpoch++
 	epoch := a.execEpoch
-	cluster := a.cluster
 	a.execMu.Unlock()
+	a.transitionMu.Unlock()
 	if previous != nil {
 		previous.Close()
 	}
 
-	session, err := k8sclient.StartExec(a.ctx, cluster, namespace, pod, container, shell, cols, rows,
+	starter := a.execStarter
+	if starter == nil {
+		starter = k8sclient.StartExec
+	}
+	session, err := starter(a.ctx, cluster, namespace, pod, container, shell, cols, rows,
 		func(out string) {
 			a.execMu.Lock()
 			current := a.execEpoch == epoch
 			a.execMu.Unlock()
 			if current {
-				wailsruntime.EventsEmit(a.ctx, "exec-output", out)
+				wailsruntime.EventsEmit(a.ctx, "exec-output", ExecOutputEvent{SessionID: sessionID, Data: out})
 			}
 		},
 		func(err error) {
@@ -1139,7 +1421,7 @@ func (a *App) StartExec(namespace, pod, container, shell string, cols, rows int)
 			if err != nil {
 				msg = err.Error()
 			}
-			wailsruntime.EventsEmit(a.ctx, "exec-closed", msg)
+			wailsruntime.EventsEmit(a.ctx, "exec-closed", ExecClosedEvent{SessionID: sessionID, Message: msg})
 		})
 	if err != nil {
 		return err

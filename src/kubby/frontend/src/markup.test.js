@@ -27,7 +27,8 @@ test('port-forward manager exposes global and drawer lifecycle controls', () => 
         assert.match(indexHTML, new RegExp(`id="${id}"`));
     }
     assert.match(mainJS, /ListPortForwards\(\)/);
-    assert.match(mainJS, /StartPortForward\(ref\.kind, ref\.namespace, ref\.name, local, remote, keepRunning\)/);
+    assert.match(mainJS, /StartPortForward\(operationID, ref\.kind, ref\.namespace, ref\.name, local, remote, keepRunning\)/);
+    assert.match(mainJS, /CancelPortForwardStart\(pending\.id\)/);
 });
 
 test('terminal uses a PTY emulator instead of a line-mode command input', () => {

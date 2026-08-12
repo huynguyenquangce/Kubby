@@ -4,7 +4,9 @@ import test from 'node:test';
 import {
     canApplyForwardHydration,
     forwardsToStopOnDrawerClose,
+    isCurrentForwardEvent,
     removeForward,
+    shouldCancelPendingForward,
     shouldRetainStartedForward,
     upsertForward,
 } from './port-forward-state.js';
@@ -48,6 +50,19 @@ test('a late Start result survives only for a current drawer or background mode'
     assert.equal(shouldRetainStartedForward({ drawerStillOwnsRequest: true, keepRunning: false }), true);
     assert.equal(shouldRetainStartedForward({ drawerStillOwnsRequest: false, keepRunning: true }), true);
     assert.equal(shouldRetainStartedForward({ drawerStillOwnsRequest: false, keepRunning: false }), false);
+});
+
+test('drawer close cancels only its pending foreground start', () => {
+    const ref = { kind: 'Pod', namespace: 'default', name: 'api' };
+    assert.equal(shouldCancelPendingForward({ ...ref, id: 'pf-a', keepRunning: false }, ref), true);
+    assert.equal(shouldCancelPendingForward({ ...ref, id: 'pf-a', keepRunning: true }, ref), false);
+    assert.equal(shouldCancelPendingForward({ ...ref, name: 'worker', id: 'pf-a', keepRunning: false }, ref), false);
+});
+
+test('closed events belong to the exact active connection', () => {
+    assert.equal(isCurrentForwardEvent({ connectionId: 'connection-a', key: 'pf-a' }, 'connection-a'), true);
+    assert.equal(isCurrentForwardEvent({ connectionId: 'connection-a', key: 'pf-a' }, 'connection-b'), false);
+    assert.equal(isCurrentForwardEvent({ connectionId: 'connection-a' }, 'connection-a'), false);
 });
 
 test('backend closed events remove the exact tunnel only', () => {

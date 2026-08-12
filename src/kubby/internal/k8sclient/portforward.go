@@ -107,11 +107,15 @@ func StartPortForward(ctx context.Context, c *Cluster, kind, namespace, name str
 	// Fill in the actually-bound local port once ready, then re-signal readiness.
 	proxyReady := make(chan struct{})
 	go func() {
-		<-readyCh
-		if p, err := fw.GetPorts(); err == nil && len(p) > 0 {
-			session.LocalPort = int(p[0].Local)
+		select {
+		case <-readyCh:
+			if p, err := fw.GetPorts(); err == nil && len(p) > 0 {
+				session.LocalPort = int(p[0].Local)
+			}
+			close(proxyReady)
+		case <-stopCh:
+		case <-ctx.Done():
 		}
-		close(proxyReady)
 	}()
 
 	return session, proxyReady, errCh, nil

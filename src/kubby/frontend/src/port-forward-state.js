@@ -26,6 +26,14 @@ export function shouldRetainStartedForward({ drawerStillOwnsRequest, keepRunning
     return !!keepRunning || !!drawerStillOwnsRequest;
 }
 
+export function shouldCancelPendingForward(pending, ref) {
+    return !!pending && !pending.keepRunning && sameOwner(pending, ref);
+}
+
+export function isCurrentForwardEvent(event, connectionID) {
+    return !!event && event.connectionId === connectionID && !!event.key;
+}
+
 export function canApplyForwardHydration({ connectionCurrent, requestedVersion, currentVersion }) {
     return !!connectionCurrent && requestedVersion === currentVersion;
 }

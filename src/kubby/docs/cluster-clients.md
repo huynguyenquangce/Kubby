@@ -66,16 +66,23 @@ welcome screen can offer a picker before connecting.
 `App` (in `app.go`) holds the registry:
 
 ```go
-clusters   map[string]*k8sclient.Cluster  // keyed by context name
-order      []string                        // connection order → stable dropdown
-activeName string
-cluster    *k8sclient.Cluster              // always points at the active one
+clusters map[string]*clusterEntry // stable connection ID → entry
+order    []string                 // connection IDs → stable dropdown order
+activeID string
 ```
 
-`a.cluster` always pointing at the active cluster is what let multi-cluster be
-added without touching any of the methods written before it. Keep that property:
-a new method should use `a.cluster` after `a.requireCluster()`, not look up the
-registry itself.
+The ID is deliberately separate from the context/display name. Two unrelated
+kubeconfigs commonly both call their context `default` or `admin`; context name
+therefore cannot be a registry key. The first display label stays `default`, the
+next becomes `default (2)`, while frontend option values and backend switching use
+the stable IDs.
+
+Cluster state is protected by `stateMu`. A bound method calls `requireCluster()`
+once and keeps the returned pointer as its immutable snapshot for the whole I/O;
+it must not re-read active state after the call has started. Add, switch and
+disconnect serialize through `transitionMu`, advance `connectionEpoch`, publish
+one active entry, and invalidate the old log/exec/port-forward lifecycle. Session
+close happens outside its registry lock.
 
 On switching or disconnecting a cluster the frontend must rebuild everything
 cluster-derived — namespace options, sidebar counts, and the dynamic custom-resource

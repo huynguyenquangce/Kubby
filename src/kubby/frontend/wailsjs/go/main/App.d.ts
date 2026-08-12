@@ -19,6 +19,8 @@ export function BrowseHelmRepo(arg1:string):Promise<Array<k8sclient.ChartSearchR
 
 export function CanI(arg1:string,arg2:string):Promise<k8sclient.AccessSet>;
 
+export function CancelPortForwardStart(arg1:string):Promise<void>;
+
 export function ChartDefaultValues(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function ChartDetails(arg1:string,arg2:string):Promise<k8sclient.ChartDetail>;
@@ -199,11 +201,11 @@ export function SidebarCounts(arg1:string,arg2:boolean):Promise<Array<k8sclient.
 
 export function Sizing(arg1:string):Promise<k8sclient.SizingReport>;
 
-export function StartExec(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number):Promise<void>;
+export function StartExec(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number,arg7:number):Promise<void>;
 
 export function StartLogStream(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
-export function StartPortForward(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number,arg6:boolean):Promise<main.PortForwardInfo>;
+export function StartPortForward(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number,arg7:boolean):Promise<main.PortForwardInfo>;
 
 export function StopExec():Promise<void>;
 

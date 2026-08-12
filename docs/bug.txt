@@ -6,6 +6,17 @@ Bug log — add one line per issue. Resolved items move to the bottom.
 
 ## Fixed
 
+- [2026-08-12] App connection/session lifecycle could race, duplicate context
+  names overwrote one another, and exec/port-forward startup could complete after
+  its drawer or cluster owner was gone. Cause: the cluster registry used display
+  context names as identity and had no synchronization; bound methods re-read the
+  mutable active pointer; port-forward was registered only after readiness; and
+  streaming events lacked an end-to-end owner. Fix: stable connection IDs and an
+  atomic locked transition now own add/switch/disconnect, every bound call keeps
+  one cluster snapshot, pending port-forwards register a cancellable operation
+  before I/O, exec/port-forward events carry exact session/connection ownership,
+  and concurrent/deferred regression tests run under the Go race detector.
+
 - [2026-08-11] Helm SDK v3.16.4 exposed install/upgrade to a reachable
   JSON-schema stack-exhaustion vulnerability. Cause: the dependency remained on
   a version older than the upstream 3.17.3 fix. Fix: upgrade to Helm v3.21.3 and

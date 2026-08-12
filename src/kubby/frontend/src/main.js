@@ -11,7 +11,9 @@ import { createYamlEditor, parseApplyFailures } from './editor.js';
 import {
     canApplyForwardHydration,
     forwardsToStopOnDrawerClose,
+    isCurrentForwardEvent,
     removeForward,
+    shouldCancelPendingForward,
     shouldRetainStartedForward,
     upsertForward,
 } from './port-forward-state.js';
@@ -121,6 +123,7 @@ import {
     StopLogStream,
     SaveTextToFile,
     StartPortForward,
+    CancelPortForwardStart,
     StopPortForward,
     ListPortForwards,
     StartExec,
@@ -348,7 +351,7 @@ function refreshClusterSwitcher() {
         sel.innerHTML = '';
         for (const c of clusters ?? []) {
             const opt = document.createElement('option');
-            opt.value = c.name;
+            opt.value = c.id;
             opt.textContent = c.name;
             if (c.active) opt.selected = true;
             sel.appendChild(opt);
@@ -357,13 +360,13 @@ function refreshClusterSwitcher() {
 }
 
 $('cluster-select').addEventListener('change', (e) => {
-    const name = e.target.value;
+    const connectionID = e.target.value;
     connectionOwnershipChanged();
     clearRenderedView();
     closeDrawer();
     stopKnownPortForwards();
     clearAccessCache(); // a different cluster grants different things
-    SwitchCluster(name)
+    SwitchCluster(connectionID)
         .then(() => { currentNamespace = ''; hydratePortForwards(); return loadNamespaceOptions(); })
         .then(() => {
             // A different cluster has different counts and different CRDs — both
@@ -1294,6 +1297,7 @@ function closeDrawer() {
     const closingRef = drawerRef;
     stopFollow();
     stopExec();
+    cancelPendingForwardForDrawer(closingRef);
     requestScopes.closeDrawer();
     activeDrawerScope = null;
     yamlReady = false;
@@ -1938,6 +1942,7 @@ $('btn-yaml-save').addEventListener('click', async () => {
     const text = drawerEditor().getValue();
     const ownerKey = yamlOwnerKey;
     const expectedCluster = $('cluster-select').value;
+    const expectedClusterName = $('cluster-select').selectedOptions[0]?.textContent ?? expectedCluster;
     const changed = summarizeLineChanges(lineDiff(yamlOriginal, text));
     if (changed.added === 0 && changed.removed === 0) {
         setYamlStatus('No changes', '');
@@ -1947,7 +1952,7 @@ $('btn-yaml-save').addEventListener('click', async () => {
     try {
         await confirmedAction(
             () => showConfirm(
-                `Update ${ref.kind} “${ref.name}”${where} on cluster “${expectedCluster}”?\n`
+                `Update ${ref.kind} “${ref.name}”${where} on cluster “${expectedClusterName}”?\n`
                 + `YAML diff: +${changed.added} / -${changed.removed} lines.`,
                 { title: `Save ${ref.kind} YAML`, icon: '✎', okText: 'Save' },
             ),
@@ -2110,6 +2115,8 @@ $('btn-logs-download').addEventListener('click', () => {
 
 // ---- Terminal (PTY-backed interactive exec) ----
 let execConnected = false;
+let execSessionID = '';
+let execSessionSeq = 0;
 let execAcceptOutput = false;
 let execTerminal = null;
 let execFitAddon = null;
@@ -2173,6 +2180,7 @@ function setTerminalStatus(state, text) {
 function resetTerminalUI({ clear = false, preserveOutput = false } = {}) {
     execConnected = false;
     execAcceptOutput = false;
+    execSessionID = '';
     execInputEpoch++;
     execWriter = () => Promise.resolve();
     $('btn-term-start').hidden = false;
@@ -2189,13 +2197,14 @@ function resetTerminalUI({ clear = false, preserveOutput = false } = {}) {
     $('term-placeholder').hidden = preserveOutput && execHasOutput;
 }
 
-EventsOn('exec-output', (chunk) => {
-    if (!execAcceptOutput) return;
+EventsOn('exec-output', (event) => {
+    if (!execAcceptOutput || event?.sessionId !== execSessionID) return;
     execHasOutput = true;
-    ensureTerminal().write(String(chunk));
+    ensureTerminal().write(String(event.data ?? ''));
 });
-EventsOn('exec-closed', (msg) => {
-    if (!execAcceptOutput) return;
+EventsOn('exec-closed', (event) => {
+    if (!execAcceptOutput || event?.sessionId !== execSessionID) return;
+    const msg = event.message ?? '';
     const suffix = msg ? `Session ended · ${msg}` : 'Session ended';
     execHasOutput = true;
     ensureTerminal().write(`\r\n\x1b[90m[${suffix}]\x1b[0m\r\n`);
@@ -2233,6 +2242,8 @@ $('btn-term-start').addEventListener('click', () => {
     const terminal = ensureTerminal();
     const size = fitTerminal() ?? { cols: 80, rows: 24 };
     const inputEpoch = ++execInputEpoch;
+    const sessionID = `exec-${Date.now()}-${++execSessionSeq}`;
+    execSessionID = sessionID;
     execAcceptOutput = true;
     execConnected = false;
     execHasOutput = false;
@@ -2243,7 +2254,7 @@ $('btn-term-start').addEventListener('click', () => {
     $('term-shell').disabled = true;
     $('term-session-label').textContent = `${ref.name} · ${container || 'default container'}`;
     setTerminalStatus('connecting', 'Connecting…');
-    StartExec(ref.namespace, ref.name, container, shell, size.cols, size.rows)
+    StartExec(sessionID, ref.namespace, ref.name, container, shell, size.cols, size.rows)
         .then(() => {
             if (!isCurrentDrawerRequest(scope) || inputEpoch !== execInputEpoch) { StopExec(); return; }
             execConnected = true;
@@ -2280,6 +2291,7 @@ const PF_KEEP_PREF = 'kubby.portForward.keepRunning';
 let activeForwards = [];
 let forwardStateVersion = 0;
 let forwardStartId = 0;
+let pendingForwardOperation = null;
 let toastForwardKey = '';
 let pfToastTimer = null;
 
@@ -2340,7 +2352,9 @@ function stopEphemeralForwards(ref) {
     for (const key of forwardsToStopOnDrawerClose(activeForwards, ref)) stopForward(key);
 }
 
-EventsOn('portforward-closed', (key) => {
+EventsOn('portforward-closed', (event) => {
+	if (!isCurrentForwardEvent(event, $('cluster-select').value)) return;
+    const key = event.key;
     activeForwards = removeForward(activeForwards, key);
     forwardStateVersion++;
     if (toastForwardKey === key) hideForwardToast();
@@ -2358,6 +2372,13 @@ function prepareForward() {
     renderAllForwards();
 }
 
+function cancelPendingForwardForDrawer(ref) {
+    const pending = pendingForwardOperation;
+    if (!shouldCancelPendingForward(pending, ref)) return;
+    pendingForwardOperation = null;
+    Promise.resolve(CancelPortForwardStart(pending.id)).catch(() => {});
+}
+
 $('pf-keep-running').addEventListener('change', (event) => saveKeepRunningPreference(event.target.checked));
 
 $('btn-pf-start').addEventListener('click', () => {
@@ -2373,11 +2394,19 @@ $('btn-pf-start').addEventListener('click', () => {
         return;
     }
     const requestId = ++forwardStartId;
+    const operationID = `pf-${Date.now()}-${requestId}`;
+    pendingForwardOperation = {
+        id: operationID,
+        kind: ref.kind,
+        namespace: ref.namespace,
+        name: ref.name,
+        keepRunning,
+    };
     $('pf-error').hidden = true;
     const btn = $('btn-pf-start');
     btn.disabled = true;
     btn.textContent = 'Starting…';
-    StartPortForward(ref.kind, ref.namespace, ref.name, local, remote, keepRunning)
+    StartPortForward(operationID, ref.kind, ref.namespace, ref.name, local, remote, keepRunning)
         .then((info) => {
             const drawerStillOwnsRequest = isCurrentDrawerRequest(scope);
             if (!shouldRetainStartedForward({ drawerStillOwnsRequest, keepRunning })) {
@@ -2396,6 +2425,7 @@ $('btn-pf-start').addEventListener('click', () => {
             }
         })
         .finally(() => {
+            if (pendingForwardOperation?.id === operationID) pendingForwardOperation = null;
             if (!isCurrentDrawerRequest(scope) || requestId !== forwardStartId) return;
             btn.disabled = false;
             btn.textContent = 'Start forward';
@@ -3291,9 +3321,10 @@ function deleteRef(ref) {
 function pauseRef(ref, paused) {
     const verb = paused ? 'Pause' : 'Resume';
     const cluster = $('cluster-select').value;
+    const clusterName = $('cluster-select').selectedOptions[0]?.textContent ?? cluster;
     confirmedAction(
         () => showConfirm(
-            `${verb} rollout for Deployment “${ref.name}” in namespace “${ref.namespace}” on cluster “${cluster}”?`,
+            `${verb} rollout for Deployment “${ref.name}” in namespace “${ref.namespace}” on cluster “${clusterName}”?`,
             { title: `${verb} deployment`, icon: paused ? '⏸' : '▶', okText: verb },
         ),
         () => {
@@ -3308,9 +3339,10 @@ function pauseRef(ref, paused) {
 function nodeSchedule(ref, schedulable) {
     const verb = schedulable ? 'Uncordon' : 'Cordon';
     const cluster = $('cluster-select').value;
+    const clusterName = $('cluster-select').selectedOptions[0]?.textContent ?? cluster;
     confirmedAction(
         () => showConfirm(
-            `${verb} Node “${ref.name}” on cluster “${cluster}”?`,
+            `${verb} Node “${ref.name}” on cluster “${clusterName}”?`,
             { title: `${verb} node`, icon: schedulable ? '🟢' : '🚫', okText: verb },
         ),
         () => {
@@ -3746,10 +3778,11 @@ function openHelmDetailModal(ref) {
     runTestsButton.addEventListener('click', async () => {
         const btn = runTestsButton;
         const cluster = $('cluster-select').value;
+        const clusterName = $('cluster-select').selectedOptions[0]?.textContent ?? cluster;
         try {
             await confirmedAction(
                 () => showConfirm(
-                    `Run Helm tests for release “${ref.name}” in namespace “${ref.namespace}” on cluster “${cluster}”?\n`
+                    `Run Helm tests for release “${ref.name}” in namespace “${ref.namespace}” on cluster “${clusterName}”?\n`
                     + 'Test hooks may create or delete cluster resources.',
                     { title: 'Run Helm tests', icon: '🧪', okText: 'Run tests' },
                 ),

@@ -21,9 +21,9 @@ This is the single most repeated mistake in this area. See
 |---|---|---|
 | `loglines` | `StartLogStream` goroutine | one owned batch of log lines |
 | `logerror` | `StartLogStream` goroutine | an owned stream failure |
-| `exec-output` | exec session | terminal output |
-| `exec-closed` | exec session | the session ended |
-| `portforward-closed` | a tunnel dying | the frontend should drop it |
+| `exec-output` | exec session | terminal output carrying its frontend session ID |
+| `exec-closed` | exec session | the owned session ended |
+| `portforward-closed` | a tunnel dying | the frontend should drop the key only for its exact connection ID |
 
 The frontend listens with `EventsOn(name, handler)`. Anything that opens a stream
 must also close it — `closeDrawer()` calls `stopFollow()` and `stopExec()`.
@@ -64,7 +64,10 @@ One session at a time. Frontend writes are serialized because Wails calls are
 promises and input order must not depend on bridge completion order. The App layer
 also owns an exec generation: Stop, drawer close, connection change, or a new Start
 invalidates callbacks from the previous session. The session, its terminal-size
-queue, and Close paths must remain concurrency-safe.
+queue, and Close paths must remain concurrency-safe. Output/closed events also
+carry the frontend-created session ID; the WebView accepts only the exact current
+ID, because a generation check before `EventsEmit` cannot retract an event already
+crossing the bridge.
 
 ## Port-forward
 
@@ -83,11 +86,15 @@ that links back to this manager, so closing a resource drawer never makes a
 background session undiscoverable.
 
 The drawer's **Keep running after drawer closes** choice is captured when Start is
-clicked. When off, closing or replacing that exact drawer stops its tunnel; a
-late Start response is stopped immediately rather than resurrecting it. When on,
+clicked. A frontend operation ID is registered in the backend before startup I/O.
+When Keep running is off, closing or replacing that exact drawer cancels the
+pending operation immediately as well as stopping an active tunnel; a late Start
+response is torn down rather than resurrecting it. When on,
 the tunnel remains in the global manager. Cluster transitions invalidate pending
 starts and stop all registered tunnels. `pfSessions`, its cluster epoch, and
 session close are concurrency-safe because teardown also runs from goroutines.
+Tunnel keys and close events carry the stable connection ID so an event from A
+cannot remove a same-shaped tunnel rendered for B.
 
 Local port `0` asks the OS to pick a free port.
 

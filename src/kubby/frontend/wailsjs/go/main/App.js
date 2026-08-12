@@ -34,6 +34,10 @@ export function CanI(arg1, arg2) {
   return window['go']['main']['App']['CanI'](arg1, arg2);
 }
 
+export function CancelPortForwardStart(arg1) {
+  return window['go']['main']['App']['CancelPortForwardStart'](arg1);
+}
+
 export function ChartDefaultValues(arg1, arg2, arg3) {
   return window['go']['main']['App']['ChartDefaultValues'](arg1, arg2, arg3);
 }
@@ -394,16 +398,16 @@ export function Sizing(arg1) {
   return window['go']['main']['App']['Sizing'](arg1);
 }
 
-export function StartExec(arg1, arg2, arg3, arg4, arg5, arg6) {
-  return window['go']['main']['App']['StartExec'](arg1, arg2, arg3, arg4, arg5, arg6);
+export function StartExec(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['StartExec'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 export function StartLogStream(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['StartLogStream'](arg1, arg2, arg3, arg4);
 }
 
-export function StartPortForward(arg1, arg2, arg3, arg4, arg5, arg6) {
-  return window['go']['main']['App']['StartPortForward'](arg1, arg2, arg3, arg4, arg5, arg6);
+export function StartPortForward(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['StartPortForward'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 export function StopExec() {
