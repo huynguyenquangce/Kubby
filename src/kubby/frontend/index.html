@@ -126,7 +126,7 @@
             </div>
         </nav>
 
-        <aside class="sidebar">
+        <aside id="sidebar" class="sidebar">
             <div class="brand">
                 <img class="brand-logo" src="/src/assets/images/kubby-mark.svg" alt=""/>
                 <span class="brand-name">Kubby</span>
@@ -222,16 +222,23 @@
             </div>
         </aside>
 
+        <button id="mobile-nav-backdrop" class="mobile-nav-backdrop" type="button" aria-label="Close navigation" hidden></button>
+
         <div class="main">
             <header class="topbar">
-                <button id="btn-command-palette" class="command-search" type="button">
-                    <svg class="view-search-ico"><use href="#i-search"/></svg>
-                    <span>Search resources, actions, or commands</span>
-                    <kbd>Ctrl K</kbd>
-                </button>
+                <div class="topbar-primary">
+                    <button id="btn-mobile-nav" class="icon-btn mobile-nav-toggle" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
+                        <span class="mobile-nav-glyph" aria-hidden="true"><i></i><i></i><i></i></span>
+                    </button>
+                    <button id="btn-command-palette" class="command-search" type="button">
+                        <svg class="view-search-ico"><use href="#i-search"/></svg>
+                        <span>Search resources, actions, or commands</span>
+                        <kbd>Ctrl K</kbd>
+                    </button>
+                </div>
                 <div class="topbar-actions">
-                    <button id="btn-create" class="btn btn-primary btn-sm btn-icon"><svg class="btn-ico"><use href="#i-plus"/></svg>Create</button>
-                    <button id="btn-import" class="btn btn-secondary btn-sm btn-icon"><svg class="btn-ico"><use href="#i-upload"/></svg>Import YAML</button>
+                    <button id="btn-create" class="btn btn-primary btn-sm btn-icon" aria-label="Create resource"><svg class="btn-ico"><use href="#i-plus"/></svg><span class="topbar-action-label">Create</span></button>
+                    <button id="btn-import" class="btn btn-secondary btn-sm btn-icon" aria-label="Import YAML"><svg class="btn-ico"><use href="#i-upload"/></svg><span class="topbar-action-label">Import YAML</span></button>
                     <div class="pf-manager-wrap">
                         <button id="btn-port-forwards" class="btn btn-secondary btn-sm pf-manager-button" type="button"
                                 aria-haspopup="dialog" aria-expanded="false">

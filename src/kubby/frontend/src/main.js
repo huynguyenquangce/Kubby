@@ -1,6 +1,7 @@
 import './style.css';
 import './app.css';
 import './option-b.css';
+import './responsive.css';
 import '@fontsource-variable/inter/wght.css';
 import '@xterm/xterm/css/xterm.css';
 
@@ -437,6 +438,39 @@ document.querySelector('[data-rail-action="theme"]')?.addEventListener('click', 
 document.querySelector('[data-rail-action="settings"]')?.addEventListener('click', () => $('btn-settings').click());
 $('btn-command-palette').addEventListener('click', openPalette);
 
+// Below the desktop-shell breakpoint the existing sidebar becomes an off-canvas
+// navigation drawer. Reusing it keeps dynamic CRD sections, counts, namespace and
+// cluster controls in one DOM tree instead of maintaining a second mobile menu.
+const mobileNavMedia = window.matchMedia('(max-width: 820px)');
+
+function setMobileNavOpen(open) {
+    const wasOpen = $('dashboard').classList.contains('mobile-nav-open');
+    const shouldOpen = Boolean(open && mobileNavMedia.matches && !$('dashboard').hidden);
+    $('dashboard').classList.toggle('mobile-nav-open', shouldOpen);
+    $('btn-mobile-nav').setAttribute('aria-expanded', String(shouldOpen));
+    $('btn-mobile-nav').setAttribute('aria-label', shouldOpen ? 'Close navigation' : 'Open navigation');
+    $('mobile-nav-backdrop').hidden = !shouldOpen;
+    document.querySelector('.main').inert = shouldOpen;
+    if (shouldOpen) {
+        requestAnimationFrame(() => $('sidebar').querySelector('.nav-item.active, select, button')?.focus());
+    } else if (wasOpen && mobileNavMedia.matches) {
+        $('btn-mobile-nav').focus();
+    }
+}
+
+$('btn-mobile-nav').addEventListener('click', () => {
+    setMobileNavOpen(!$('dashboard').classList.contains('mobile-nav-open'));
+});
+$('mobile-nav-backdrop').addEventListener('click', () => setMobileNavOpen(false));
+mobileNavMedia.addEventListener('change', () => setMobileNavOpen(false));
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && $('dashboard').classList.contains('mobile-nav-open')) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setMobileNavOpen(false);
+    }
+});
+
 // ---- Collapsible sidebar groups (accordion) ----
 const NAV_COLLAPSE_KEY = 'kubby-nav-collapsed';
 
@@ -603,6 +637,7 @@ function viewSectionId(view) {
 }
 
 function selectView(view) {
+    setMobileNavOpen(false);
     currentView = view;
     revealNavSection(view);
     const sectionId = viewSectionId(view);

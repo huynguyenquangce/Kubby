@@ -1,0 +1,294 @@
+/* Responsive ownership lives here. app.css defines component defaults and
+   option-b.css defines the visual skin; this last-loaded file owns how those
+   components adapt to the actual workspace left after the application shell. */
+
+.main {
+    container-name: workspace;
+    container-type: inline-size;
+    overflow: hidden;
+}
+
+.topbar-primary {
+    display: flex;
+    align-items: center;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 0.55rem;
+}
+
+.topbar-actions {
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+.mobile-nav-toggle,
+.mobile-nav-backdrop {
+    display: none;
+}
+
+.mobile-nav-glyph {
+    display: flex;
+    width: 17px;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.mobile-nav-glyph i {
+    display: block;
+    width: 100%;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+}
+
+/* Keep dashboard canvases readable when the browser is zoomed out on an
+   ultrawide screen instead of stretching every relationship across the window. */
+#view-structure,
+#view-traffic,
+#view-sizing {
+    width: 100%;
+    max-width: 1480px;
+    margin-inline: auto;
+}
+
+@media (max-width: 1320px) {
+    .topbar-action-label,
+    .topbar-actions .live-button span {
+        display: none;
+    }
+
+    .topbar-actions .live-button {
+        width: 38px;
+        padding: 0;
+    }
+}
+
+@media (max-width: 820px) {
+    .dashboard {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .mobile-nav-toggle {
+        display: inline-flex;
+        width: 38px;
+        height: 38px;
+        flex: 0 0 38px;
+        border: 1px solid var(--line);
+        background: var(--card);
+    }
+
+    .mobile-nav-backdrop {
+        position: fixed;
+        z-index: 73;
+        inset: 0;
+        display: block;
+        border: 0;
+        background: rgba(15, 23, 42, 0.38);
+        backdrop-filter: blur(1px);
+    }
+
+    .sidebar {
+        position: fixed;
+        z-index: 74;
+        inset: 0 auto 0 0;
+        display: flex;
+        width: min(320px, 88vw);
+        visibility: hidden;
+        transform: translateX(-102%);
+        box-shadow: 18px 0 50px rgba(15, 23, 42, 0.24);
+        transition: transform 0.18s ease, visibility 0s linear 0.18s;
+    }
+
+    .dashboard.mobile-nav-open .sidebar {
+        visibility: visible;
+        transform: translateX(0);
+        transition-delay: 0s;
+    }
+
+    .topbar {
+        gap: 0.65rem;
+        padding-inline: 1rem;
+    }
+
+    .command-search {
+        flex: 0 0 44px;
+    }
+
+    .page-heading-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .page-heading-actions > .btn,
+    .page-heading-actions > .view-search {
+        max-width: 100%;
+    }
+}
+
+@media (max-width: 620px) {
+    .topbar {
+        align-items: stretch;
+        flex-wrap: wrap;
+        padding: 0.7rem 0.8rem;
+    }
+
+    .topbar-primary {
+        flex: 1 1 100%;
+    }
+
+    .command-search {
+        flex: 1 1 auto;
+        width: auto;
+    }
+
+    .command-search span {
+        display: block;
+    }
+
+    .topbar-actions {
+        width: 100%;
+        justify-content: flex-end;
+        gap: 0.35rem;
+    }
+
+    .topbar-sep {
+        display: none;
+    }
+
+    .page-heading,
+    .content {
+        padding-inline: 0.8rem;
+    }
+
+    #dash-error {
+        margin-inline: 0.8rem;
+    }
+
+    .drawer {
+        width: 100vw;
+    }
+
+    .drawer-head,
+    .drawer-panel,
+    .modal-head,
+    .modal-body,
+    .modal-foot {
+        padding-inline: 0.9rem;
+    }
+
+    .drawer-tabs {
+        padding-inline: 0.9rem;
+    }
+
+    .drawer-toolbar,
+    .modal-foot,
+    .chart-search-row,
+    .view-toolbar,
+    .install-form {
+        flex-wrap: wrap;
+    }
+
+    .detail-row {
+        grid-template-columns: minmax(90px, 0.4fr) minmax(0, 1fr);
+    }
+
+    .modal {
+        width: calc(100vw - 1rem);
+        max-height: calc(100vh - 1rem);
+    }
+}
+
+/* Component breakpoints depend on the remaining workspace, not on the outer
+   window. This removes the 220-330px blind spot introduced by rail/sidebar. */
+@container workspace (max-width: 1030px) {
+    .structure-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .structure-inspector {
+        position: static;
+        min-height: 0;
+    }
+
+    .structure-inspector-empty {
+        min-height: 130px;
+    }
+}
+
+@container workspace (max-width: 960px) {
+    .overview-pulse-grid,
+    .overview-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .stat-cards {
+        grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+    }
+}
+
+@container workspace (max-width: 760px) {
+    .page-heading {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .view-search {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .structure-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .structure-lane-head {
+        display: none;
+    }
+
+    .structure-path {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.4rem;
+    }
+
+    .structure-arrow {
+        height: 15px;
+        transform: rotate(90deg);
+    }
+
+    .structure-lane::before {
+        content: attr(data-lane);
+    }
+
+    .flow-row,
+    .flow-row-standalone {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.5rem;
+    }
+
+    .flow-arrow {
+        display: none;
+    }
+}
+
+@container workspace (max-width: 520px) {
+    .structure-summary {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .structure-search {
+        min-width: 100%;
+    }
+
+    .overview-pulse,
+    .overview-section,
+    .stat-card,
+    .structure-stat {
+        border-radius: 10px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sidebar {
+        transition: none;
+    }
+}

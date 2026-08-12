@@ -28,6 +28,7 @@ cd ..
 | `frontend/src/terminal-io.test.js` | raw input ordering, write-error recovery, and valid PTY dimensions |
 | `frontend/src/log-buffer.test.js` | 5,000-line cap and frame-coalesced live-log rendering |
 | `frontend/src/line-diff.test.js` | diff reconstruction, pathological fallback, and 10,000-line regression budget |
+| `frontend/src/responsive.test.js` | canonical off-canvas navigation, shrinkable top-bar labels, workspace container breakpoints, and viewport-bounded overlays |
 | `internal/k8sclient/exec_test.go` | initial/coalesced terminal resize plus concurrent, unblocking queue close |
 | `internal/k8sclient/logstream_test.go` | batch size, quiet-stream timer flush, final flush and cancel semantics |
 | `internal/k8sclient/overview_test.go` | one Node/Pod list, partial failures, terminating-Pod exclusion, and 10k benchmark |
@@ -174,6 +175,15 @@ select each hop and confirm the inspector identity matches it. **Open full detai
 must open the same resource, and **View logs** must appear only for Pods. Confirm
 internal Services and unexposed workloads remain present. This requires a native
 WebView and is not proven by the headless build.
+
+Responsive/zoom visual check: on Windows WebView2, use 1366×768 and 1920×1080
+windows at 80%, 100%, 125%, 150%, 175% and 200%. Visit Overview, Cluster structure,
+Traffic, a resource table, a Pod drawer (Details/YAML/Terminal/Port Forward), Settings
+and a Helm modal. No shell control may leave the window; only the resource table's
+own scrolling region may scroll horizontally. When the sidebar collapses, the menu
+button must expose the same namespace, cluster and dynamically discovered resource
+navigation, then close through selection, backdrop and Escape. This manual native
+check remains required even when the passive Edge layout measurements pass.
 
 ## This machine
 

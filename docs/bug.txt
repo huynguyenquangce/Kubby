@@ -336,3 +336,12 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   already present in `OverviewSnapshot`. A separate Cluster structure view adds the
   complete Entry point → Service → Workload → Pod debug path without per-resource
   API fan-out, retaining internal Services and unexposed workloads.
+- [2026-08-12] Browser/WebView zoom made the dashboard shell and topology views
+  overflow or lose navigation. Cause: responsive breakpoints used the outer viewport
+  even though the visible workspace was 220–330 px narrower behind the rail/sidebar;
+  top-bar labels had no valid shrink target, and both desktop navigation columns were
+  hidden below 820 px without a replacement. Fix: a single last-loaded responsive
+  layer uses named workspace container queries for Overview/Structure/Traffic,
+  collapses top-bar labels while retaining accessible actions, reuses the canonical
+  sidebar as an off-canvas menu, and bounds narrow drawers/modals. Regression tests
+  pin the navigation contract, container breakpoints and overlay sizing.

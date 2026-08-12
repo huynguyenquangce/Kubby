@@ -132,6 +132,7 @@ Helm is implemented **in-process** via the Helm Go SDK — no `helm` binary and 
 | FR-29 | Collapsible sidebar groups, consistent line-icon set, and a polished theme with light/dark modes. | ✅ | Accordion groups (state persisted); SVG icons; **Nord** color theme. |
 | FR-30 | Live auto-refresh mode. | ✅ | Refreshes the current view every 5 s; pauses while a selection/drawer/modal/palette is open. |
 | FR-31 | Native browser popups replaced by in-app dialogs. | ✅ | Stackable, theme-aware confirm/alert dialogs. |
+| FR-38 | The complete desktop workflow remains usable under browser/WebView zoom and narrow windows. | ✅ | The shell retains navigation through an off-canvas menu when the rail/sidebar no longer fit; top-bar actions remain reachable; dashboard, topology, drawer and modal layouts adapt to the remaining workspace rather than the outer window width. Supported verification matrix: 80–200% zoom on common 1366×768 and 1920×1080 displays. |
 
 ### 7.7 Tooling
 

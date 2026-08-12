@@ -65,6 +65,27 @@ paths in one payload plus internal Services and unexposed workloads. Search and 
 unhealthy-only toggle filter whole paths; selecting a node fills the local inspector,
 while full detail and logs continue through the shared drawer.
 
+## Responsive shell and zoom
+
+`responsive.css` is loaded after the base and visual-theme styles and owns all new
+responsive overrides. The desktop shell still uses viewport media queries because
+the rail/sidebar themselves consume the viewport. Internal views use the named
+`workspace` container on `.main`: a component must react to the width it actually
+receives after shell columns, not to the wider outer window. Using a viewport query
+for Structure previously left a 220–330 px blind spot where its four lanes still
+expected desktop space behind a visible sidebar.
+
+At 820 px and below, the canonical sidebar becomes an off-canvas navigation drawer.
+Do not build a second mobile navigation tree: it would drift from dynamic custom
+resources, counts, namespace selection and cluster controls. The menu toggle owns
+`aria-expanded`, backdrop/Escape close it, and selecting any view closes it.
+
+Responsive acceptance means no document- or shell-level horizontal overflow from
+390 px upward, while intentionally wide resource tables scroll within `.content`.
+Check the CSS viewport equivalents of 80%, 100%, 125%, 150%, 175% and 200% zoom;
+browser zoom changes CSS viewport width, so fixed physical-window checks alone miss
+the breakpoint boundaries.
+
 ## Drawer
 
 `openDrawer(ref)` where `ref = { kind, namespace, name, isPod?, tab? }`.
