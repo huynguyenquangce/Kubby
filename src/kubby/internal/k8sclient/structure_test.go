@@ -80,7 +80,7 @@ func structureTestPod(namespace, name string, labels map[string]string, ownerKin
 			OwnerReferences: []metav1.OwnerReference{{Kind: ownerKind, Name: ownerName, Controller: &controller}},
 		},
 		Spec: corev1.PodSpec{NodeName: "node-a"},
-		Status: corev1.PodStatus{Phase: phase, ContainerStatuses: []corev1.ContainerStatus{{
+		Status: corev1.PodStatus{Phase: phase, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: map[bool]corev1.ConditionStatus{true: corev1.ConditionTrue, false: corev1.ConditionFalse}[ready]}}, ContainerStatuses: []corev1.ContainerStatus{{
 			Name: "app", Ready: ready, RestartCount: map[bool]int32{true: 0, false: 3}[ready], State: state,
 		}}},
 	}

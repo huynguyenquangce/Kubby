@@ -31,6 +31,9 @@ const (
 var (
 	bearerSecretPattern   = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
 	keyValueSecretPattern = regexp.MustCompile(`(?i)\b(password|passwd|token|api[_-]?key|client[_-]?secret|authorization)\s*[:=]\s*("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)`)
+	uriSecretPattern      = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://)[^/\s:@]+:[^@\s/]+@`)
+	sensitiveYAMLKey      = regexp.MustCompile(`(?i)(^|[./_-])(([a-z0-9]+[_-])?(password|passwd|token|secret)|api[_-]?key|client[_-]?secret|authorization|auth|credentials?|private[_-]?key|access[_-]?key|secret[_-]?key|database[_-]?url|db[_-]?url|connection[_-]?string)$`)
+	camelKeyBoundary      = regexp.MustCompile(`([a-z0-9])([A-Z])`)
 )
 
 // DiagnosticContext assembles a compact text blob (events + logs + YAML) about
@@ -83,6 +86,7 @@ func DiagnosticContext(ctx context.Context, c *Cluster, kind, namespace, name st
 
 func redactSensitiveText(text string) string {
 	text = bearerSecretPattern.ReplaceAllString(text, "Bearer [REDACTED]")
+	text = uriSecretPattern.ReplaceAllString(text, `${1}[REDACTED]@`)
 	return keyValueSecretPattern.ReplaceAllStringFunc(text, func(match string) string {
 		separator := strings.IndexAny(match, ":=")
 		if separator < 0 {
@@ -109,11 +113,41 @@ func redactDiagnosticYAML(text string) string {
 		}
 	}
 	redactLiteralEnvValues(doc)
+	redactSensitiveYAMLValues(doc)
 	out, err := yaml.Marshal(doc)
 	if err != nil {
 		return redactSensitiveText(text)
 	}
-	return string(out)
+	// Defense in depth for credential-shaped strings embedded in fields whose
+	// key is not itself sensitive (for example a database URL in `endpoint`).
+	return redactSensitiveText(string(out))
+}
+
+// redactSensitiveYAMLValues walks arbitrary manifests, including ConfigMaps and
+// custom resources. Kubernetes schemas cannot enumerate every credential field,
+// so sensitive-looking keys are default-deny while ordinary string values still
+// receive the same text redaction used for logs and events.
+func redactSensitiveYAMLValues(value interface{}) {
+	switch node := value.(type) {
+	case map[string]interface{}:
+		for key, child := range node {
+			normalizedKey := camelKeyBoundary.ReplaceAllString(key, `${1}_${2}`)
+			if sensitiveYAMLKey.MatchString(normalizedKey) {
+				node[key] = "[REDACTED]"
+				continue
+			}
+			switch typed := child.(type) {
+			case string:
+				node[key] = redactSensitiveText(typed)
+			default:
+				redactSensitiveYAMLValues(child)
+			}
+		}
+	case []interface{}:
+		for _, child := range node {
+			redactSensitiveYAMLValues(child)
+		}
+	}
 }
 
 func redactLiteralEnvValues(value interface{}) {

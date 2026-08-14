@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	netv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -85,6 +86,8 @@ func ClusterStructure(ctx context.Context, c *Cluster, namespace string) (*Clust
 	services := &corev1.ServiceList{}
 	pods := &corev1.PodList{}
 	ingresses := &netv1.IngressList{}
+	endpointSlices := &discoveryv1.EndpointSliceList{}
+	endpointSlicesAvailable := false
 	replicaSets := &appsv1.ReplicaSetList{}
 	var nodes, namespaces *metav1.PartialObjectMetadataList
 
@@ -107,6 +110,14 @@ func ClusterStructure(ctx context.Context, c *Cluster, namespace string) (*Clust
 			list, err := c.Clientset.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
 			if err == nil {
 				ingresses = list
+			}
+			return err
+		}},
+		{name: "endpoint slices", run: func() error {
+			list, err := c.Clientset.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{})
+			if err == nil {
+				endpointSlices = list
+				endpointSlicesAvailable = true
 			}
 			return err
 		}},
@@ -145,9 +156,10 @@ func ClusterStructure(ctx context.Context, c *Cluster, namespace string) (*Clust
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	flows := networkTopologyFromLists(ctx, c, namespace, services, pods, ingresses)
+	flows := networkTopologyFromLists(ctx, c, namespace, services, pods, ingresses, endpointSlices, endpointSlicesAvailable)
 	out := structureFromSnapshot(namespace, flows, pods.Items, replicaSets.Items)
-	out.Warnings = warnings
+	out.Warnings = append(warnings, flows.Warnings...)
+	sort.Strings(out.Warnings)
 	if nodes != nil {
 		out.Summary.Nodes = len(nodes.Items)
 	}
@@ -236,8 +248,8 @@ func structureFromSnapshot(namespace string, flows *NetworkFlows, pods []corev1.
 			Name: pod.Name, Namespace: pod.Namespace, Status: status, Ready: ready,
 			Restarts: restarts, Node: pod.Spec.NodeName, IP: pod.Status.PodIP,
 			OwnerKind: ownerKind, OwnerName: ownerName,
-			IsError: erroredStatuses[status],
-			IsReady: status == string(corev1.PodRunning) && isFullyReady(ready),
+			IsError: isErroredPodStatus(status),
+			IsReady: (status == string(corev1.PodRunning) && isFullyReady(ready)) || status == string(corev1.PodSucceeded),
 		}
 		out.Summary.Pods++
 		if flowPod.IsError || !flowPod.IsReady {
@@ -292,12 +304,20 @@ func structureWorkloads(pods []FlowPod, rsOwners map[string]metav1.OwnerReferenc
 		workload := byOwner[key]
 		sort.Slice(workload.Pods, func(i, j int) bool { return workload.Pods[i].Name < workload.Pods[j].Name })
 		ready := 0
+		completed := 0
 		for _, pod := range workload.Pods {
 			if !pod.IsError {
 				ready++
 			}
+			if pod.Status == string(corev1.PodSucceeded) {
+				completed++
+			}
 		}
-		workload.Status = fmt.Sprintf("%d/%d ready", ready, len(workload.Pods))
+		if completed == len(workload.Pods) && completed > 0 {
+			workload.Status = "completed"
+		} else {
+			workload.Status = fmt.Sprintf("%d/%d ready", ready, len(workload.Pods))
+		}
 		out = append(out, *workload)
 	}
 	return out

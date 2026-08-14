@@ -50,6 +50,9 @@ type ContainerSizing struct {
 
 	CPUUsage int64 `json:"cpuUsage"` // millicores, or unset when metrics are missing
 	MemUsage int64 `json:"memUsage"` // bytes
+	// MetricsObserved distinguishes this exact container from a successful but
+	// partial PodMetrics list. A global "metrics API answered" flag is not enough.
+	MetricsObserved bool `json:"metricsObserved"`
 
 	// Usage as a percentage of the *request* — the amount the scheduler reserved
 	// on the container's behalf. unset when either side is unknown.
@@ -91,6 +94,9 @@ type NamespaceSizing struct {
 	MemRequest int64 `json:"memRequest"`
 	MemLimit   int64 `json:"memLimit"`
 	MemUsage   int64 `json:"memUsage"`
+
+	MetricsExpected int `json:"metricsExpected"`
+	MetricsObserved int `json:"metricsObserved"`
 
 	// Containers missing a request or a memory limit — the two omissions that
 	// make a namespace's totals meaningless and its neighbours unsafe.
@@ -139,8 +145,12 @@ type SizingReport struct {
 	MemReservedPct int64 `json:"memReservedPct"`
 	MemUsedPct     int64 `json:"memUsedPct"`
 
-	MetricsAvailable bool   `json:"metricsAvailable"`
-	Note             string `json:"note"` // why usage is missing, when it is
+	MetricsAvailable   bool   `json:"metricsAvailable"`
+	MetricsComplete    bool   `json:"metricsComplete"`
+	MetricsExpected    int    `json:"metricsExpected"`
+	MetricsObserved    int    `json:"metricsObserved"`
+	MetricsCoveragePct int64  `json:"metricsCoveragePct"`
+	Note               string `json:"note"` // why usage is missing, when it is
 }
 
 // Sizing builds the right-sizing report for a namespace ("" = whole cluster).
@@ -226,8 +236,31 @@ func Sizing(ctx context.Context, c *Cluster, namespace string) (*SizingReport, e
 	}
 
 	for _, ns := range byNamespace {
+		if usage == nil || ns.MetricsObserved < ns.MetricsExpected {
+			// An aggregate built from a subset is not a measurement of the
+			// namespace. Keep per-container observations, but render the total as
+			// unknown rather than a dangerously low number.
+			ns.CPUUsage = unset
+			ns.MemUsage = unset
+		}
 		report.Namespaces = append(report.Namespaces, *ns)
 		addToTotals(&report.Totals, ns)
+	}
+	report.MetricsExpected = report.Totals.MetricsExpected
+	report.MetricsObserved = report.Totals.MetricsObserved
+	report.MetricsComplete = usage != nil && report.MetricsObserved == report.MetricsExpected
+	if report.MetricsExpected > 0 {
+		report.MetricsCoveragePct = int64(report.MetricsObserved * 100 / report.MetricsExpected)
+	} else if usage != nil {
+		report.MetricsCoveragePct = 100
+	}
+	if !report.MetricsComplete {
+		report.Totals.CPUUsage = unset
+		report.Totals.MemUsage = unset
+		if usage != nil {
+			report.Note = fmt.Sprintf("metrics-server returned %d of %d live container metrics (%d%% coverage), so aggregate usage and downsizing advice are withheld.",
+				report.MetricsObserved, report.MetricsExpected, report.MetricsCoveragePct)
+		}
 	}
 	sort.Slice(report.Namespaces, func(i, j int) bool {
 		return report.Namespaces[i].Namespace < report.Namespaces[j].Namespace
@@ -293,7 +326,7 @@ func advice(r *SizingReport) []string {
 	// Reserved-versus-used: the sentence that starts a capacity conversation.
 	// Allocatable is always cluster-wide, so a namespace-scoped report has to say
 	// so — "reserves 11%" means 11% of the whole cluster either way.
-	if r.AllocCPU > 0 && t.CPURequest > 0 && r.MetricsAvailable {
+	if r.AllocCPU > 0 && t.CPURequest > 0 && r.MetricsComplete {
 		// Read the shares off the report rather than recomputing them — see the
 		// comment on CPUReservedPct.
 		reserved, used := r.CPUReservedPct, r.CPUUsedPct
@@ -405,6 +438,7 @@ func containerSizing(pod *corev1.Pod, spec *corev1.Container, status map[string]
 				cs.CPUPct = percentOf(cs.CPUUsage, cs.CPURequest)
 				cs.MemPct = percentOf(cs.MemUsage, cs.MemRequest)
 				cs.MemOfLimit = percentOf(cs.MemUsage, cs.MemLimit)
+				cs.MetricsObserved = true
 			}
 		}
 	}
@@ -481,6 +515,10 @@ func severity(cs *ContainerSizing) int {
 
 func addToNamespace(ns *NamespaceSizing, cs *ContainerSizing) {
 	ns.Containers++
+	ns.MetricsExpected++
+	if cs.MetricsObserved {
+		ns.MetricsObserved++
+	}
 	addIfSet(&ns.CPURequest, cs.CPURequest)
 	addIfSet(&ns.CPULimit, cs.CPULimit)
 	addIfSet(&ns.MemRequest, cs.MemRequest)
@@ -514,6 +552,8 @@ func addToTotals(t *NamespaceSizing, ns *NamespaceSizing) {
 	t.NoMemRequest += ns.NoMemRequest
 	t.NoMemLimit += ns.NoMemLimit
 	t.Undeclared += ns.Undeclared
+	t.MetricsExpected += ns.MetricsExpected
+	t.MetricsObserved += ns.MetricsObserved
 }
 
 func addIfSet(sum *int64, v int64) {

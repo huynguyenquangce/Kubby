@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -32,19 +33,26 @@ const (
 	istioVSKind      = "VirtualService." + istioGroup
 )
 
+const optionalKindRefreshTTL = time.Minute
+
 // istioContext carries the per-request lookups the gateway hops need, so a
 // cluster with ten Gateways sharing one ingress-gateway does the work once.
 type istioContext struct {
-	ctx      context.Context
-	c        *Cluster
-	scope    string // the namespace the view is filtered to ("" = all)
-	svcByKey map[string]*corev1.Service
-	podsByNs map[string][]*corev1.Pod
+	ctx               context.Context
+	c                 *Cluster
+	scope             string // the namespace the view is filtered to ("" = all)
+	svcByKey          map[string]*corev1.Service
+	podsByNs          map[string][]*corev1.Pod
+	podLabels         podLabelIndex
+	endpointReadiness *serviceEndpointReadiness
 
-	workloadCache map[string]*istioWorkload  // selector string → resolved ingress gateway
-	secretCache   map[string]bool            // "ns/name" → exists
-	outOfScope    map[string]*corev1.Service // "ns/name" → Service fetched from outside the scope
-	outOfScopePod map[string][]*corev1.Pod   // namespace → its pods, likewise
+	workloadCache       map[string]*istioWorkload  // selector string → resolved ingress gateway
+	secretCache         map[string]bool            // "ns/name" → exists
+	outOfScope          map[string]*corev1.Service // "ns/name" → Service fetched from outside the scope
+	outOfScopePod       map[string][]*corev1.Pod   // namespace → its pods, likewise
+	outOfScopeEndpoints map[string]bool
+	warnings            []string
+	warningSet          map[string]bool
 }
 
 // istioWorkload is the ingress-gateway a Gateway's selector points at.
@@ -68,25 +76,33 @@ func istioFlows(
 	namespace string,
 	svcByKey map[string]*corev1.Service,
 	podsByNs map[string][]*corev1.Pod,
+	podLabels podLabelIndex,
+	endpointReadiness *serviceEndpointReadiness,
 	fronted map[string]bool,
 	endpoints map[string]bool,
-) []FlowIngress {
-	gwKind, err := c.ResolveKind(istioGatewayKind)
+) ([]FlowIngress, []string) {
+	gwKind, installed, err := optionalIstioKind(c, istioGatewayKind)
 	if err != nil {
-		return nil // Istio is not installed on this cluster
+		return nil, []string{fmt.Sprintf("Istio discovery: %v", err)}
 	}
-	vsKind, err := c.ResolveKind(istioVSKind)
+	if !installed {
+		return nil, nil
+	}
+	vsKind, installed, err := optionalIstioKind(c, istioVSKind)
 	if err != nil {
-		return nil
+		return nil, []string{fmt.Sprintf("Istio discovery: %v", err)}
+	}
+	if !installed {
+		return nil, []string{"Istio Gateway is installed but VirtualService is unavailable"}
 	}
 
 	gwList, err := c.Dynamic.Resource(gwKind.GVR).Namespace("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil
+		return nil, []string{fmt.Sprintf("Istio Gateways: %v", err)}
 	}
 	vsList, err := c.Dynamic.Resource(vsKind.GVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil
+		return nil, []string{fmt.Sprintf("Istio VirtualServices: %v", err)}
 	}
 
 	gateways := map[string]*unstructured.Unstructured{}
@@ -101,15 +117,18 @@ func istioFlows(
 		order = append(order, key)
 	}
 	if len(gateways) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	ic := &istioContext{
-		ctx: ctx, c: c, scope: namespace, svcByKey: svcByKey, podsByNs: podsByNs,
-		workloadCache: map[string]*istioWorkload{},
-		secretCache:   map[string]bool{},
-		outOfScope:    map[string]*corev1.Service{},
-		outOfScopePod: map[string][]*corev1.Pod{},
+		ctx: ctx, c: c, scope: namespace, svcByKey: svcByKey, podsByNs: podsByNs, podLabels: podLabels,
+		endpointReadiness:   endpointReadiness,
+		workloadCache:       map[string]*istioWorkload{},
+		secretCache:         map[string]bool{},
+		outOfScope:          map[string]*corev1.Service{},
+		outOfScopePod:       map[string][]*corev1.Pod{},
+		outOfScopeEndpoints: map[string]bool{},
+		warningSet:          map[string]bool{},
 	}
 
 	// Group every VirtualService under the Gateway(s) it binds to.
@@ -139,7 +158,47 @@ func istioFlows(
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Namespace+"/"+out[i].Name < out[j].Namespace+"/"+out[j].Name
 	})
-	return out
+	sort.Strings(ic.warnings)
+	return out, ic.warnings
+}
+
+// optionalIstioKind distinguishes a genuinely absent CRD from a discovery
+// failure. The former is normal; the latter must be visible to the operator.
+func optionalIstioKind(c *Cluster, ref string) (APIKind, bool, error) {
+	name, group := splitKindGroup(ref)
+	now := time.Now()
+	c.optionalMu.Lock()
+	if until := c.optionalAbsent[ref]; until.After(now) {
+		c.optionalMu.Unlock()
+		return APIKind{}, false, nil
+	}
+	_, expired := c.optionalAbsent[ref]
+	delete(c.optionalAbsent, ref)
+	c.optionalMu.Unlock()
+	idx, err := c.apiKinds(expired)
+	if err != nil {
+		return APIKind{}, false, err
+	}
+	for _, candidate := range idx.byKind[name] {
+		if candidate.GVR.Group == group {
+			return candidate, true, nil
+		}
+	}
+	c.optionalMu.Lock()
+	if c.optionalAbsent == nil {
+		c.optionalAbsent = map[string]time.Time{}
+	}
+	c.optionalAbsent[ref] = now.Add(optionalKindRefreshTTL)
+	c.optionalMu.Unlock()
+	return APIKind{}, false, nil
+}
+
+func (ic *istioContext) warn(message string) {
+	if message == "" || ic.warningSet[message] {
+		return
+	}
+	ic.warningSet[message] = true
+	ic.warnings = append(ic.warnings, message)
 }
 
 func (ic *istioContext) flowGateway(
@@ -305,13 +364,13 @@ func (ic *istioContext) destinationService(
 
 	if svc, ok := ic.svcByKey[ns+"/"+name]; ok {
 		fronted[ns+"/"+name] = true
-		return flowService(svc, ic.podsByNs[svc.Namespace], endpoints)
+		return flowService(svc, ic.podLabels.candidates(svc, ic.podsByNs[svc.Namespace]), ic.endpointReadiness, endpoints)
 	}
 	// A VirtualService may route across namespaces, so a destination missing
 	// from the scoped listing is not necessarily missing from the cluster —
 	// look it up directly before calling the hop broken.
 	if svc, nsPods, ok := ic.lookupOutOfScope(ns, name); ok {
-		return flowService(svc, nsPods, endpoints)
+		return flowService(svc, ic.podLabels.candidates(svc, nsPods), ic.endpointReadiness, endpoints)
 	}
 	if strings.Contains(host, ".") && !strings.HasSuffix(host, ".svc.cluster.local") && !strings.HasSuffix(host, ".local") {
 		// Looks like a hostname outside the cluster (a ServiceEntry, or an
@@ -342,6 +401,8 @@ func (ic *istioContext) lookupOutOfScope(namespace, name string) (*corev1.Servic
 		found, err := ic.c.Clientset.CoreV1().Services(namespace).Get(ic.ctx, name, metav1.GetOptions{})
 		if err == nil && found.DeletionTimestamp == nil {
 			svc = found
+		} else if err != nil && !apierrors.IsNotFound(err) {
+			ic.warn(fmt.Sprintf("Service %s/%s: %v", namespace, name, err))
 		}
 		ic.outOfScope[key] = svc
 	}
@@ -353,12 +414,32 @@ func (ic *istioContext) lookupOutOfScope(namespace, name string) (*corev1.Servic
 	if !cached {
 		if list, err := ic.c.Clientset.CoreV1().Pods(namespace).List(ic.ctx, metav1.ListOptions{}); err == nil {
 			for i := range list.Items {
-				pods = append(pods, &list.Items[i])
+				if list.Items[i].DeletionTimestamp == nil {
+					pods = append(pods, &list.Items[i])
+				}
 			}
+		} else {
+			ic.warn(fmt.Sprintf("Pods in namespace %s: %v", namespace, err))
 		}
 		ic.outOfScopePod[namespace] = pods
+		ic.podLabels.add(namespace, pods)
 	}
+	ic.ensureEndpointReadiness(namespace)
 	return svc, pods, true
+}
+
+func (ic *istioContext) ensureEndpointReadiness(namespace string) {
+	if ic.scope == "" || namespace == ic.scope || ic.outOfScopeEndpoints[namespace] {
+		return
+	}
+	list, err := ic.c.Clientset.DiscoveryV1().EndpointSlices(namespace).List(ic.ctx, metav1.ListOptions{})
+	if err == nil {
+		ic.endpointReadiness.add(list.Items)
+		ic.endpointReadiness.markAvailable(namespace)
+	} else {
+		ic.warn(fmt.Sprintf("EndpointSlices in namespace %s: %v; falling back to PodReady conditions", namespace, err))
+	}
+	ic.outOfScopeEndpoints[namespace] = true
 }
 
 // ingressWorkload finds the pods a Gateway selector points at and the address
@@ -377,19 +458,30 @@ func (ic *istioContext) ingressWorkload(selector map[string]string) *istioWorklo
 
 	// Cluster-wide: the ingress gateway usually lives outside the viewed scope.
 	pods, err := ic.c.Clientset.CoreV1().Pods("").List(ic.ctx, metav1.ListOptions{LabelSelector: key})
-	if err != nil || len(pods.Items) == 0 {
+	if err != nil {
+		ic.warn(fmt.Sprintf("Istio ingress gateway Pods: %v", err))
 		return wl
 	}
-	wl.Pods = len(pods.Items)
-	wl.Namespace = pods.Items[0].Namespace
+	selectedPods := make([]corev1.Pod, 0, len(pods.Items))
+	for i := range pods.Items {
+		if pods.Items[i].DeletionTimestamp == nil {
+			selectedPods = append(selectedPods, pods.Items[i])
+		}
+	}
+	if len(selectedPods) == 0 {
+		return wl
+	}
+	wl.Namespace = selectedPods[0].Namespace
 
 	// The Gateway selects pods; the address users hit belongs to the Service in
 	// front of those pods, so match back from the pod labels.
 	svcs, err := ic.c.Clientset.CoreV1().Services(wl.Namespace).List(ic.ctx, metav1.ListOptions{})
 	if err != nil {
+		ic.warn(fmt.Sprintf("Services in namespace %s: %v", wl.Namespace, err))
 		return wl
 	}
-	podLabels := labels.Set(pods.Items[0].Labels)
+	podLabels := labels.Set(selectedPods[0].Labels)
+	var frontingService *corev1.Service
 	for i := range svcs.Items {
 		svc := &svcs.Items[i]
 		if len(svc.Spec.Selector) == 0 || !labels.SelectorFromSet(svc.Spec.Selector).Matches(podLabels) {
@@ -405,7 +497,29 @@ func (ic *istioContext) ingressWorkload(selector map[string]string) *istioWorklo
 		if wl.Address == "" {
 			wl.Address = svc.Spec.ClusterIP
 		}
+		frontingService = svc
 		break
+	}
+
+	if frontingService != nil {
+		ic.ensureEndpointReadiness(wl.Namespace)
+		serviceKey := wl.Namespace + "/" + frontingService.Name
+		for i := range selectedPods {
+			pod := &selectedPods[i]
+			if pod.Namespace != wl.Namespace {
+				continue
+			}
+			ready, known := ic.endpointReadiness.podReady(serviceKey, pod.Name)
+			if (known && ready) || (!known && podIsReady(pod)) {
+				wl.Pods++
+			}
+		}
+	} else {
+		for i := range selectedPods {
+			if selectedPods[i].Namespace == wl.Namespace && podIsReady(&selectedPods[i]) {
+				wl.Pods++
+			}
+		}
 	}
 	return wl
 }
@@ -419,6 +533,9 @@ func (ic *istioContext) secretExists(namespace, name string) bool {
 	// Only a definite "not found" counts as missing: without read access to the
 	// gateway's namespace we must not accuse a healthy setup of being broken.
 	exists := err == nil || !apierrors.IsNotFound(err)
+	if err != nil && !apierrors.IsNotFound(err) {
+		ic.warn(fmt.Sprintf("TLS secret %s/%s: %v", namespace, name, err))
+	}
 	ic.secretCache[key] = exists
 	return exists
 }

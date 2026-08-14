@@ -36,13 +36,14 @@ type OverviewStats struct {
 // section-local failures: one forbidden or unavailable API must not blank the
 // remaining dashboard.
 type OverviewData struct {
-	Stats       OverviewStats        `json:"stats"`
-	FailingPods []PodInfo            `json:"failingPods"`
-	NodeMetrics []NodeMetric         `json:"nodeMetrics"`
-	NodeStatus  []OverviewNodeStatus `json:"nodeStatus"`
-	TopPods     []PodMetric          `json:"topPods"`
-	Events      []EventInfo          `json:"events"`
-	Warnings    []string             `json:"warnings"`
+	Stats         OverviewStats        `json:"stats"`
+	FailingPods   []PodInfo            `json:"failingPods"`
+	NodeMetrics   []NodeMetric         `json:"nodeMetrics"`
+	NodeStatus    []OverviewNodeStatus `json:"nodeStatus"`
+	TopPods       []PodMetric          `json:"topPods"`
+	Events        []EventInfo          `json:"events"`
+	Warnings      []string             `json:"warnings"`
+	SectionErrors map[string]string    `json:"sectionErrors"`
 }
 
 // OverviewNodeStatus keeps the infrastructure section operational: readiness,
@@ -140,12 +141,12 @@ func OverviewSnapshot(ctx context.Context, c *Cluster) (*OverviewData, error) {
 		)
 	}
 
-	warnings := runOverviewTasks(ctx, tasks)
+	warnings, sectionErrors := runOverviewTasks(ctx, tasks)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	result := &OverviewData{Warnings: warnings}
+	result := &OverviewData{Warnings: warnings, SectionErrors: sectionErrors}
 	if nodes != nil {
 		result.Stats.Nodes = len(nodes.Items)
 	}
@@ -156,9 +157,10 @@ func OverviewSnapshot(ctx context.Context, c *Cluster) (*OverviewData, error) {
 		result.Stats.Deployments = len(deployments.Items)
 	}
 	if pods != nil {
+		livePods := nonTerminatingPods(pods.Items)
 		result.Stats.PodsAvailable = true
-		result.Stats.Pods = len(pods.Items)
-		result.FailingPods = failingPodInfos(pods.Items)
+		result.Stats.Pods = len(livePods)
+		result.FailingPods = failingPodInfos(livePods)
 		result.Stats.Errors = len(result.FailingPods)
 	}
 	if nodes != nil && nodeUsage != nil {
@@ -209,11 +211,12 @@ func overviewNodeStatuses(nodes []corev1.Node, pods *corev1.PodList) []OverviewN
 	return out
 }
 
-func runOverviewTasks(ctx context.Context, tasks []overviewTask) []string {
+func runOverviewTasks(ctx context.Context, tasks []overviewTask) ([]string, map[string]string) {
 	semaphore := make(chan struct{}, overviewConcurrency)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	warnings := make([]string, 0)
+	sectionErrors := make(map[string]string)
 	for _, task := range tasks {
 		task := task
 		wg.Add(1)
@@ -228,13 +231,14 @@ func runOverviewTasks(ctx context.Context, tasks []overviewTask) []string {
 			if err := task.run(); err != nil {
 				mu.Lock()
 				warnings = append(warnings, fmt.Sprintf("%s: %v", task.name, err))
+				sectionErrors[task.name] = err.Error()
 				mu.Unlock()
 			}
 		}()
 	}
 	wg.Wait()
 	sort.Strings(warnings)
-	return warnings
+	return warnings, sectionErrors
 }
 
 func failingPodInfos(items []corev1.Pod) []PodInfo {
@@ -244,7 +248,7 @@ func failingPodInfos(items []corev1.Pod) []PodInfo {
 			continue
 		}
 		status, restarts, ready := podStatus(pod)
-		if !erroredStatuses[status] {
+		if !isErroredPodStatus(status) {
 			continue
 		}
 		out = append(out, PodInfo{
@@ -258,6 +262,16 @@ func failingPodInfos(items []corev1.Pod) []PodInfo {
 			Node:      pod.Spec.NodeName,
 			Age:       age(pod.CreationTimestamp),
 		})
+	}
+	return out
+}
+
+func nonTerminatingPods(items []corev1.Pod) []corev1.Pod {
+	out := make([]corev1.Pod, 0, len(items))
+	for i := range items {
+		if items[i].DeletionTimestamp == nil {
+			out = append(out, items[i])
+		}
 	}
 	return out
 }

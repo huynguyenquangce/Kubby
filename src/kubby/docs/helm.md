@@ -24,6 +24,15 @@ namespace/name pair. Never list typed Secrets here: their compressed release
 payload is large and every historical revision would otherwise appear as a
 separate release.
 
+Every SDK operation owns a cancellable context. The cloned REST config binds all
+API requests to that context and has a finite five-minute ceiling; Helm actions
+also receive finite timeouts and Install/Upgrade use `RunWithContext`. Switching
+or disconnecting the active cluster cancels registered operations, and mutating
+bindings verify the expected connection ID before starting.
+HTTP(S) chart index/archive acquisition uses the same operation context (while
+retaining Helm's 120-second request ceiling), so cancellation also stops the
+download that precedes `RunWithContext`.
+
 ## What is implemented
 
 The frontend presents these capabilities as one **Helm workspace** with three
@@ -65,6 +74,11 @@ maintainer and home links.
   opening the generic resource drawer. Unknown/custom kinds are dynamically read
   and report `unknown` health rather than being presented as healthy. Live health
   reads use bounded concurrency.
+- **Opening a release uses one snapshot.** `HelmSnapshot` reads the release once,
+  reuses that manifest for the detail panes and bounded live-health reads, and
+  crosses the Wails bridge once. Do not add parallel `HelmGet` and
+  `HelmReleaseResources` calls in the frontend; the latter necessarily reads the
+  release for standalone callers.
 - **Legacy Helm OpenPGP verification stays disabled.** Helm v3 still links the
   deprecated `golang.org/x/crypto/openpgp` implementation, for which
   `govulncheck` reports GO-2026-5932 with no fixed version. Kubby never enables
@@ -87,6 +101,15 @@ maintainer and home links.
   repos added in Kubby are visible to the `helm` CLI and vice versa. Be careful
   not to clobber entries you did not write. Repo names are restricted to a safe
   identifier because Helm derives cache paths from them.
+- Repository read/modify/write sequences are serialized process-wide and commit
+  through a synced private temporary file plus atomic rename. This avoids lost
+  updates and truncated YAML when Add/Remove overlap or the process is interrupted.
+  Slow index downloads do not hold that configuration lock; Add reserves its
+  name while downloading, and Update downloads at most four repository indexes
+  concurrently before returning sorted failures.
+  Each download lands in a unique temporary cache and is parsed before a short
+  locked atomic rename publishes it; Browse therefore cannot observe Helm's
+  direct partial cache writes, and overlapping Updates cannot interleave bytes.
 
 ## Verify
 

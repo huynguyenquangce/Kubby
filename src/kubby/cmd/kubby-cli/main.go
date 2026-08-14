@@ -438,7 +438,7 @@ func main() {
 			if err != nil {
 				return err
 			}
-			if err := k8sclient.RestartDeployment(context.Background(), cluster, restartNs, args[0], "cli"); err != nil {
+			if err := k8sclient.RestartDeployment(context.Background(), cluster, restartNs, args[0], time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 				return err
 			}
 			fmt.Println("restarted")
@@ -616,11 +616,11 @@ func main() {
 			if err != nil {
 				return err
 			}
-			preview, err := k8sclient.HelmInstallPreview(cluster, hiNs, args[0], hiRepo, hiRepoName, hiChart, hiVersion, "")
+			preview, err := k8sclient.HelmInstallPreview(context.Background(), cluster, hiNs, args[0], hiRepo, hiRepoName, hiChart, hiVersion, "")
 			if err != nil {
 				return fmt.Errorf("preview install: %w", err)
 			}
-			if err := k8sclient.HelmInstall(cluster, hiNs, args[0], hiRepo, hiRepoName, hiChart, hiVersion, "", preview.ChartDigest); err != nil {
+			if err := k8sclient.HelmInstall(context.Background(), cluster, hiNs, args[0], hiRepo, hiRepoName, hiChart, hiVersion, "", preview.ChartDigest); err != nil {
 				return err
 			}
 			fmt.Println("installed")
@@ -644,7 +644,7 @@ func main() {
 			if err != nil {
 				return err
 			}
-			if err := k8sclient.HelmUninstall(cluster, huNs, args[0]); err != nil {
+			if err := k8sclient.HelmUninstall(context.Background(), cluster, huNs, args[0]); err != nil {
 				return err
 			}
 			fmt.Println("uninstalled")
@@ -702,11 +702,11 @@ func main() {
 			if err != nil {
 				return err
 			}
-			cur, err := k8sclient.HelmGet(cluster, hpNs, args[0])
+			cur, err := k8sclient.HelmGet(context.Background(), cluster, hpNs, args[0])
 			if err != nil {
 				return err
 			}
-			diff, err := k8sclient.HelmUpgradePreview(cluster, hpNs, args[0], cur.Values)
+			diff, err := k8sclient.HelmUpgradePreview(context.Background(), cluster, hpNs, args[0], cur.Values)
 			if err != nil {
 				return err
 			}

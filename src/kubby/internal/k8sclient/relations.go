@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 )
 
@@ -43,7 +45,7 @@ func DeploymentTree(ctx context.Context, c *Cluster, namespace, name string) (*R
 
 	for i := range rsList.Items {
 		rs := &rsList.Items[i]
-		if !ownedBy(rs.OwnerReferences, "Deployment", dep.Name) {
+		if !ownedBy(rs.OwnerReferences, "Deployment", dep.Name, dep.UID) {
 			continue
 		}
 		// Skip old scaled-down ReplicaSets with no replicas to reduce noise.
@@ -59,7 +61,7 @@ func DeploymentTree(ctx context.Context, c *Cluster, namespace, name string) (*R
 		}
 		for j := range podList.Items {
 			pod := podList.Items[j]
-			if !ownedBy(pod.OwnerReferences, "ReplicaSet", rs.Name) {
+			if !ownedBy(pod.OwnerReferences, "ReplicaSet", rs.Name, rs.UID) {
 				continue
 			}
 			status, _, _ := podStatus(pod)
@@ -68,7 +70,7 @@ func DeploymentTree(ctx context.Context, c *Cluster, namespace, name string) (*R
 				Name:      pod.Name,
 				Namespace: pod.Namespace,
 				Status:    status,
-				IsError:   erroredStatuses[status],
+				IsError:   isErroredPodStatus(status),
 			})
 		}
 		root.Children = append(root.Children, rsNode)
@@ -98,7 +100,7 @@ func ServiceTree(ctx context.Context, c *Cluster, namespace, name string) (*Rela
 		pod := pods.Items[i]
 		status, _, _ := podStatus(pod)
 		root.Children = append(root.Children, &RelationNode{
-			Kind: "Pod", Name: pod.Name, Namespace: pod.Namespace, Status: status, IsError: erroredStatuses[status],
+			Kind: "Pod", Name: pod.Name, Namespace: pod.Namespace, Status: status, IsError: isErroredPodStatus(status),
 		})
 	}
 	return root, nil
@@ -137,9 +139,12 @@ func IngressTree(ctx context.Context, c *Cluster, namespace, name string) (*Rela
 	return root, nil
 }
 
-func ownedBy(refs []metav1.OwnerReference, kind, name string) bool {
+func ownedBy(refs []metav1.OwnerReference, kind, name string, uid ...types.UID) bool {
 	for _, r := range refs {
 		if r.Kind == kind && r.Name == name {
+			if len(uid) > 0 && uid[0] != "" && r.UID != "" && r.UID != uid[0] {
+				continue
+			}
 			return true
 		}
 	}
@@ -202,6 +207,38 @@ type PodMetric struct {
 	Name      string `json:"name"`
 	CPUMilli  int64  `json:"cpuMilli"`
 	MemMi     int64  `json:"memMi"`
+}
+
+// PodsSnapshot is the complete payload for the Pods screen. Keeping the two
+// independent API reads behind one binding avoids an extra desktop bridge
+// round-trip while still fetching them concurrently.
+type PodsSnapshot struct {
+	Pods    []PodInfo   `json:"pods"`
+	Metrics []PodMetric `json:"metrics"`
+}
+
+func ListPodsSnapshot(ctx context.Context, c *Cluster, namespace string) (*PodsSnapshot, error) {
+	var pods []PodInfo
+	var metrics []PodMetric
+	var podErr, metricsErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		pods, podErr = ListPods(ctx, c.Clientset, namespace)
+	}()
+	go func() {
+		defer wg.Done()
+		metrics, metricsErr = PodMetricsList(ctx, c, namespace)
+	}()
+	wg.Wait()
+	if podErr != nil {
+		return nil, podErr
+	}
+	if metricsErr != nil {
+		return nil, metricsErr
+	}
+	return &PodsSnapshot{Pods: pods, Metrics: metrics}, nil
 }
 
 // PodMetricsList returns CPU/mem usage for every pod in a namespace ("" = all).

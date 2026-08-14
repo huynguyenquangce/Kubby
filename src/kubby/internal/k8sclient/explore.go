@@ -23,7 +23,7 @@ func PodsOnNode(ctx context.Context, c *Cluster, nodeName string) ([]PodInfo, er
 		status, restarts, ready := podStatus(pod)
 		out = append(out, PodInfo{
 			Namespace: pod.Namespace, Name: pod.Name, Status: status, Ready: ready,
-			Restarts: restarts, IsError: erroredStatuses[status],
+			Restarts: restarts, IsError: isErroredPodStatus(status),
 			PodIP: pod.Status.PodIP, Node: pod.Spec.NodeName, Age: age(pod.CreationTimestamp),
 		})
 	}
@@ -285,7 +285,7 @@ func markFailingPods(ctx context.Context, c *Cluster, hits []SearchHit) {
 				return
 			}
 			status, _, _ := podStatus(*pod)
-			h.IsError = erroredStatuses[status]
+			h.IsError = isErroredPodStatus(status)
 		}()
 	}
 	wg.Wait()

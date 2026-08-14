@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"kubby/internal/k8sclient"
 )
@@ -127,6 +128,52 @@ func TestClusterSwitchCancelsPendingPortForward(t *testing.T) {
 	}
 	if got := a.ListPortForwards(); len(got) != 0 {
 		t.Fatalf("old connection forward survived switch: %#v", got)
+	}
+}
+
+func TestClusterSwitchCancelsHelmOperationsAndOwnershipRejectsStaleWrites(t *testing.T) {
+	a := NewApp()
+	a.storeVerifiedCluster("a", &k8sclient.Cluster{})
+	a.storeVerifiedCluster("b", &k8sclient.Cluster{})
+	connections := a.ConnectedClusters()
+	if err := a.SwitchCluster(connections[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _, done, err := a.beginHelmOperation(connections[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) <= 0 || time.Until(deadline) > helmAppOperationTimeout {
+		t.Fatalf("Helm operation deadline = %v, present=%v", deadline, ok)
+	}
+	if err := a.SwitchCluster(connections[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("cluster switch did not cancel the active Helm operation")
+	}
+	if _, _, _, err := a.beginHelmOperation(connections[0].ID); err == nil || !strings.Contains(err.Error(), "active cluster changed") {
+		t.Fatalf("stale Helm ownership error = %v", err)
+	}
+}
+
+func TestApplyYAMLOwnedRejectsConnectionSwitch(t *testing.T) {
+	a := NewApp()
+	a.storeVerifiedCluster("a", &k8sclient.Cluster{})
+	a.storeVerifiedCluster("b", &k8sclient.Cluster{})
+	connections := a.ConnectedClusters()
+	if err := a.SwitchCluster(connections[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	expected := connections[0].ID
+	if err := a.SwitchCluster(connections[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ApplyYAMLOwned(expected, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: stale\n"); err == nil || !strings.Contains(err.Error(), "active cluster changed") {
+		t.Fatalf("stale apply ownership error = %v", err)
 	}
 }
 

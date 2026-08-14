@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"sync"
 
-	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/portforward"
@@ -48,17 +49,57 @@ func resolvePodForForward(ctx context.Context, c *Cluster, kind, namespace, name
 		if len(svc.Spec.Selector) == 0 {
 			return "", fmt.Errorf("service %q has no selector — cannot port-forward", name)
 		}
+		// EndpointSlices are the API server's routing truth. They account for
+		// readiness, terminating endpoints and publishNotReadyAddresses instead
+		// of guessing from a merely Running Pod phase.
+		slices, sliceErr := c.Clientset.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: labels.Set{discoveryv1.LabelServiceName: name}.String(),
+		})
+		if sliceErr == nil && len(slices.Items) > 0 {
+			candidates := make([]string, 0)
+			seen := map[string]bool{}
+			for i := range slices.Items {
+				for _, endpoint := range slices.Items[i].Endpoints {
+					if endpoint.TargetRef == nil || endpoint.TargetRef.Kind != "Pod" || endpoint.TargetRef.Name == "" {
+						continue
+					}
+					if endpoint.Conditions.Terminating != nil && *endpoint.Conditions.Terminating {
+						continue
+					}
+					if endpoint.Conditions.Ready != nil && !*endpoint.Conditions.Ready {
+						continue
+					}
+					if !seen[endpoint.TargetRef.Name] {
+						seen[endpoint.TargetRef.Name] = true
+						candidates = append(candidates, endpoint.TargetRef.Name)
+					}
+				}
+			}
+			sort.Strings(candidates)
+			if len(candidates) > 0 {
+				return candidates[0], nil
+			}
+			return "", fmt.Errorf("service %q has no ready, non-terminating endpoint to port-forward", name)
+		}
+
+		// EndpointSlice may be unavailable on an older/restricted API. Fall back
+		// to the PodReady condition, never just phase=Running.
 		sel := labels.SelectorFromSet(svc.Spec.Selector).String()
 		pods, err := c.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: sel})
 		if err != nil {
 			return "", err
 		}
-		for _, p := range pods.Items {
-			if p.Status.Phase == corev1.PodRunning {
-				return p.Name, nil
+		candidates := make([]string, 0)
+		for i := range pods.Items {
+			if podIsReady(&pods.Items[i]) {
+				candidates = append(candidates, pods.Items[i].Name)
 			}
 		}
-		return "", fmt.Errorf("no running pod found behind service %q", name)
+		sort.Strings(candidates)
+		if len(candidates) > 0 {
+			return candidates[0], nil
+		}
+		return "", fmt.Errorf("no ready, non-terminating pod found behind service %q", name)
 	default:
 		return "", fmt.Errorf("port-forward not supported for kind %q", kind)
 	}

@@ -42,6 +42,11 @@ type App struct {
 	execMu             sync.Mutex
 	execSess           *k8sclient.ExecSession // the active exec session, if any
 	execEpoch          uint64                 // invalidates callbacks from an older shell
+	recentMu           sync.Mutex
+	recentPath         func() (string, error)
+	helmMu             sync.Mutex
+	helmOps            map[uint64]context.CancelFunc
+	helmSeq            uint64
 }
 
 type portForwardStarter func(context.Context, *k8sclient.Cluster, string, string, string, int, int) (*k8sclient.PortForwardSession, <-chan struct{}, <-chan error, error)
@@ -62,6 +67,8 @@ func NewApp() *App {
 		clusters:           map[string]*clusterEntry{},
 		portForwardStarter: k8sclient.StartPortForward,
 		execStarter:        k8sclient.StartExec,
+		recentPath:         recentFilePath,
+		helmOps:            map[uint64]context.CancelFunc{},
 	}
 }
 
@@ -70,6 +77,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(context.Context) {
+	a.cancelHelmOperations()
 	a.StopLogStream()
 	a.StopExec()
 	a.stopAllPortForwards()
@@ -112,11 +120,11 @@ func (a *App) ConnectWithPath(path, kubeContext string) error {
 	if err != nil {
 		return fmt.Errorf("could not build client: %w", err)
 	}
-	if err := a.verifyAndStore(kubeContext, cluster); err != nil {
+	entry, err := a.verifyAndStore(kubeContext, cluster)
+	if err != nil {
 		return err
 	}
-	_, displayName, _, _ := a.activeConnectionSnapshot()
-	a.rememberConnection(displayName, path, kubeContext)
+	a.rememberConnection(entry.name, path, kubeContext)
 	return nil
 }
 
@@ -126,22 +134,27 @@ func (a *App) ConnectWithContent(content, kubeContext string) error {
 	if err != nil {
 		return fmt.Errorf("could not build client: %w", err)
 	}
-	return a.verifyAndStore(kubeContext, cluster)
+	_, err = a.verifyAndStore(kubeContext, cluster)
+	return err
 }
 
-func (a *App) verifyAndStore(name string, cluster *k8sclient.Cluster) error {
-	// Prove the connection actually works, not just that the config parsed.
-	if _, err := k8sclient.ListNamespaces(a.ctx, cluster.Clientset); err != nil {
-		return fmt.Errorf("connected but the API call failed: %w", err)
+func (a *App) verifyAndStore(name string, cluster *k8sclient.Cluster) (*clusterEntry, error) {
+	// Prove transport/authentication without requiring permission to list a
+	// cluster-scoped resource. Namespace-only service accounts are valid
+	// connections; their narrower access is handled by the normal RBAC gating.
+	if cluster.Discovery == nil {
+		return nil, fmt.Errorf("connected but the discovery client is unavailable")
+	}
+	if _, err := cluster.Discovery.ServerVersion(); err != nil {
+		return nil, fmt.Errorf("connected but the API discovery call failed: %w", err)
 	}
 	if name == "" {
 		name = "default"
 	}
-	a.storeVerifiedCluster(name, cluster)
-	return nil
+	return a.storeVerifiedCluster(name, cluster), nil
 }
 
-func (a *App) storeVerifiedCluster(name string, cluster *k8sclient.Cluster) {
+func (a *App) storeVerifiedCluster(name string, cluster *k8sclient.Cluster) *clusterEntry {
 	a.transitionMu.Lock()
 	defer a.transitionMu.Unlock()
 
@@ -151,17 +164,20 @@ func (a *App) storeVerifiedCluster(name string, cluster *k8sclient.Cluster) {
 	a.StopLogStream()
 	a.StopExec()
 	a.stopAllPortForwards()
+	a.cancelHelmOperations()
 
 	a.stateMu.Lock()
 	a.connectionSeq++
 	id := fmt.Sprintf("connection-%d", a.connectionSeq)
 	displayName := a.uniqueConnectionNameLocked(name)
-	a.clusters[id] = &clusterEntry{id: id, name: displayName, context: name, cluster: cluster}
+	entry := &clusterEntry{id: id, name: displayName, context: name, cluster: cluster}
+	a.clusters[id] = entry
 	a.order = append(a.order, id)
 	a.activeID = id
 	a.connectionEpoch++
 	a.stateMu.Unlock()
 	a.resetPortForwardsForCluster(cluster)
+	return entry
 }
 
 func (a *App) uniqueConnectionNameLocked(contextName string) string {
@@ -213,6 +229,7 @@ func (a *App) SwitchCluster(id string) error {
 	a.StopLogStream()
 	a.StopExec()
 	a.stopAllPortForwards()
+	a.cancelHelmOperations()
 	a.stateMu.Lock()
 	a.activeID = id
 	a.connectionEpoch++
@@ -238,6 +255,7 @@ func (a *App) DisconnectCluster(id string) string {
 		a.StopLogStream()
 		a.StopExec()
 		a.stopAllPortForwards()
+		a.cancelHelmOperations()
 	}
 
 	a.stateMu.Lock()
@@ -284,6 +302,19 @@ func (a *App) requireCluster() (*k8sclient.Cluster, error) {
 	return cluster, nil
 }
 
+func (a *App) requireExpectedCluster(expectedID string) (*k8sclient.Cluster, error) {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	entry := a.clusters[a.activeID]
+	if entry == nil {
+		return nil, fmt.Errorf("not connected to any cluster")
+	}
+	if expectedID == "" || entry.id != expectedID {
+		return nil, fmt.Errorf("the active cluster changed before the action started")
+	}
+	return entry.cluster, nil
+}
+
 func (a *App) ListNodes() ([]k8sclient.NodeInfo, error) {
 	cluster, err := a.requireCluster()
 	if err != nil {
@@ -307,6 +338,17 @@ func (a *App) ListPods(namespace string) ([]k8sclient.PodInfo, error) {
 		return nil, err
 	}
 	return k8sclient.ListPods(a.ctx, cluster.Clientset, namespace)
+}
+
+// PodsSnapshot returns the Pods screen's rows and optional metrics in one
+// bridge call. The client performs the independent Kubernetes reads in
+// parallel.
+func (a *App) PodsSnapshot(namespace string) (*k8sclient.PodsSnapshot, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.ListPodsSnapshot(a.ctx, cluster, namespace)
 }
 
 func (a *App) ListDeployments(namespace string) ([]k8sclient.DeploymentInfo, error) {
@@ -368,10 +410,26 @@ func (a *App) DeleteResource(kind, namespace, name string) error {
 	return k8sclient.DeleteResource(a.ctx, cluster, kind, namespace, name)
 }
 
+func (a *App) DeleteResourceOwned(expectedConnectionID, kind, namespace, name string) error {
+	cluster, err := a.requireExpectedCluster(expectedConnectionID)
+	if err != nil {
+		return err
+	}
+	return k8sclient.DeleteResource(a.ctx, cluster, kind, namespace, name)
+}
+
 // ---- Feature 1: deployment actions ----
 
 func (a *App) ScaleDeployment(namespace, name string, replicas int) error {
 	cluster, err := a.requireCluster()
+	if err != nil {
+		return err
+	}
+	return k8sclient.ScaleDeployment(a.ctx, cluster, namespace, name, int32(replicas))
+}
+
+func (a *App) ScaleDeploymentOwned(expectedConnectionID, namespace, name string, replicas int) error {
+	cluster, err := a.requireExpectedCluster(expectedConnectionID)
 	if err != nil {
 		return err
 	}
@@ -383,7 +441,15 @@ func (a *App) RestartDeployment(namespace, name string) error {
 	if err != nil {
 		return err
 	}
-	return k8sclient.RestartDeployment(a.ctx, cluster, namespace, name, time.Now().Format(time.RFC3339))
+	return k8sclient.RestartDeployment(a.ctx, cluster, namespace, name, time.Now().UTC().Format(time.RFC3339Nano))
+}
+
+func (a *App) RestartDeploymentOwned(expectedConnectionID, namespace, name string) error {
+	cluster, err := a.requireExpectedCluster(expectedConnectionID)
+	if err != nil {
+		return err
+	}
+	return k8sclient.RestartDeployment(a.ctx, cluster, namespace, name, time.Now().UTC().Format(time.RFC3339Nano))
 }
 
 func (a *App) RestartStatefulSet(namespace, name string) error {
@@ -391,7 +457,15 @@ func (a *App) RestartStatefulSet(namespace, name string) error {
 	if err != nil {
 		return err
 	}
-	return k8sclient.RestartStatefulSet(a.ctx, cluster, namespace, name, time.Now().Format(time.RFC3339))
+	return k8sclient.RestartStatefulSet(a.ctx, cluster, namespace, name, time.Now().UTC().Format(time.RFC3339Nano))
+}
+
+func (a *App) RestartStatefulSetOwned(expectedConnectionID, namespace, name string) error {
+	cluster, err := a.requireExpectedCluster(expectedConnectionID)
+	if err != nil {
+		return err
+	}
+	return k8sclient.RestartStatefulSet(a.ctx, cluster, namespace, name, time.Now().UTC().Format(time.RFC3339Nano))
 }
 
 func (a *App) RestartDaemonSet(namespace, name string) error {
@@ -399,11 +473,27 @@ func (a *App) RestartDaemonSet(namespace, name string) error {
 	if err != nil {
 		return err
 	}
-	return k8sclient.RestartDaemonSet(a.ctx, cluster, namespace, name, time.Now().Format(time.RFC3339))
+	return k8sclient.RestartDaemonSet(a.ctx, cluster, namespace, name, time.Now().UTC().Format(time.RFC3339Nano))
+}
+
+func (a *App) RestartDaemonSetOwned(expectedConnectionID, namespace, name string) error {
+	cluster, err := a.requireExpectedCluster(expectedConnectionID)
+	if err != nil {
+		return err
+	}
+	return k8sclient.RestartDaemonSet(a.ctx, cluster, namespace, name, time.Now().UTC().Format(time.RFC3339Nano))
 }
 
 func (a *App) SetDeploymentPaused(namespace, name string, paused bool) error {
 	cluster, err := a.requireCluster()
+	if err != nil {
+		return err
+	}
+	return k8sclient.SetDeploymentPaused(a.ctx, cluster, namespace, name, paused)
+}
+
+func (a *App) SetDeploymentPausedOwned(expectedConnectionID, namespace, name string, paused bool) error {
+	cluster, err := a.requireExpectedCluster(expectedConnectionID)
 	if err != nil {
 		return err
 	}
@@ -426,10 +516,26 @@ func (a *App) RollbackDeployment(namespace, name string, revision int64) error {
 	return k8sclient.RollbackDeployment(a.ctx, cluster, namespace, name, revision)
 }
 
+func (a *App) RollbackDeploymentOwned(expectedConnectionID, namespace, name string, revision int64) error {
+	cluster, err := a.requireExpectedCluster(expectedConnectionID)
+	if err != nil {
+		return err
+	}
+	return k8sclient.RollbackDeployment(a.ctx, cluster, namespace, name, revision)
+}
+
 // ---- Node actions ----
 
 func (a *App) SetNodeSchedulable(name string, schedulable bool) error {
 	cluster, err := a.requireCluster()
+	if err != nil {
+		return err
+	}
+	return k8sclient.SetNodeSchedulable(a.ctx, cluster, name, schedulable)
+}
+
+func (a *App) SetNodeSchedulableOwned(expectedConnectionID, name string, schedulable bool) error {
+	cluster, err := a.requireExpectedCluster(expectedConnectionID)
 	if err != nil {
 		return err
 	}
@@ -444,6 +550,14 @@ func (a *App) DrainNode(name string) error {
 	return k8sclient.DrainNode(a.ctx, cluster, name)
 }
 
+func (a *App) DrainNodeOwned(expectedConnectionID, name string) error {
+	cluster, err := a.requireExpectedCluster(expectedConnectionID)
+	if err != nil {
+		return err
+	}
+	return k8sclient.DrainNode(a.ctx, cluster, name)
+}
+
 // ---- CronJob run-now ----
 
 func (a *App) RunCronJobNow(namespace, name string) error {
@@ -451,7 +565,15 @@ func (a *App) RunCronJobNow(namespace, name string) error {
 	if err != nil {
 		return err
 	}
-	return k8sclient.RunCronJobNow(a.ctx, cluster, namespace, name, time.Now().Format("20060102-150405"))
+	return k8sclient.RunCronJobNow(a.ctx, cluster, namespace, name)
+}
+
+func (a *App) RunCronJobNowOwned(expectedConnectionID, namespace, name string) error {
+	cluster, err := a.requireExpectedCluster(expectedConnectionID)
+	if err != nil {
+		return err
+	}
+	return k8sclient.RunCronJobNow(a.ctx, cluster, namespace, name)
 }
 
 // ---- Secret reveal ----
@@ -580,47 +702,115 @@ func (a *App) ListHelmReleases(ns string) ([]k8sclient.HelmReleaseInfo, error) {
 
 // ---- Helm SDK: release management + search + install ----
 
+const helmAppOperationTimeout = 5 * time.Minute
+
+func (a *App) beginHelmOperation(expectedConnectionID string) (context.Context, *k8sclient.Cluster, func(), error) {
+	a.transitionMu.Lock()
+	var cluster *k8sclient.Cluster
+	var err error
+	if expectedConnectionID == "" {
+		cluster, err = a.requireCluster()
+	} else {
+		cluster, err = a.requireExpectedCluster(expectedConnectionID)
+	}
+	if err != nil {
+		a.transitionMu.Unlock()
+		return nil, nil, nil, err
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, helmAppOperationTimeout)
+	a.helmMu.Lock()
+	a.helmSeq++
+	id := a.helmSeq
+	a.helmOps[id] = cancel
+	a.helmMu.Unlock()
+	a.transitionMu.Unlock()
+	return ctx, cluster, func() {
+		a.helmMu.Lock()
+		if registered := a.helmOps[id]; registered != nil {
+			delete(a.helmOps, id)
+			registered()
+		}
+		a.helmMu.Unlock()
+	}, nil
+}
+
+func (a *App) cancelHelmOperations() {
+	a.helmMu.Lock()
+	operations := a.helmOps
+	a.helmOps = map[uint64]context.CancelFunc{}
+	a.helmMu.Unlock()
+	for _, cancel := range operations {
+		cancel()
+	}
+}
+
 func (a *App) HelmGet(namespace, name string) (*k8sclient.HelmReleaseDetail, error) {
-	cluster, err := a.requireCluster()
+	ctx, cluster, done, err := a.beginHelmOperation("")
 	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmGet(cluster, namespace, name)
+	defer done()
+	return k8sclient.HelmGet(ctx, cluster, namespace, name)
+}
+func (a *App) HelmSnapshot(namespace, name string) (*k8sclient.HelmReleaseSnapshot, error) {
+	ctx, cluster, done, err := a.beginHelmOperation("")
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	return k8sclient.HelmSnapshot(ctx, cluster, namespace, name)
 }
 func (a *App) HelmHistory(namespace, name string) ([]k8sclient.HelmRevision, error) {
-	cluster, err := a.requireCluster()
+	ctx, cluster, done, err := a.beginHelmOperation("")
 	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmHistory(cluster, namespace, name)
+	defer done()
+	return k8sclient.HelmHistory(ctx, cluster, namespace, name)
 }
 func (a *App) HelmRollback(namespace, name string, revision int) error {
-	cluster, err := a.requireCluster()
+	return a.HelmRollbackOwned("", namespace, name, revision)
+}
+func (a *App) HelmRollbackOwned(expectedConnectionID, namespace, name string, revision int) error {
+	ctx, cluster, done, err := a.beginHelmOperation(expectedConnectionID)
 	if err != nil {
 		return err
 	}
-	return k8sclient.HelmRollback(cluster, namespace, name, revision)
+	defer done()
+	return k8sclient.HelmRollback(ctx, cluster, namespace, name, revision)
 }
 func (a *App) HelmUninstall(namespace, name string) error {
-	cluster, err := a.requireCluster()
+	return a.HelmUninstallOwned("", namespace, name)
+}
+func (a *App) HelmUninstallOwned(expectedConnectionID, namespace, name string) error {
+	ctx, cluster, done, err := a.beginHelmOperation(expectedConnectionID)
 	if err != nil {
 		return err
 	}
-	return k8sclient.HelmUninstall(cluster, namespace, name)
+	defer done()
+	return k8sclient.HelmUninstall(ctx, cluster, namespace, name)
 }
 func (a *App) HelmUpgradeValues(namespace, name, valuesYAML string, expectedRevision int, expectedValuesDigest string) error {
-	cluster, err := a.requireCluster()
+	return a.HelmUpgradeValuesOwned("", namespace, name, valuesYAML, expectedRevision, expectedValuesDigest)
+}
+func (a *App) HelmUpgradeValuesOwned(expectedConnectionID, namespace, name, valuesYAML string, expectedRevision int, expectedValuesDigest string) error {
+	ctx, cluster, done, err := a.beginHelmOperation(expectedConnectionID)
 	if err != nil {
 		return err
 	}
-	return k8sclient.HelmUpgradeValues(cluster, namespace, name, valuesYAML, expectedRevision, expectedValuesDigest)
+	defer done()
+	return k8sclient.HelmUpgradeValues(ctx, cluster, namespace, name, valuesYAML, expectedRevision, expectedValuesDigest)
 }
 func (a *App) HelmInstall(namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML, expectedDigest string) error {
-	cluster, err := a.requireCluster()
+	return a.HelmInstallOwned("", namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML, expectedDigest)
+}
+func (a *App) HelmInstallOwned(expectedConnectionID, namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML, expectedDigest string) error {
+	ctx, cluster, done, err := a.beginHelmOperation(expectedConnectionID)
 	if err != nil {
 		return err
 	}
-	return k8sclient.HelmInstall(cluster, namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML, expectedDigest)
+	defer done()
+	return k8sclient.HelmInstall(ctx, cluster, namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML, expectedDigest)
 }
 
 // SearchCharts queries Artifact Hub (needs internet). No cluster required.
@@ -634,39 +824,47 @@ func (a *App) ChartDefaultValues(repoURL, repoName, chartName, version string) (
 	return k8sclient.ChartDefaultValues(repoURL, repoName, chartName, version)
 }
 func (a *App) HelmInstallPreview(namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML string) (*k8sclient.HelmDiff, error) {
-	cluster, err := a.requireCluster()
+	ctx, cluster, done, err := a.beginHelmOperation("")
 	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmInstallPreview(cluster, namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML)
+	defer done()
+	return k8sclient.HelmInstallPreview(ctx, cluster, namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML)
 }
 func (a *App) HelmUpgradePreview(namespace, name, valuesYAML string) (*k8sclient.HelmDiff, error) {
-	cluster, err := a.requireCluster()
+	ctx, cluster, done, err := a.beginHelmOperation("")
 	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmUpgradePreview(cluster, namespace, name, valuesYAML)
+	defer done()
+	return k8sclient.HelmUpgradePreview(ctx, cluster, namespace, name, valuesYAML)
 }
 func (a *App) HelmGetRevision(namespace, name string, revision int) (*k8sclient.HelmReleaseDetail, error) {
-	cluster, err := a.requireCluster()
+	ctx, cluster, done, err := a.beginHelmOperation("")
 	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmGetRevision(cluster, namespace, name, revision)
+	defer done()
+	return k8sclient.HelmGetRevision(ctx, cluster, namespace, name, revision)
 }
 func (a *App) HelmReleaseResources(namespace, name string) ([]k8sclient.HelmResource, error) {
-	cluster, err := a.requireCluster()
+	ctx, cluster, done, err := a.beginHelmOperation("")
 	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmReleaseResources(a.ctx, cluster, namespace, name)
+	defer done()
+	return k8sclient.HelmReleaseResources(ctx, cluster, namespace, name)
 }
 func (a *App) HelmTest(namespace, name string) (string, error) {
-	cluster, err := a.requireCluster()
+	return a.HelmTestOwned("", namespace, name)
+}
+func (a *App) HelmTestOwned(expectedConnectionID, namespace, name string) (string, error) {
+	ctx, cluster, done, err := a.beginHelmOperation(expectedConnectionID)
 	if err != nil {
 		return "", err
 	}
-	return k8sclient.HelmTest(cluster, namespace, name)
+	defer done()
+	return k8sclient.HelmTest(ctx, cluster, namespace, name)
 }
 
 // ---- Helm repositories ----
@@ -1081,11 +1279,11 @@ func (a *App) UpdateYAML(expectedCluster, expectedKind, expectedNamespace, expec
 	return k8sclient.UpdateYAML(a.ctx, cluster, expectedKind, expectedNamespace, expectedName, yamlText)
 }
 
-// ApplyYAML creates or updates the resource(s) in the given YAML (create-or-
-// update, multi-document, any kind the cluster serves including CRDs). Backs the
-// "Create" and "Import YAML" flows. Returns a per-document report of what it did.
-func (a *App) ApplyYAML(yamlText string) (string, error) {
-	cluster, err := a.requireCluster()
+// ApplyYAMLOwned creates or updates YAML only on the connection that owned the
+// Create/Import modal when it opened. Capturing the cluster before the write
+// prevents a concurrent switch from redirecting the manifest.
+func (a *App) ApplyYAMLOwned(expectedCluster, yamlText string) (string, error) {
+	cluster, err := a.requireExpectedCluster(expectedCluster)
 	if err != nil {
 		return "", err
 	}

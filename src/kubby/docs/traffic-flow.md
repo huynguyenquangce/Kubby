@@ -34,6 +34,9 @@ FlowPod      // one endpoint, with readiness
 `NetworkTopology(ctx, c, namespace)` lists **everything once and joins in memory** —
 one List per kind, not one per Service. That is both faster and a single
 consistent snapshot rather than reads taken seconds apart.
+The four core Lists start concurrently. Service selectors use a namespace/label
+candidate index before the complete selector is checked, avoiding a full Pod
+scan for every Service on large clusters.
 
 ## Invariants
 
@@ -44,6 +47,13 @@ consistent snapshot rather than reads taken seconds apart.
    reply cannot repaint stale topology over a newer one.
 3. **A warning names the hop that breaks**, not the path. "Service not found",
    "No Pods match the selector", "No Pod is ready" are per-hop.
+4. **EndpointSlice is routing truth.** When slices are available, endpoint
+   `ready` and `terminating` conditions decide which selected Pods are serving;
+   PodReady is only the explicit fallback when EndpointSlice cannot be read.
+   This includes the Istio ingress-gateway workload behind its fronting Service,
+   not only application destination Services.
+   A successful empty List is available data: a Service with zero slices is
+   known-unready. Only a failed List permits the PodReady fallback.
 
 ## Istio
 
@@ -54,6 +64,10 @@ hosts) and a **VirtualService** (where a host + path is then routed).
 
 - **No Istio Go module is a dependency.** Objects are read through the dynamic
   client via discovery, so a cluster without Istio simply contributes nothing.
+  A genuinely absent CRD is quiet, while discovery, RBAC, timeout and list errors
+  are returned as partial-view warnings rather than disguised as "no Istio".
+  An absent optional kind is negatively cached for one minute; after that TTL a
+  refresh re-runs discovery so a newly installed Istio CRD becomes visible.
 - **Gateways are listed cluster-wide even in a scoped view.** The standard layout
   puts the Gateway in `istio-system` and the VirtualServices next to the app;
   scoping the Gateway list would hide the entry point for every namespace but one.

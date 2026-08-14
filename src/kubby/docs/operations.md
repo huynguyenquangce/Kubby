@@ -21,8 +21,8 @@ Destructive actions use `danger: true`, which turns the OK button red.
 | Pause / resume rollout | Deployment | |
 | Rollout history + rollback | Deployment | History from the owned ReplicaSets |
 | Cordon / uncordon | Node | |
-| Drain | Node | Evicts non-DaemonSet pods |
-| Trigger now | CronJob | Creates a Job from the CronJob's template |
+| Drain | Node | Evicts non-DaemonSet pods and reports every partial eviction failure |
+| Trigger now | CronJob | Creates a Job with server-side `generateName` uniqueness |
 | Delete | any kind | Single row, or bulk via checkbox selection |
 | Edit YAML | any kind | See [apply-yaml.md](apply-yaml.md) |
 
@@ -34,10 +34,17 @@ works for custom resources too.
 1. `actions.go` — a function taking `(ctx, c, namespace, name, …)`. Use the typed
    client where a typed API exists (scale has a subresource; a rolling restart is a
    patch), the dynamic client otherwise.
-2. `app.go` — a thin bound method after `a.requireCluster()`.
+2. `app.go` — a thin `*Owned` bound method after
+   `a.requireExpectedCluster(connectionID)`; the expected identity is part of the
+   write contract, not only a frontend guard.
 3. `main.js` — a button in the drawer or an entry in `wireRowActions`, wrapped in
    `showConfirm()`, then `refreshCurrentView()` afterwards so the table reflects it.
 4. `cmd/kubby-cli` — a command, so it can be verified without the GUI.
+
+Create/Import follows the same ownership rule even though it is not named in the
+action menu: `ApplyYAMLOwned(connectionID, yaml)` captures the modal's connection
+and must never be replaced by an App method that resolves whichever cluster is
+active after dispatch.
 
 ## Gaps worth knowing
 

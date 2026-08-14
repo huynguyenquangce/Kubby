@@ -19,11 +19,15 @@ cd ..
 | `diagnostics_test.go` | the diagnostics report shape, and that it cannot carry the AI API key |
 | `internal/k8sclient/apply_test.go` | missing-`---` detection, document splitting, diff-noise stripping, the pending-namespace explanation |
 | `internal/k8sclient/access_test.go` | **unknown permission == allowed**, explicit deny respected, pod subresources probed separately |
-| `internal/k8sclient/rightsizing_test.go` | unset never rendered as zero, threshold floors, severity order, quota parsing, advice grammar |
+| `internal/k8sclient/rightsizing_test.go` | unset never rendered as zero, threshold floors, severity order, quota parsing, advice grammar, and partial-metrics suppression |
 | `internal/k8sclient/detail_test.go` | YAML Save cannot change kind, namespace, name, or cluster-scoped identity |
-| `internal/k8sclient/portforward_test.go` | concurrent/repeated tunnel close is idempotent and does not panic |
+| `internal/k8sclient/portforward_test.go` | concurrent/repeated tunnel close is idempotent; Service resolution follows ready non-terminating EndpointSlices with PodReady fallback |
+| `internal/k8sclient/actions_test.go` | partial drain failures and server-generated unique CronJob runs |
+| `internal/k8sclient/resources_status_test.go` | init/terminating Pod status, terminal Job conditions, and UID-qualified ownership |
+| `internal/k8sclient/netflow_test.go` | EndpointSlice readiness remains authoritative over Pod condition guesses |
 | `app_portforward_test.go` | global tunnel registry preserves target metadata, lists deterministically, invalidates pending starts, and synchronizes List/Stop |
-| `app_connection_test.go` | duplicate context names retain stable independent IDs; registry switching is race-safe; pending exec/port-forward cannot survive drawer cancellation or cluster transitions |
+| `app_connection_test.go` | duplicate context names retain stable independent IDs; registry switching is race-safe; pending exec/port-forward/Helm work cannot survive cluster transitions; stale write ownership is rejected |
+| `recent_test.go` | concurrent recent updates remain valid, capped and private |
 | `frontend/src/request-scope.test.js` | late view/drawer/modal responses cannot overwrite a newer owner; stale Helm/chart values cannot cross modal or version boundaries |
 | `frontend/src/markup.test.js` | one Helm workspace owns Releases/Catalog/Repositories; exact-preview ownership; shared modal hierarchy, focus contract, and aligned repository form |
 | `frontend/src/port-forward-state.test.js` | hydration/upsert, closed-event removal, drawer-close policy, and late Start ownership |
@@ -38,7 +42,7 @@ cd ..
 | `internal/k8sclient/overview_test.go` | one Node/Pod list, partial failures, terminating-Pod exclusion, and 10k benchmark |
 | `internal/k8sclient/structure_test.go` | complete entry/internal/unexposed topology, ReplicaSet→Deployment collapse, unhealthy propagation, terminating-Pod exclusion, and one list per kind |
 | `internal/k8sclient/helmreleases_test.go` | metadata-only Helm storage listing, newest-revision deduplication, terminating-release exclusion, and pending status classification |
-| `internal/k8sclient/helm_test.go` | chart-source setup, pinned preview digests, and live Helm resource-health edge cases |
+| `internal/k8sclient/helm_test.go` | chart-source setup, pinned preview digests, PodReady/termination health, and request-context cancellation |
 
 None of them need a cluster. The Playwright suite needs its pinned Chromium and
 Linux system libraries installed as described in `docs/BUILD.md`. Everything else is still verified through

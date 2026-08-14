@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/getter"
@@ -14,6 +15,8 @@ import (
 )
 
 var helmRepoNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+var helmRepoMu sync.Mutex
+var helmRepoPending = map[string]bool{}
 
 func validateHelmRepoName(name string) error {
 	if !helmRepoNamePattern.MatchString(name) {
@@ -23,10 +26,117 @@ func validateHelmRepoName(name string) error {
 }
 
 func writeHelmRepoFile(f *repo.File, path string) error {
-	if err := f.WriteFile(path, 0o600); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o600)
+	_ = os.Chmod(dir, 0o700)
+	tmp, err := os.CreateTemp(dir, ".repositories-*.yaml")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := f.WriteFile(tmpPath, 0o600); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		return err
+	}
+	syncFile, err := os.OpenFile(tmpPath, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	if err := syncFile.Sync(); err != nil {
+		_ = syncFile.Close()
+		return err
+	}
+	if err := syncFile.Close(); err != nil {
+		return err
+	}
+	// Rename inside the same directory is the commit point: a crash cannot leave
+	// a partially written repositories.yaml behind.
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	committed = true
+	// Persist the directory entry where the platform supports syncing a
+	// directory. The file is already valid even when that best-effort step is
+	// unsupported (notably on Windows).
+	if dirHandle, openErr := os.Open(dir); openErr == nil {
+		_ = dirHandle.Sync()
+		_ = dirHandle.Close()
+	}
+	return nil
+}
+
+// downloadHelmRepoIndex keeps Helm's direct cache writes away from the live
+// cache. Once both files have been downloaded and the index has parsed, the
+// global repository mutex makes the index rename the publication commit point;
+// Browse therefore sees either the old complete index or the new one.
+func downloadHelmRepoIndex(settings *cli.EnvSettings, entry *repo.Entry) error {
+	if err := os.MkdirAll(settings.RepositoryCache, 0o755); err != nil {
+		return err
+	}
+	tempCache, err := os.MkdirTemp(settings.RepositoryCache, ".kubby-repo-index-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tempCache)
+	r, err := repo.NewChartRepository(entry, getter.All(settings))
+	if err != nil {
+		return err
+	}
+	r.CachePath = tempCache
+	indexPath, err := r.DownloadIndexFile()
+	if err != nil {
+		return err
+	}
+	if _, err := repo.LoadIndexFile(indexPath); err != nil {
+		return fmt.Errorf("downloaded index is invalid: %w", err)
+	}
+	chartsPath := filepath.Join(tempCache, entry.Name+"-charts.txt")
+
+	helmRepoMu.Lock()
+	defer helmRepoMu.Unlock()
+	if err := publishHelmCacheFile(chartsPath, filepath.Join(settings.RepositoryCache, entry.Name+"-charts.txt")); err != nil {
+		return err
+	}
+	if err := publishHelmCacheFile(indexPath, filepath.Join(settings.RepositoryCache, entry.Name+"-index.yaml")); err != nil {
+		return err
+	}
+	if dir, openErr := os.Open(settings.RepositoryCache); openErr == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
+	return nil
+}
+
+func publishHelmCacheFile(source, target string) error {
+	file, err := os.OpenFile(source, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(source, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(source, target)
 }
 
 // HelmRepo is one configured chart repository.
@@ -49,6 +159,8 @@ func loadOrNewRepoFile(path string) (*repo.File, error) {
 // ListHelmRepos returns the repos configured in the user's Helm repositories.yaml.
 // An absent file means no repos configured yet (not an error).
 func ListHelmRepos() ([]HelmRepo, error) {
+	helmRepoMu.Lock()
+	defer helmRepoMu.Unlock()
 	settings := cli.New()
 	f, err := loadOrNewRepoFile(settings.RepositoryConfig)
 	if err != nil {
@@ -75,30 +187,40 @@ func AddHelmRepo(name, url, username, password string) error {
 		return err
 	}
 	settings := cli.New()
-
+	helmRepoMu.Lock()
 	f, err := loadOrNewRepoFile(settings.RepositoryConfig)
+	if err != nil {
+		helmRepoMu.Unlock()
+		return err
+	}
+	if f.Get(name) != nil || helmRepoPending[name] {
+		helmRepoMu.Unlock()
+		return fmt.Errorf("repo %q already exists; remove it first if you intend to replace its URL or credentials", name)
+	}
+	helmRepoPending[name] = true
+	helmRepoMu.Unlock()
+	defer func() {
+		helmRepoMu.Lock()
+		delete(helmRepoPending, name)
+		helmRepoMu.Unlock()
+	}()
+
+	entry := &repo.Entry{Name: name, URL: url, Username: username, Password: password}
+	if err := downloadHelmRepoIndex(settings, entry); err != nil {
+		return fmt.Errorf("could not reach repo %q: %w", url, err)
+	}
+
+	helmRepoMu.Lock()
+	defer helmRepoMu.Unlock()
+	f, err = loadOrNewRepoFile(settings.RepositoryConfig)
 	if err != nil {
 		return err
 	}
 	if f.Get(name) != nil {
-		return fmt.Errorf("repo %q already exists; remove it first if you intend to replace its URL or credentials", name)
+		return fmt.Errorf("repo %q was added while its index was downloading", name)
 	}
-
-	entry := &repo.Entry{Name: name, URL: url, Username: username, Password: password}
-	r, err := repo.NewChartRepository(entry, getter.All(settings))
-	if err != nil {
-		return err
-	}
-	r.CachePath = settings.RepositoryCache
-	if err := os.MkdirAll(settings.RepositoryCache, 0o755); err != nil {
-		return err
-	}
-	if _, err := r.DownloadIndexFile(); err != nil {
-		return fmt.Errorf("could not reach repo %q: %w", url, err)
-	}
-
 	f.Update(entry)
-	if err := os.MkdirAll(filepath.Dir(settings.RepositoryConfig), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(settings.RepositoryConfig), 0o700); err != nil {
 		return err
 	}
 	return writeHelmRepoFile(f, settings.RepositoryConfig)
@@ -106,6 +228,8 @@ func AddHelmRepo(name, url, username, password string) error {
 
 // RemoveHelmRepo drops a repo entry and its cached index file.
 func RemoveHelmRepo(name string) error {
+	helmRepoMu.Lock()
+	defer helmRepoMu.Unlock()
 	if err := validateHelmRepoName(name); err != nil {
 		return err
 	}
@@ -128,24 +252,36 @@ func RemoveHelmRepo(name string) error {
 
 // UpdateHelmRepos re-downloads the index for every configured repo.
 func UpdateHelmRepos() error {
+	helmRepoMu.Lock()
 	settings := cli.New()
 	f, err := loadOrNewRepoFile(settings.RepositoryConfig)
+	helmRepoMu.Unlock()
 	if err != nil {
 		return err
 	}
+	entries := append([]*repo.Entry(nil), f.Repositories...)
 	var failures []string
-	for _, e := range f.Repositories {
-		r, err := repo.NewChartRepository(e, getter.All(settings))
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", e.Name, err))
-			continue
-		}
-		r.CachePath = settings.RepositoryCache
-		if _, err := r.DownloadIndexFile(); err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", e.Name, err))
-		}
+	var failuresMu sync.Mutex
+	semaphore := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	for _, entry := range entries {
+		entry := entry
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			downloadErr := downloadHelmRepoIndex(settings, entry)
+			if downloadErr != nil {
+				failuresMu.Lock()
+				failures = append(failures, fmt.Sprintf("%s: %v", entry.Name, downloadErr))
+				failuresMu.Unlock()
+			}
+		}()
 	}
+	wg.Wait()
 	if len(failures) > 0 {
+		sort.Strings(failures)
 		return fmt.Errorf("some repos failed to update:\n%s", strings.Join(failures, "\n"))
 	}
 	return nil
@@ -155,6 +291,8 @@ func UpdateHelmRepos() error {
 // per chart, latest version). Run UpdateHelmRepos / AddHelmRepo first to populate
 // the cache.
 func BrowseHelmRepo(name string) ([]ChartSearchResult, error) {
+	helmRepoMu.Lock()
+	defer helmRepoMu.Unlock()
 	if err := validateHelmRepoName(name); err != nil {
 		return nil, err
 	}

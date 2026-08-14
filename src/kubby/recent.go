@@ -23,17 +23,14 @@ func recentFilePath() (string, error) {
 		return "", err
 	}
 	kubbyDir := filepath.Join(dir, "kubby")
-	if err := os.MkdirAll(kubbyDir, 0o755); err != nil {
+	if err := os.MkdirAll(kubbyDir, 0o700); err != nil {
 		return "", err
 	}
+	_ = os.Chmod(kubbyDir, 0o700)
 	return filepath.Join(kubbyDir, "recent.json"), nil
 }
 
-func loadRecent() []RecentConnection {
-	path, err := recentFilePath()
-	if err != nil {
-		return nil
-	}
+func loadRecent(path string) []RecentConnection {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -45,21 +42,58 @@ func loadRecent() []RecentConnection {
 	return out
 }
 
-func storeRecent(list []RecentConnection) {
-	path, err := recentFilePath()
-	if err != nil {
-		return
-	}
+func storeRecent(path string, list []RecentConnection) error {
 	data, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
-	_ = os.WriteFile(path, data, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".recent-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	committed := false
+	defer func() {
+		_ = tmp.Close()
+		if !committed {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func (a *App) recentFile() (string, error) {
+	if a.recentPath != nil {
+		return a.recentPath()
+	}
+	return recentFilePath()
 }
 
 // RecentConnections returns the remembered connections, most-recent first.
 func (a *App) RecentConnections() []RecentConnection {
-	return loadRecent()
+	a.recentMu.Lock()
+	defer a.recentMu.Unlock()
+	path, err := a.recentFile()
+	if err != nil {
+		return nil
+	}
+	return loadRecent(path)
 }
 
 // rememberConnection records a successful file-path connection (most-recent
@@ -68,7 +102,13 @@ func (a *App) rememberConnection(name, path, context string) {
 	if path == "" {
 		return // pasted content — never persisted
 	}
-	list := loadRecent()
+	a.recentMu.Lock()
+	defer a.recentMu.Unlock()
+	recentPath, err := a.recentFile()
+	if err != nil {
+		return
+	}
+	list := loadRecent(recentPath)
 	filtered := list[:0]
 	for _, r := range list {
 		if r.Path == path && r.Context == context {
@@ -80,12 +120,18 @@ func (a *App) rememberConnection(name, path, context string) {
 	if len(updated) > maxRecent {
 		updated = updated[:maxRecent]
 	}
-	storeRecent(updated)
+	_ = storeRecent(recentPath, updated)
 }
 
 // ForgetConnection removes a remembered connection.
 func (a *App) ForgetConnection(path, context string) {
-	list := loadRecent()
+	a.recentMu.Lock()
+	defer a.recentMu.Unlock()
+	recentPath, err := a.recentFile()
+	if err != nil {
+		return
+	}
+	list := loadRecent(recentPath)
 	filtered := list[:0]
 	for _, r := range list {
 		if r.Path == path && r.Context == context {
@@ -93,5 +139,5 @@ func (a *App) ForgetConnection(path, context string) {
 		}
 		filtered = append(filtered, r)
 	}
-	storeRecent(filtered)
+	_ = storeRecent(recentPath, filtered)
 }

@@ -35,8 +35,10 @@ group-qualified — see [kind-resolution.md](kind-resolution.md).
   metadata plus a shape summary of `spec`/`status` (scalars printed, lists as
   "N item(s)", maps as their key names). That is what makes a custom resource's
   Details tab work with no per-kind code.
-- **`ListEvents`** — a field-selector query on `involvedObject`. Note it uses
-  `bareKind()`; a qualified reference would never match.
+- **`ListEvents`** — resolves the live object first and adds
+  `involvedObject.uid` to the field selector when available. This prevents events
+  for a deleted object being attached to a new same-name object. It still uses
+  `bareKind()` because a qualified reference would never match.
 - **`GetYAML`** (`detail.go`) — strips `status` and `managedFields` before
   showing. `status` is a read-only subresource: sending it back on save produces
   apiserver warnings and never applies. `UpdateYAML` resolves from the document's
@@ -45,6 +47,11 @@ group-qualified — see [kind-resolution.md](kind-resolution.md).
   `IngressTree` build a `RelationNode` tree whose nodes carry their namespace so
   they stay clickable. Also here: `NodeMetrics`, `TopPods`, `PodMetricsList`, all
   nil-safe because `Cluster.Metrics` may be absent.
+
+Pod status gives deletion precedence, counts init-container restarts, and only
+marks explicit init failures as errors; normal `Init:PodInitializing` remains a
+progress state. Owner joins compare UID when Kubernetes supplies it, and Job
+health follows true terminal conditions rather than historical retry counts.
 
 ## Exploration
 
@@ -57,6 +64,10 @@ group-qualified — see [kind-resolution.md](kind-resolution.md).
   a section for**, custom resources included, concurrently and metadata-only.
 
 Both of the latter follow the rules in [performance.md](performance.md).
+
+The Pods table uses `PodsSnapshot`: one App binding concurrently loads Pod rows
+and optional metrics. Keep list/metrics merging inside that snapshot rather than
+adding a second frontend bridge call.
 
 ## Frontend table conventions
 

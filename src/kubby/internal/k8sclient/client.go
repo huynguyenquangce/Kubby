@@ -41,8 +41,10 @@ type Cluster struct {
 
 	// Cached discovery index — see apiindex.go. Guarded because the UI fires
 	// several resolutions concurrently (a drawer loads details and YAML at once).
-	idxMu sync.Mutex
-	idx   *apiIndex
+	idxMu          sync.Mutex
+	idx            *apiIndex
+	optionalMu     sync.Mutex
+	optionalAbsent map[string]time.Time
 
 	// Cached SelfSubjectAccessReview answers, keyed "Kind|namespace" — see
 	// access.go. Lives for the connection: RBAC does not change under us often,

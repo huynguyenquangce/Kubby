@@ -18,8 +18,8 @@ export function ApplyPreview(arg1) {
   return window['go']['main']['App']['ApplyPreview'](arg1);
 }
 
-export function ApplyYAML(arg1) {
-  return window['go']['main']['App']['ApplyYAML'](arg1);
+export function ApplyYAMLOwned(arg1, arg2) {
+  return window['go']['main']['App']['ApplyYAMLOwned'](arg1, arg2);
 }
 
 export function AskAboutResource(arg1, arg2, arg3, arg4) {
@@ -86,6 +86,10 @@ export function DeleteResource(arg1, arg2, arg3) {
   return window['go']['main']['App']['DeleteResource'](arg1, arg2, arg3);
 }
 
+export function DeleteResourceOwned(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['DeleteResourceOwned'](arg1, arg2, arg3, arg4);
+}
+
 export function DeploymentTree(arg1, arg2) {
   return window['go']['main']['App']['DeploymentTree'](arg1, arg2);
 }
@@ -100,6 +104,10 @@ export function DisconnectCluster(arg1) {
 
 export function DrainNode(arg1) {
   return window['go']['main']['App']['DrainNode'](arg1);
+}
+
+export function DrainNodeOwned(arg1, arg2) {
+  return window['go']['main']['App']['DrainNodeOwned'](arg1, arg2);
 }
 
 export function ExecResize(arg1, arg2) {
@@ -146,6 +154,10 @@ export function HelmInstall(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
   return window['go']['main']['App']['HelmInstall'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
+export function HelmInstallOwned(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
+  return window['go']['main']['App']['HelmInstallOwned'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+}
+
 export function HelmInstallPreview(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['main']['App']['HelmInstallPreview'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
@@ -158,12 +170,28 @@ export function HelmRollback(arg1, arg2, arg3) {
   return window['go']['main']['App']['HelmRollback'](arg1, arg2, arg3);
 }
 
+export function HelmRollbackOwned(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['HelmRollbackOwned'](arg1, arg2, arg3, arg4);
+}
+
+export function HelmSnapshot(arg1, arg2) {
+  return window['go']['main']['App']['HelmSnapshot'](arg1, arg2);
+}
+
 export function HelmTest(arg1, arg2) {
   return window['go']['main']['App']['HelmTest'](arg1, arg2);
 }
 
+export function HelmTestOwned(arg1, arg2, arg3) {
+  return window['go']['main']['App']['HelmTestOwned'](arg1, arg2, arg3);
+}
+
 export function HelmUninstall(arg1, arg2) {
   return window['go']['main']['App']['HelmUninstall'](arg1, arg2);
+}
+
+export function HelmUninstallOwned(arg1, arg2, arg3) {
+  return window['go']['main']['App']['HelmUninstallOwned'](arg1, arg2, arg3);
 }
 
 export function HelmUpgradePreview(arg1, arg2, arg3) {
@@ -172,6 +200,10 @@ export function HelmUpgradePreview(arg1, arg2, arg3) {
 
 export function HelmUpgradeValues(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['HelmUpgradeValues'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function HelmUpgradeValuesOwned(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['HelmUpgradeValuesOwned'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function IngressTree(arg1, arg2) {
@@ -326,6 +358,10 @@ export function PodsOnNode(arg1) {
   return window['go']['main']['App']['PodsOnNode'](arg1);
 }
 
+export function PodsSnapshot(arg1) {
+  return window['go']['main']['App']['PodsSnapshot'](arg1);
+}
+
 export function RecentConnections() {
   return window['go']['main']['App']['RecentConnections']();
 }
@@ -338,16 +374,32 @@ export function RestartDaemonSet(arg1, arg2) {
   return window['go']['main']['App']['RestartDaemonSet'](arg1, arg2);
 }
 
+export function RestartDaemonSetOwned(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RestartDaemonSetOwned'](arg1, arg2, arg3);
+}
+
 export function RestartDeployment(arg1, arg2) {
   return window['go']['main']['App']['RestartDeployment'](arg1, arg2);
+}
+
+export function RestartDeploymentOwned(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RestartDeploymentOwned'](arg1, arg2, arg3);
 }
 
 export function RestartStatefulSet(arg1, arg2) {
   return window['go']['main']['App']['RestartStatefulSet'](arg1, arg2);
 }
 
+export function RestartStatefulSetOwned(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RestartStatefulSetOwned'](arg1, arg2, arg3);
+}
+
 export function RollbackDeployment(arg1, arg2, arg3) {
   return window['go']['main']['App']['RollbackDeployment'](arg1, arg2, arg3);
+}
+
+export function RollbackDeploymentOwned(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RollbackDeploymentOwned'](arg1, arg2, arg3, arg4);
 }
 
 export function RolloutHistory(arg1, arg2) {
@@ -356,6 +408,10 @@ export function RolloutHistory(arg1, arg2) {
 
 export function RunCronJobNow(arg1, arg2) {
   return window['go']['main']['App']['RunCronJobNow'](arg1, arg2);
+}
+
+export function RunCronJobNowOwned(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RunCronJobNowOwned'](arg1, arg2, arg3);
 }
 
 export function SaveAIConfig(arg1, arg2, arg3, arg4, arg5) {
@@ -368,6 +424,10 @@ export function SaveTextToFile(arg1, arg2) {
 
 export function ScaleDeployment(arg1, arg2, arg3) {
   return window['go']['main']['App']['ScaleDeployment'](arg1, arg2, arg3);
+}
+
+export function ScaleDeploymentOwned(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ScaleDeploymentOwned'](arg1, arg2, arg3, arg4);
 }
 
 export function SearchCharts(arg1) {
@@ -390,8 +450,16 @@ export function SetDeploymentPaused(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetDeploymentPaused'](arg1, arg2, arg3);
 }
 
+export function SetDeploymentPausedOwned(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SetDeploymentPausedOwned'](arg1, arg2, arg3, arg4);
+}
+
 export function SetNodeSchedulable(arg1, arg2) {
   return window['go']['main']['App']['SetNodeSchedulable'](arg1, arg2);
+}
+
+export function SetNodeSchedulableOwned(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetNodeSchedulableOwned'](arg1, arg2, arg3);
 }
 
 export function SidebarCounts(arg1, arg2) {

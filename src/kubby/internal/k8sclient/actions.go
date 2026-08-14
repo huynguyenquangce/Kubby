@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -84,7 +85,7 @@ func RolloutHistory(ctx context.Context, c *Cluster, namespace, name string) ([]
 	out := []RolloutRevision{}
 	for i := range rsList.Items {
 		rs := &rsList.Items[i]
-		if !ownedBy(rs.OwnerReferences, "Deployment", dep.Name) {
+		if !ownedBy(rs.OwnerReferences, "Deployment", dep.Name, dep.UID) {
 			continue
 		}
 		rev, _ := strconv.ParseInt(rs.Annotations["deployment.kubernetes.io/revision"], 10, 64)
@@ -117,7 +118,7 @@ func RollbackDeployment(ctx context.Context, c *Cluster, namespace, name string,
 	}
 	for i := range rsList.Items {
 		rs := &rsList.Items[i]
-		if !ownedBy(rs.OwnerReferences, "Deployment", dep.Name) {
+		if !ownedBy(rs.OwnerReferences, "Deployment", dep.Name, dep.UID) {
 			continue
 		}
 		rev, _ := strconv.ParseInt(rs.Annotations["deployment.kubernetes.io/revision"], 10, 64)
@@ -154,6 +155,7 @@ func DrainNode(ctx context.Context, c *Cluster, name string) error {
 	if err != nil {
 		return err
 	}
+	failed := make([]string, 0)
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		if isDaemonSetPod(pod) {
@@ -166,9 +168,16 @@ func DrainNode(ctx context.Context, c *Cluster, name string) error {
 			ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
 		}
 		if err := c.Clientset.PolicyV1().Evictions(pod.Namespace).Evict(ctx, eviction); err != nil {
-			// Best-effort: keep draining the rest.
+			// Best-effort: keep draining the rest, but never report a partial
+			// drain as success. PDB, RBAC and throttling failures need to name
+			// the pods that remain on the cordoned node.
+			failed = append(failed, fmt.Sprintf("%s/%s: %v", pod.Namespace, pod.Name, err))
 			continue
 		}
+	}
+	if len(failed) > 0 {
+		sort.Strings(failed)
+		return fmt.Errorf("node was cordoned, but %d pod eviction(s) failed: %s", len(failed), strings.Join(failed, "; "))
 	}
 	return nil
 }
@@ -184,21 +193,24 @@ func isDaemonSetPod(pod *corev1.Pod) bool {
 
 // RunCronJobNow creates a one-off Job from a CronJob's job template, like
 // `kubectl create job --from=cronjob/<name>`.
-func RunCronJobNow(ctx context.Context, c *Cluster, namespace, name, stamp string) error {
+func RunCronJobNow(ctx context.Context, c *Cluster, namespace, name string) error {
 	cj, err := c.Clientset.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
-	jobName := fmt.Sprintf("%s-manual-%s", name, stamp)
-	if len(jobName) > 63 {
-		jobName = jobName[:63]
+	// Preserve room for the API server's random suffix. Truncating the whole
+	// name after appending a timestamp removed the unique part for long names.
+	prefix := name + "-manual-"
+	const maxGeneratePrefix = 58
+	if len(prefix) > maxGeneratePrefix {
+		prefix = strings.TrimRight(prefix[:maxGeneratePrefix-1], "-.") + "-"
 	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        jobName,
-			Namespace:   namespace,
-			Labels:      cj.Spec.JobTemplate.Labels,
-			Annotations: map[string]string{"cronjob.kubernetes.io/instantiate": "manual"},
+			GenerateName: prefix,
+			Namespace:    namespace,
+			Labels:       cj.Spec.JobTemplate.Labels,
+			Annotations:  map[string]string{"cronjob.kubernetes.io/instantiate": "manual"},
 		},
 		Spec: cj.Spec.JobTemplate.Spec,
 	}

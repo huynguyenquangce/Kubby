@@ -185,6 +185,22 @@ func TestAdviceIsSilentWhenThereIsNothingToSay(t *testing.T) {
 	}
 }
 
+func TestPartialMetricsNeverProduceAggregateUsageAdvice(t *testing.T) {
+	report := &SizingReport{
+		MetricsAvailable: true,
+		MetricsComplete:  false,
+		MetricsExpected:  2,
+		MetricsObserved:  1,
+		Totals:           NamespaceSizing{Containers: 2, CPURequest: 2000, CPUUsage: unset, MetricsExpected: 2, MetricsObserved: 1},
+	}
+	if got := advice(report); containsSubstring(got, "CPU") {
+		t.Fatalf("partial metrics produced aggregate CPU advice: %v", got)
+	}
+	if report.Totals.CPUUsage != unset {
+		t.Fatalf("partial aggregate usage = %d, want unset", report.Totals.CPUUsage)
+	}
+}
+
 func containsSubstring(lines []string, want string) bool {
 	for _, l := range lines {
 		if strings.Contains(l, want) {

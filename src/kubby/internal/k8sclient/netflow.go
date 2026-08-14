@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	netv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -76,6 +78,117 @@ type NetworkFlows struct {
 	EndpointCount int           `json:"endpointCount"`
 	BrokenCount   int           `json:"brokenCount"` // hops with a warning
 	Scope         string        `json:"scope"`       // "" = all namespaces
+	Warnings      []string      `json:"warnings"`
+}
+
+type serviceEndpointReadiness struct {
+	known        map[string]bool            // namespace/service has at least one EndpointSlice
+	ready        map[string]map[string]bool // namespace/service -> pod name -> serving now
+	allAvailable bool                       // a successful all-namespaces List covered every Service
+	nsAvailable  map[string]bool            // successful namespace Lists, including empty results
+}
+
+type podLabelIndex map[string]map[string][]*corev1.Pod
+
+func newPodLabelIndex(podsByNamespace map[string][]*corev1.Pod) podLabelIndex {
+	index := podLabelIndex{}
+	for namespace, pods := range podsByNamespace {
+		index.add(namespace, pods)
+	}
+	return index
+}
+
+func (index podLabelIndex) add(namespace string, pods []*corev1.Pod) {
+	if index[namespace] == nil {
+		index[namespace] = map[string][]*corev1.Pod{}
+	}
+	for _, pod := range pods {
+		for key, value := range pod.Labels {
+			labelKey := key + "\x00" + value
+			index[namespace][labelKey] = append(index[namespace][labelKey], pod)
+		}
+	}
+}
+
+func (index podLabelIndex) candidates(svc *corev1.Service, fallback []*corev1.Pod) []*corev1.Pod {
+	var best []*corev1.Pod
+	hasSelector := false
+	for key, value := range svc.Spec.Selector {
+		hasSelector = true
+		candidate, exists := index[svc.Namespace][key+"\x00"+value]
+		if !exists {
+			return nil
+		}
+		if best == nil || len(candidate) < len(best) {
+			best = candidate
+		}
+	}
+	if !hasSelector {
+		return fallback
+	}
+	return best
+}
+
+func newServiceEndpointReadiness(slices []discoveryv1.EndpointSlice, scope string, available bool) *serviceEndpointReadiness {
+	index := &serviceEndpointReadiness{known: map[string]bool{}, ready: map[string]map[string]bool{}, nsAvailable: map[string]bool{}}
+	if available {
+		index.markAvailable(scope)
+	}
+	index.add(slices)
+	return index
+}
+
+func (index *serviceEndpointReadiness) markAvailable(namespace string) {
+	if index == nil {
+		return
+	}
+	if namespace == "" {
+		index.allAvailable = true
+	} else {
+		index.nsAvailable[namespace] = true
+	}
+}
+
+func (index *serviceEndpointReadiness) add(slices []discoveryv1.EndpointSlice) {
+	if index == nil {
+		return
+	}
+	for i := range slices {
+		slice := &slices[i]
+		serviceName := slice.Labels[discoveryv1.LabelServiceName]
+		if serviceName == "" {
+			continue
+		}
+		key := slice.Namespace + "/" + serviceName
+		index.known[key] = true
+		if index.ready[key] == nil {
+			index.ready[key] = map[string]bool{}
+		}
+		for _, endpoint := range slice.Endpoints {
+			if endpoint.TargetRef == nil || endpoint.TargetRef.Kind != "Pod" || endpoint.TargetRef.Name == "" {
+				continue
+			}
+			terminating := endpoint.Conditions.Terminating != nil && *endpoint.Conditions.Terminating
+			ready := endpoint.Conditions.Ready == nil || *endpoint.Conditions.Ready
+			if ready && !terminating {
+				index.ready[key][endpoint.TargetRef.Name] = true
+			}
+		}
+	}
+}
+
+func (index *serviceEndpointReadiness) podReady(serviceKey, podName string) (bool, bool) {
+	if index == nil {
+		return false, false
+	}
+	if !index.known[serviceKey] {
+		namespace, _, _ := strings.Cut(serviceKey, "/")
+		if index.allAvailable || index.nsAvailable[namespace] {
+			return false, true
+		}
+		return false, false
+	}
+	return index.ready[serviceKey][podName], true
 }
 
 // NetworkTopology assembles the Ingress → Service → Pod topology for a namespace
@@ -87,19 +200,40 @@ type NetworkFlows struct {
 // Objects with a deletion timestamp are dropped — a deleted-but-still-finalizing
 // Ingress or Service must not keep showing up as live routing.
 func NetworkTopology(ctx context.Context, c *Cluster, namespace string) (*NetworkFlows, error) {
-	svcList, err := c.Clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
+	var svcList *corev1.ServiceList
+	var podList *corev1.PodList
+	var ingList *netv1.IngressList
+	var endpointSlices *discoveryv1.EndpointSliceList
+	errs := make([]error, 4)
+	var wg sync.WaitGroup
+	tasks := []func(){
+		func() { svcList, errs[0] = c.Clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{}) },
+		func() { podList, errs[1] = c.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{}) },
+		func() {
+			ingList, errs[2] = c.Clientset.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
+		},
+		func() {
+			endpointSlices, errs[3] = c.Clientset.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{})
+		},
 	}
-	podList, err := c.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
+	for _, task := range tasks {
+		wg.Add(1)
+		go func(run func()) { defer wg.Done(); run() }(task)
 	}
-	ingList, err := c.Clientset.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
+	wg.Wait()
+	for index, name := range []string{"services", "pods", "ingresses"} {
+		if errs[index] != nil {
+			return nil, fmt.Errorf("%s: %w", name, errs[index])
+		}
 	}
-	return networkTopologyFromLists(ctx, c, namespace, svcList, podList, ingList), nil
+	if endpointSlices == nil {
+		endpointSlices = &discoveryv1.EndpointSliceList{}
+	}
+	out := networkTopologyFromLists(ctx, c, namespace, svcList, podList, ingList, endpointSlices, errs[3] == nil)
+	if errs[3] != nil {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("endpoint slices: %v; falling back to PodReady conditions", errs[3]))
+	}
+	return out, nil
 }
 
 // networkTopologyFromLists is shared by Traffic and Cluster structure. Keeping
@@ -112,8 +246,11 @@ func networkTopologyFromLists(
 	svcList *corev1.ServiceList,
 	podList *corev1.PodList,
 	ingList *netv1.IngressList,
+	endpointSlices *discoveryv1.EndpointSliceList,
+	endpointSlicesAvailable bool,
 ) *NetworkFlows {
-	out := &NetworkFlows{Ingresses: []FlowIngress{}, Services: []FlowService{}, Scope: namespace}
+	out := &NetworkFlows{Ingresses: []FlowIngress{}, Services: []FlowService{}, Scope: namespace, Warnings: []string{}}
+	endpointReadiness := newServiceEndpointReadiness(endpointSlices.Items, namespace, endpointSlicesAvailable)
 
 	svcByKey := map[string]*corev1.Service{}
 	for i := range svcList.Items {
@@ -131,6 +268,7 @@ func networkTopologyFromLists(
 		}
 		podsByNs[pod.Namespace] = append(podsByNs[pod.Namespace], pod)
 	}
+	podLabels := newPodLabelIndex(podsByNs)
 
 	endpoints := map[string]bool{} // ns/pod, deduped across every flow
 	fronted := map[string]bool{}   // ns/svc already shown under an Ingress
@@ -140,13 +278,15 @@ func networkTopologyFromLists(
 		if ing.DeletionTimestamp != nil {
 			continue
 		}
-		fi := flowIngress(ing, svcByKey, podsByNs, fronted, endpoints)
+		fi := flowIngress(ing, svcByKey, podsByNs, podLabels, endpointReadiness, fronted, endpoints)
 		out.Ingresses = append(out.Ingresses, fi)
 	}
 	// Istio expresses the same thing with Gateway + VirtualService. Appending
 	// here (before the internal-services pass) means a mesh-routed Service is
 	// marked as fronted and does not also appear as "internal only".
-	out.Ingresses = append(out.Ingresses, istioFlows(ctx, c, namespace, svcByKey, podsByNs, fronted, endpoints)...)
+	istioIngresses, istioWarnings := istioFlows(ctx, c, namespace, svcByKey, podsByNs, podLabels, endpointReadiness, fronted, endpoints)
+	out.Ingresses = append(out.Ingresses, istioIngresses...)
+	out.Warnings = append(out.Warnings, istioWarnings...)
 	sort.Slice(out.Ingresses, func(i, j int) bool {
 		a, b := out.Ingresses[i], out.Ingresses[j]
 		if a.Kind != b.Kind {
@@ -164,7 +304,8 @@ func networkTopologyFromLists(
 		if fronted[k] {
 			continue
 		}
-		out.Services = append(out.Services, flowService(svcByKey[k], podsByNs[svcByKey[k].Namespace], endpoints))
+		svc := svcByKey[k]
+		out.Services = append(out.Services, flowService(svc, podLabels.candidates(svc, podsByNs[svc.Namespace]), endpointReadiness, endpoints))
 	}
 
 	out.RoutedCount = len(fronted)
@@ -191,6 +332,8 @@ func flowIngress(
 	ing *netv1.Ingress,
 	svcByKey map[string]*corev1.Service,
 	podsByNs map[string][]*corev1.Pod,
+	podLabels podLabelIndex,
+	endpointReadiness *serviceEndpointReadiness,
 	fronted map[string]bool,
 	endpoints map[string]bool,
 ) FlowIngress {
@@ -260,7 +403,7 @@ func flowIngress(
 			})
 			continue
 		}
-		fs := flowService(svc, podsByNs[svc.Namespace], endpoints)
+		fs := flowService(svc, podLabels.candidates(svc, podsByNs[svc.Namespace]), endpointReadiness, endpoints)
 		fs.Routes = routes[svcName]
 		fi.Services = append(fi.Services, fs)
 	}
@@ -271,7 +414,7 @@ func flowIngress(
 	return fi
 }
 
-func flowService(svc *corev1.Service, nsPods []*corev1.Pod, endpoints map[string]bool) FlowService {
+func flowService(svc *corev1.Service, nsPods []*corev1.Pod, endpointReadiness *serviceEndpointReadiness, endpoints map[string]bool) FlowService {
 	fs := FlowService{
 		Name: svc.Name, Namespace: svc.Namespace,
 		Type: string(svc.Spec.Type), ClusterIP: svc.Spec.ClusterIP,
@@ -308,12 +451,16 @@ func flowService(svc *corev1.Service, nsPods []*corev1.Pod, endpoints map[string
 		}
 		status, restarts, ready := podStatus(*pod)
 		ownerKind, ownerName := podOwner(pod)
+		isReady, endpointKnown := endpointReadiness.podReady(svc.Namespace+"/"+svc.Name, pod.Name)
+		if !endpointKnown {
+			isReady = podIsReady(pod)
+		}
 		fp := FlowPod{
 			Name: pod.Name, Namespace: pod.Namespace, Status: status, Ready: ready,
 			Restarts: restarts, Node: pod.Spec.NodeName, IP: pod.Status.PodIP,
 			OwnerKind: ownerKind, OwnerName: ownerName,
-			IsError: erroredStatuses[status],
-			IsReady: status == string(corev1.PodRunning) && isFullyReady(ready),
+			IsError: isErroredPodStatus(status),
+			IsReady: isReady,
 		}
 		if fp.IsReady {
 			fs.ReadyPods++

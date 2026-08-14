@@ -3,6 +3,7 @@ package k8sclient
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -156,7 +157,7 @@ func ListPods(ctx context.Context, client kubernetes.Interface, namespace string
 			Status:    status,
 			Ready:     ready,
 			Restarts:  restarts,
-			IsError:   erroredStatuses[status],
+			IsError:   isErroredPodStatus(status),
 			PodIP:     pod.Status.PodIP,
 			Node:      pod.Spec.NodeName,
 			Age:       age(pod.CreationTimestamp),
@@ -245,17 +246,42 @@ func ListSecrets(ctx context.Context, client kubernetes.Interface, namespace str
 // (CrashLoopBackOff, ImagePullBackOff...) instead of just the generic Phase.
 func podStatus(pod corev1.Pod) (status string, restarts int32, ready string) {
 	status = string(pod.Status.Phase)
-	if pod.DeletionTimestamp != nil {
-		status = "Terminating"
-	}
 
 	total := len(pod.Status.ContainerStatuses)
 	readyCount := 0
+	for _, cs := range pod.Status.InitContainerStatuses {
+		restarts += cs.RestartCount
+	}
 	for _, cs := range pod.Status.ContainerStatuses {
 		restarts += cs.RestartCount
 		if cs.Ready {
 			readyCount++
 		}
+	}
+	ready = fmt.Sprintf("%d/%d", readyCount, total)
+
+	// Deletion is the highest-precedence state. A terminating pod must never be
+	// painted back to Running/CrashLoopBackOff by a container state below.
+	if pod.DeletionTimestamp != nil {
+		return "Terminating", restarts, ready
+	}
+
+	// Init failures prevent every application container from starting and are
+	// therefore more useful than the generic Pending phase.
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
+			return "Init:" + cs.State.Waiting.Reason, restarts, ready
+		}
+		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
+			reason := cs.State.Terminated.Reason
+			if reason == "" {
+				reason = "Error"
+			}
+			return "Init:" + reason, restarts, ready
+		}
+	}
+
+	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
 			status = cs.State.Waiting.Reason
 		}
@@ -263,6 +289,27 @@ func podStatus(pod corev1.Pod) (status string, restarts int32, ready string) {
 			status = cs.State.Terminated.Reason
 		}
 	}
-	ready = fmt.Sprintf("%d/%d", readyCount, total)
 	return status, restarts, ready
+}
+
+func isErroredPodStatus(status string) bool {
+	if erroredStatuses[status] {
+		return true
+	}
+	if strings.HasPrefix(status, "Init:") {
+		return erroredStatuses[strings.TrimPrefix(status, "Init:")]
+	}
+	return false
+}
+
+func podIsReady(pod *corev1.Pod) bool {
+	if pod == nil || pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }

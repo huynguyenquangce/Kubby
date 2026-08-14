@@ -485,6 +485,7 @@ export namespace k8sclient {
 	    memLimit: number;
 	    cpuUsage: number;
 	    memUsage: number;
+	    metricsObserved: boolean;
 	    cpuPct: number;
 	    memPct: number;
 	    memOfLimit: number;
@@ -509,6 +510,7 @@ export namespace k8sclient {
 	        this.memLimit = source["memLimit"];
 	        this.cpuUsage = source["cpuUsage"];
 	        this.memUsage = source["memUsage"];
+	        this.metricsObserved = source["metricsObserved"];
 	        this.cpuPct = source["cpuPct"];
 	        this.memPct = source["memPct"];
 	        this.memOfLimit = source["memOfLimit"];
@@ -914,22 +916,6 @@ export namespace k8sclient {
 	        this.isPending = source["isPending"];
 	    }
 	}
-	export class HelmRepo {
-	    name: string;
-	    url: string;
-	    authenticated: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new HelmRepo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.url = source["url"];
-	        this.authenticated = source["authenticated"];
-	    }
-	}
 	export class HelmResource {
 	    apiVersion: string;
 	    kind: string;
@@ -956,6 +942,55 @@ export namespace k8sclient {
 	        this.ready = source["ready"];
 	    }
 	}
+	export class HelmReleaseSnapshot {
+	    detail?: HelmReleaseDetail;
+	    resources: HelmResource[];
+	
+	    static createFrom(source: any = {}) {
+	        return new HelmReleaseSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.detail = this.convertValues(source["detail"], HelmReleaseDetail);
+	        this.resources = this.convertValues(source["resources"], HelmResource);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class HelmRepo {
+	    name: string;
+	    url: string;
+	    authenticated: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new HelmRepo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.url = source["url"];
+	        this.authenticated = source["authenticated"];
+	    }
+	}
+	
 	export class HelmRevision {
 	    revision: number;
 	    status: string;
@@ -1084,6 +1119,8 @@ export namespace k8sclient {
 	    memRequest: number;
 	    memLimit: number;
 	    memUsage: number;
+	    metricsExpected: number;
+	    metricsObserved: number;
 	    noCpuRequest: number;
 	    noMemRequest: number;
 	    noMemLimit: number;
@@ -1106,6 +1143,8 @@ export namespace k8sclient {
 	        this.memRequest = source["memRequest"];
 	        this.memLimit = source["memLimit"];
 	        this.memUsage = source["memUsage"];
+	        this.metricsExpected = source["metricsExpected"];
+	        this.metricsObserved = source["metricsObserved"];
 	        this.noCpuRequest = source["noCpuRequest"];
 	        this.noMemRequest = source["noMemRequest"];
 	        this.noMemLimit = source["noMemLimit"];
@@ -1155,6 +1194,7 @@ export namespace k8sclient {
 	    endpointCount: number;
 	    brokenCount: number;
 	    scope: string;
+	    warnings: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new NetworkFlows(source);
@@ -1168,6 +1208,7 @@ export namespace k8sclient {
 	        this.endpointCount = source["endpointCount"];
 	        this.brokenCount = source["brokenCount"];
 	        this.scope = source["scope"];
+	        this.warnings = source["warnings"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1346,6 +1387,7 @@ export namespace k8sclient {
 	    topPods: PodMetric[];
 	    events: EventInfo[];
 	    warnings: string[];
+	    sectionErrors: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
 	        return new OverviewData(source);
@@ -1360,6 +1402,7 @@ export namespace k8sclient {
 	        this.topPods = this.convertValues(source["topPods"], PodMetric);
 	        this.events = this.convertValues(source["events"], EventInfo);
 	        this.warnings = source["warnings"];
+	        this.sectionErrors = source["sectionErrors"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1434,6 +1477,38 @@ export namespace k8sclient {
 	}
 	
 	
+	export class PodsSnapshot {
+	    pods: PodInfo[];
+	    metrics: PodMetric[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PodsSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pods = this.convertValues(source["pods"], PodInfo);
+	        this.metrics = this.convertValues(source["metrics"], PodMetric);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	export class RelationNode {
 	    kind: string;
@@ -1703,6 +1778,10 @@ export namespace k8sclient {
 	    memReservedPct: number;
 	    memUsedPct: number;
 	    metricsAvailable: boolean;
+	    metricsComplete: boolean;
+	    metricsExpected: number;
+	    metricsObserved: number;
+	    metricsCoveragePct: number;
 	    note: string;
 	
 	    static createFrom(source: any = {}) {
@@ -1724,6 +1803,10 @@ export namespace k8sclient {
 	        this.memReservedPct = source["memReservedPct"];
 	        this.memUsedPct = source["memUsedPct"];
 	        this.metricsAvailable = source["metricsAvailable"];
+	        this.metricsComplete = source["metricsComplete"];
+	        this.metricsExpected = source["metricsExpected"];
+	        this.metricsObserved = source["metricsObserved"];
+	        this.metricsCoveragePct = source["metricsCoveragePct"];
 	        this.note = source["note"];
 	    }
 	

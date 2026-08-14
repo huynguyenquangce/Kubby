@@ -65,15 +65,17 @@ shipping it made WebView2 silently fall back to a different system face on each
 machine, changing density and alignment. Keep technical identifiers and measurements
 on the existing monospace stack; do not turn the whole UI into monospace.
 
-Overview is a dashboard, not a resource table. Its hierarchy is: one dark
-**Cluster pulse** for health/capacity, a compact KPI strip, then independently sized
-Node status, Attention, Top consumers, and Events sections. Cluster pulse is the
-only owner of aggregate CPU/memory; Node status deliberately shows readiness,
-scheduling, pressure, pod count and kubelet version instead of repeating utilization.
-Capacity uses comparable linear meters rather than decorative rings. Every Overview table still carries
-`class="plain"`, uses a fixed layout, and owns horizontal overflow so an event message
-cannot widen the page. The two side-by-side sections use `align-items: start`; an
-empty Attention panel must not stretch to the height of Top consumers.
+Overview is an operational cockpit, not a resource table or a marketing hero. Its
+hierarchy is: a compact semantic health banner with ready/total facts; comparable
+CPU, memory, infrastructure, and workload cards; then Attention, Top consumers,
+Node status, and Events. Health is expressed as evidence-backed counts rather than
+an invented percentage score. Aggregate CPU/memory has one owner; Node status shows
+readiness, scheduling, pressure, and pod count instead of repeating utilization.
+Scheduling disabled remains visible but does not make an otherwise Ready,
+pressure-free control-plane node unhealthy. Capacity uses comparable linear meters
+rather than decorative rings. Every Overview table still carries `class="plain"`,
+uses a fixed layout, and owns horizontal overflow so an event message cannot widen
+the page. At narrow workspace widths the cards stack without hiding any state.
 
 The contextual **Cluster structure** button opens a separate debug canvas, not a
 resource table. `ClusterStructure()` supplies Entry point → Service → Workload → Pod

@@ -48,10 +48,26 @@ other cards. The 5-second live refresh updates the current screen; expensive
 sidebar tallies have their own 30-second live TTL (manual refresh, writes and
 namespace/cluster changes still refresh immediately).
 
+The Pods screen follows the same boundary: one `PodsSnapshot(namespace)` bridge
+call concurrently fetches typed Pod rows and optional metrics in Go. Live mode
+is single-flight; if a five-second tick arrives while the prior screen refresh
+is still running, the tick is skipped instead of adding another API fan-out.
+
 Cluster structure follows the same rule: one bound call concurrently lists
 Services, Pods, Ingresses, ReplicaSets and metadata-only Nodes/Namespaces, then
 joins selectors and owner chains in memory. It must never list per Service or per
 workload. The existing traffic join is shared so topology semantics cannot drift.
+
+Traffic also starts Services, Pods, Ingresses and EndpointSlices concurrently.
+Its in-memory Service→Pod join first narrows candidates through an exact
+namespace/label index, then verifies the complete selector. A missing optional
+Istio kind is negatively cached for one minute so a cluster without Istio does
+not force full discovery on every live refresh.
+
+Helm repository Update downloads at most four indexes concurrently. Downloads
+use unique temporary cache directories and publish a parsed index by atomic
+rename under the short repository lock, so Browse never races a partial Helm
+cache file and two Updates never write the same live file concurrently.
 
 ## Rule 3 — metadata-only where a number or a name is enough
 
@@ -109,6 +125,16 @@ both the throttle and the payload scale with it.
 | Overview bridge calls | 7 independent calls | **1** `OverviewSnapshot` call |
 | Overview processing, synthetic 10,000 Pods | unmeasured | **33 ms/op**, 54.6 MB/op (fake-client benchmark, 3 runs) |
 
+The 2026-08-14 performance audit additionally measured warmed kind counts at a
+24 ms median, Overview at 20.8 ms/op and 24.30 MB/op for 10,000 synthetic Pods,
+and the pre-index topology join at 345.8 ms for 1,000 Services × 10,000 Pods.
+The checked-in indexed benchmark models 100 selector groups and, after the final
+fix, measured 89.3–102.8 ms/op (90.2 ms median across three runs) and 46.17 MB/op
+on the same Ryzen 5 5600H development machine. Its output is 100,000 rendered
+endpoint rows, so allocation volume is dominated by the result payload rather
+than selector scanning. Against the pre-index 345.8 ms audit case, selector-join
+latency is about 3.8× lower at the median.
+
 Reproduce with the CLI:
 
 ```powershell
@@ -116,6 +142,7 @@ go run ./cmd/kubby-cli counts                      # full, timed
 go run ./cmd/kubby-cli counts -n default --cluster=false   # the namespace-switch path
 go run ./cmd/kubby-cli overview                            # one Overview snapshot, timed
 go test ./internal/k8sclient -run '^$' -bench BenchmarkOverviewSnapshot10kPods -benchmem
+go test ./internal/k8sclient -run '^$' -bench BenchmarkNetworkTopologyIndexedJoin1000Services10kPods -benchmem
 ```
 
 ## Known remaining costs
@@ -129,3 +156,8 @@ Not yet addressed — worth knowing before blaming something else:
   every row — quadratic-feeling on a large table. Caching the search text in a
   `dataset` attribute at render time and debouncing the input are the cheap fixes;
   server-side `Limit` or virtualised rendering is the real one.
+- **Editor and terminal modules are eager.** The production JavaScript bundle
+  measured 888,022 bytes (258,860 gzip); an isolated CodeMirror build accounted
+  for 402,666 bytes (131,682 gzip). Lazy-loading editors/terminal would improve
+  startup, but needs a separate UI lifecycle change and native WebView smoke
+  coverage rather than a mechanical import rewrite.

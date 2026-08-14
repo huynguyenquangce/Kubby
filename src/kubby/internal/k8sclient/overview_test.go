@@ -63,7 +63,7 @@ func TestOverviewSnapshotSharesListsAndBuildsSections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := snapshot.Stats, (OverviewStats{Nodes: 1, Namespaces: 2, Pods: 3, Deployments: 2, Errors: 1, PodsAvailable: true}); got != want {
+	if got, want := snapshot.Stats, (OverviewStats{Nodes: 1, Namespaces: 2, Pods: 2, Deployments: 2, Errors: 1, PodsAvailable: true}); got != want {
 		t.Fatalf("stats = %#v, want %#v", got, want)
 	}
 	if len(snapshot.FailingPods) != 1 || snapshot.FailingPods[0].Name != "crashing" {
@@ -110,6 +110,9 @@ func TestOverviewSnapshotKeepsPartialDataWhenPodsOrMetricsFail(t *testing.T) {
 	}
 	if len(snapshot.Warnings) == 0 || !strings.HasPrefix(snapshot.Warnings[0], "pods:") {
 		t.Fatalf("warnings = %#v", snapshot.Warnings)
+	}
+	if !strings.Contains(snapshot.SectionErrors["pods"], "forbidden") {
+		t.Fatalf("section errors should identify the unavailable pods section: %#v", snapshot.SectionErrors)
 	}
 }
 

@@ -35,7 +35,7 @@ import {
     DisconnectCluster,
     ListNodes,
     ListNamespaces,
-    ListPods,
+    PodsSnapshot,
     ListDeployments,
     ListServices,
     ListConfigMaps,
@@ -58,19 +58,19 @@ import {
     ListResourceQuotas,
     ListLimitRanges,
     HelmGet,
+    HelmSnapshot,
     HelmHistory,
-    HelmRollback,
-    HelmUninstall,
-    HelmUpgradeValues,
-    HelmInstall,
+    HelmRollbackOwned,
+    HelmUninstallOwned,
+    HelmUpgradeValuesOwned,
+    HelmInstallOwned,
     SearchCharts,
     ChartDetails,
     ChartDefaultValues,
     HelmInstallPreview,
     HelmUpgradePreview,
     HelmGetRevision,
-    HelmReleaseResources,
-    HelmTest,
+    HelmTestOwned,
     ListHelmRepos,
     AddHelmRepo,
     RemoveHelmRepo,
@@ -78,17 +78,17 @@ import {
     BrowseHelmRepo,
     GetYAML,
     UpdateYAML,
-    ApplyYAML,
+    ApplyYAMLOwned,
     ApplyPreview,
     CanI,
     Sizing,
     GetDetail,
     ListEvents,
-    DeleteResource,
-    ScaleDeployment,
-    RestartDeployment,
-    RestartStatefulSet,
-    RestartDaemonSet,
+	DeleteResourceOwned,
+	ScaleDeploymentOwned,
+    RestartDeploymentOwned,
+    RestartStatefulSetOwned,
+    RestartDaemonSetOwned,
     PodsOnNode,
     NamespaceSummary,
     SearchResources,
@@ -105,12 +105,12 @@ import {
     AppVersion,
     Diagnostics,
     CopyToClipboard,
-    SetDeploymentPaused,
-    RolloutHistory,
-    RollbackDeployment,
-    SetNodeSchedulable,
-    DrainNode,
-    RunCronJobNow,
+    SetDeploymentPausedOwned,
+	RolloutHistory,
+	RollbackDeploymentOwned,
+    SetNodeSchedulableOwned,
+    DrainNodeOwned,
+    RunCronJobNowOwned,
     SecretData,
     RecentConnections,
     ForgetConnection,
@@ -118,7 +118,6 @@ import {
     ServiceTree,
     IngressTree,
     OverviewSnapshot,
-    PodMetricsList,
     PodContainers,
     PodLogs,
     StartLogStream,
@@ -234,10 +233,14 @@ const LOG_TAIL_LINES = 500;
 const $ = (id) => document.getElementById(id);
 
 let source = { mode: 'path', path: '', content: '' };
+let welcomeConnectPending = false;
 let currentView = 'overview';
 let currentNamespace = '';
 let helmSection = 'releases';
 const requestScopes = createRequestScopes();
+const pasteEditor = createYamlEditor($('paste-area'), {
+	placeholder: 'apiVersion: v1\nkind: Config\nclusters:\n- ...',
+});
 
 function isCurrentViewRequest(scope) {
     return requestScopes.isCurrentView(scope, currentView, currentNamespace);
@@ -248,8 +251,10 @@ function viewError(scope, err) {
 }
 
 function connectionOwnershipChanged() {
-    if (!$('modal').hidden) closeModal();
-    requestScopes.connectionChanged();
+	if (!$('modal').hidden) closeModal();
+	if (!$('dialog').hidden) closeDialog(false);
+	requestScopes.connectionChanged();
+	clearCustomSections();
 }
 
 // ============ Welcome screen ============
@@ -278,7 +283,7 @@ $('btn-pick-kubeconfig').addEventListener('click', () => {
 
 $('btn-load-paste').addEventListener('click', () => {
     clearWelcomeError();
-    const content = $('paste-area').value.trim();
+	const content = pasteEditor.getValue().trim();
     if (!content) {
         showWelcomeError('Paste your kubeconfig content first.');
         return;
@@ -301,11 +306,13 @@ function fillContexts(res) {
 }
 
 $('btn-connect').addEventListener('click', () => {
-    clearWelcomeError();
+	if (welcomeConnectPending) return;
+	clearWelcomeError();
     const ctx = $('context-select').value;
     const btn = $('btn-connect');
-    btn.disabled = true;
-    btn.textContent = 'Connecting…';
+	btn.disabled = true;
+	btn.textContent = 'Connecting…';
+	setWelcomeConnectPending(true);
     $('connecting-overlay').hidden = false;
 
     const connect = source.mode === 'path'
@@ -315,12 +322,21 @@ $('btn-connect').addEventListener('click', () => {
     connect
         .then(() => enterDashboard(ctx))
         .catch(showWelcomeError)
-        .finally(() => {
+		.finally(() => {
             $('connecting-overlay').hidden = true;
             btn.disabled = false;
-            btn.textContent = 'Connect';
-        });
+			btn.textContent = 'Connect';
+			setWelcomeConnectPending(false);
+		});
 });
+
+function setWelcomeConnectPending(pending) {
+	welcomeConnectPending = pending;
+	for (const item of document.querySelectorAll('.recent-item')) {
+		item.classList.toggle('recent-item-disabled', pending);
+		item.setAttribute('aria-disabled', String(pending));
+	}
+}
 
 function showWelcomeError(err) {
     const el = $('welcome-error');
@@ -565,6 +581,16 @@ $('structure-only-unhealthy').addEventListener('change', applyStructureFilter);
 // Deliberately no count badges here: that would mean one list per kind on every
 // refresh, which is the cost the sidebar was just relieved of.
 const CUSTOM_KINDS = new Map(); // view id → { refKind, title, namespaced }
+const CUSTOM_VIEW_KEYS = new Set();
+
+function clearCustomSections() {
+	for (const view of CUSTOM_VIEW_KEYS) {
+		delete PAGE_TITLES[view];
+		NAMESPACED_VIEWS.delete(view);
+	}
+	CUSTOM_VIEW_KEYS.clear();
+	CUSTOM_KINDS.clear();
+}
 
 function loadCustomSections() {
     const box = $('nav-custom-items');
@@ -574,14 +600,15 @@ function loadCustomSections() {
         .then((res) => {
             if (!requestScopes.isCurrentConnection(connection)) return;
             const kinds = res?.kinds ?? [];
-            CUSTOM_KINDS.clear();
+			clearCustomSections();
             box.innerHTML = '';
             section.hidden = kinds.length === 0;
             if (kinds.length === 0) return;
 
             for (const k of kinds) {
                 const view = `custom:${k.refKind}`;
-                CUSTOM_KINDS.set(view, k);
+				CUSTOM_KINDS.set(view, k);
+				CUSTOM_VIEW_KEYS.add(view);
                 PAGE_TITLES[view] = k.title;
                 if (k.namespaced) NAMESPACED_VIEWS.add(view);
 
@@ -712,16 +739,19 @@ function clearRenderedView(view = currentView) {
     // These dashboard canvases contain actionable buttons rather than table
     // rows. Remove the previous owner immediately so a slow cluster/namespace
     // response cannot leave a clickable topology from the old scope.
-    if (view === 'overview') {
-        $('node-status').innerHTML = '';
-        $('node-status-total').textContent = '';
-    }
+	if (view === 'overview') {
+		$('node-status').innerHTML = '';
+		$('overview-toppods-body').innerHTML = '';
+		$('node-status-total').textContent = '';
+		$('overview-warnings').hidden = true;
+	}
     if (view === 'structure') {
         for (const id of ['structure-summary', 'structure-entries', 'structure-internal', 'structure-unexposed']) $(id).innerHTML = '';
         $('structure-warnings').hidden = true;
         $('structure-updated').textContent = '';
         resetStructureInspector();
     }
+	if (view === 'traffic') $('traffic-warnings').hidden = true;
 }
 
 // Instant client-side filter over the current view's table rows.
@@ -988,17 +1018,25 @@ function loadOverview(scope) {
             if (!isCurrentViewRequest(scope)) return;
             const stats = snapshot?.stats ?? {};
             const errored = snapshot?.failingPods ?? [];
-            $('stat-nodes').textContent = stats.nodes ?? 0;
-            $('stat-namespaces').textContent = stats.namespaces ?? 0;
-            $('stat-pods').textContent = stats.pods ?? 0;
-            $('stat-deployments').textContent = stats.deployments ?? 0;
-            $('stat-errors').textContent = errored.length;
-            $('stat-errors').closest('.stat-card').classList.toggle('has-errors', errored.length > 0);
+            const sectionErrors = snapshot?.sectionErrors ?? {};
+            const warning = $('overview-warnings');
+            const failedSections = Object.keys(sectionErrors);
+            warning.hidden = failedSections.length === 0;
+            warning.textContent = failedSections.length
+                ? `Partial snapshot — unavailable: ${failedSections.join(', ')}. Successful sections remain live.` : '';
+            $('stat-nodes').textContent = sectionErrors.nodes ? '—' : (stats.nodes ?? 0);
+            $('stat-namespaces').textContent = sectionErrors.namespaces || sectionErrors.metadata ? '—' : (stats.namespaces ?? 0);
+            $('stat-pods').textContent = sectionErrors.pods ? '—' : (stats.pods ?? 0);
+            $('stat-deployments').textContent = sectionErrors.deployments || sectionErrors.metadata ? '—' : (stats.deployments ?? 0);
+            $('stat-errors').textContent = sectionErrors.pods ? '—' : errored.length;
+            $('attention-count').textContent = sectionErrors.pods ? 'Unavailable' : `${errored.length} active`;
+            $('attention-count').classList.toggle('has-issues', errored.length > 0);
             updateClusterHealth(stats.podsAvailable ? (stats.pods ?? 0) : null, errored);
+            updateWorkloadSummary(stats, errored, sectionErrors);
 
             const body = $('overview-errors-body');
             body.innerHTML = '';
-            $('overview-errors-empty').hidden = errored.length > 0;
+            setAttentionEmptyState(Boolean(sectionErrors.pods), errored.length > 0);
             for (const p of errored) {
                 body.appendChild(row(
                     `<td class="overview-namespace">${esc(p.namespace)}</td><td class="overview-resource-name" title="${esc(p.name)}">${esc(p.name)}</td><td>${badge(p.status, false)}</td><td class="overview-count">${p.restarts}</td>`,
@@ -1017,9 +1055,14 @@ function loadOverview(scope) {
             renderTopPods(snapshot?.topPods ?? []);
             renderRecentEvents(snapshot?.events ?? []);
         })
-        .catch((err) => {
-            if (!isCurrentViewRequest(scope)) return;
+		.catch((err) => {
+			if (!isCurrentViewRequest(scope)) return;
+			$('overview-warnings').hidden = true;
             updateClusterHealth(null, []);
+            updateWorkloadSummary({}, [], { pods: String(err) });
+            $('attention-count').textContent = 'Unavailable';
+            $('attention-count').classList.remove('has-issues');
+            setAttentionEmptyState(true, false);
             renderCapacityMetrics([]);
             renderNodeStatus([]);
             renderTopPods([]);
@@ -1029,45 +1072,85 @@ function loadOverview(scope) {
 }
 
 function updateClusterHealth(total, errored) {
-    const score = $('cluster-health-score');
-    const badgeEl = $('cluster-health-badge');
-    const fill = $('cluster-health-fill');
+    const banner = $('overview-pulse');
+    const icon = $('cluster-health-icon');
+    const title = $('cluster-health-title');
+    const summary = $('cluster-health-summary');
+    banner.className = 'overview-health-banner';
     if (total === null) {
-        score.textContent = '–';
-        $('cluster-health-summary').textContent = 'Cluster health could not be loaded.';
+        banner.classList.add('overview-health-unavailable');
+        icon.textContent = '?';
+        title.textContent = 'Cluster health unavailable';
+        summary.textContent = 'Pod status could not be loaded. Other successful sections remain live.';
         $('cluster-health-ratio').textContent = '– / –';
-        fill.style.width = '0%';
-        fill.parentElement.removeAttribute('aria-valuenow');
-        badgeEl.textContent = 'Unavailable';
-        badgeEl.className = 'health-state health-state-warn';
         return;
     }
     const unhealthy = errored?.length ?? 0;
     const healthy = Math.max(total - unhealthy, 0);
-    const percent = total > 0 ? Math.round((healthy / total) * 100) : 100;
-    score.textContent = String(percent);
-    $('cluster-health-summary').textContent = total > 0
-        ? `${healthy} of ${total} pods are healthy`
-        : 'No pods are running in the cluster yet';
     $('cluster-health-ratio').textContent = `${healthy} / ${total}`;
-    fill.style.width = `${percent}%`;
-    fill.parentElement.setAttribute('aria-valuenow', String(percent));
-    $('cluster-health-note').textContent = unhealthy > 0
-        ? `${unhealthy} pod${unhealthy === 1 ? '' : 's'} need attention. Open a row below for live evidence.`
-        : 'Calculated from live pod status returned by the connected cluster.';
-    badgeEl.textContent = unhealthy === 0 ? 'Healthy' : (percent >= 90 ? `${unhealthy} warning${unhealthy === 1 ? '' : 's'}` : 'Needs attention');
-    badgeEl.className = `health-state ${unhealthy === 0 ? 'health-state-ok' : (percent >= 90 ? 'health-state-warn' : 'health-state-error')}`;
+    if (unhealthy === 0) {
+        banner.classList.add('overview-health-ok');
+        icon.textContent = '✓';
+        title.textContent = total === 0 ? 'Cluster ready' : 'Cluster healthy';
+        summary.textContent = total === 0
+            ? 'No workloads are running yet. Cluster infrastructure is available below.'
+            : 'All workloads are ready. No active pod failures were reported.';
+        return;
+    }
+    const percent = total > 0 ? Math.round((healthy / total) * 100) : 0;
+    banner.classList.add(percent >= 90 ? 'overview-health-warning' : 'overview-health-error');
+    icon.textContent = '!';
+    title.textContent = `${unhealthy} pod${unhealthy === 1 ? ' needs' : 's need'} attention`;
+    summary.textContent = 'Workload health is degraded. Open an issue below for live evidence.';
+}
+
+function updateWorkloadSummary(stats, errored, sectionErrors) {
+    const state = $('workload-state');
+    const meta = $('workload-meta');
+    if (sectionErrors.pods || sectionErrors.metadata || sectionErrors.deployments) {
+        setMetricState(state, 'Unavailable', 'unavailable');
+        meta.textContent = 'Workload summary is incomplete';
+        return;
+    }
+    if (errored.length > 0) {
+        setMetricState(state, 'Degraded', 'error');
+        meta.textContent = errored.length === 1 ? '1 pod is not serving' : `${errored.length} pods are not serving`;
+        return;
+    }
+    setMetricState(state, 'Healthy', 'ok');
+    meta.textContent = (stats.pods ?? 0) === 0 ? 'No workloads are running yet' : 'All monitored pods are ready';
+}
+
+function setAttentionEmptyState(unavailable, hasErrors) {
+    const empty = $('overview-errors-empty');
+    empty.hidden = hasErrors;
+    empty.classList.toggle('overview-empty-unavailable', unavailable);
+    if (hasErrors) return;
+    empty.children[0].textContent = unavailable ? '—' : '✓';
+    empty.querySelector('strong').textContent = unavailable ? 'Pod health unavailable' : 'Nothing needs attention';
+    empty.querySelector('small').textContent = unavailable
+        ? 'This snapshot could not verify active workload failures.'
+        : 'All monitored workloads are currently healthy.';
 }
 
 function renderTopPods(pods) {
     const body = $('overview-toppods-body');
     body.innerHTML = '';
-    $('overview-toppods-empty').hidden = (pods?.length ?? 0) > 0;
+    const hasPods = (pods?.length ?? 0) > 0;
+    $('overview-toppods-empty').hidden = hasPods;
+    $('top-consumers-state').textContent = hasPods ? 'Live metrics' : 'Unavailable';
+    $('top-consumers-state').classList.toggle('has-issues', !hasPods);
+    const maxCPU = Math.max(...(pods ?? []).map((pod) => pod.cpuMilli || 0), 1);
     for (const p of pods ?? []) {
-        body.appendChild(row(
-            `<td class="overview-namespace">${esc(p.namespace)}</td><td class="overview-resource-name" title="${esc(p.name)}">${esc(p.name)}</td><td><span class="overview-metric mono">${p.cpuMilli}m</span></td><td><span class="overview-metric mono">${p.memMi}Mi</span></td>`,
-            { actions: false, ref: { kind: 'Pod', namespace: p.namespace, name: p.name, isPod: true } },
-        ));
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'overview-consumer';
+        const share = Math.max(Math.round(((p.cpuMilli || 0) / maxCPU) * 100), 3);
+        button.innerHTML = `<span class="overview-consumer-resource"><strong title="${esc(p.name)}">${esc(p.name)}</strong><small>${esc(p.namespace)}</small></span>
+            <span class="overview-consumer-values"><strong class="mono">${p.cpuMilli || 0}m</strong><small class="mono">${p.memMi || 0}Mi</small></span>
+            <span class="overview-consumer-meter" aria-hidden="true"><i style="width:${share}%"></i></span>`;
+        button.addEventListener('click', () => openDrawer({ kind: 'Pod', namespace: p.namespace, name: p.name, isPod: true }));
+        body.appendChild(button);
     }
 }
 
@@ -1103,32 +1186,39 @@ function renderNodeStatus(nodes) {
     box.innerHTML = '';
     empty.hidden = (nodes?.length ?? 0) > 0;
     if (!nodes?.length) {
-        total.textContent = '';
+        total.textContent = 'Unavailable';
+        total.classList.remove('has-issues');
+        $('cluster-node-ratio').textContent = '– / –';
+        setMetricState($('infrastructure-state'), 'Unavailable', 'unavailable');
+        $('infrastructure-pressure').textContent = 'No node data';
+        $('infrastructure-meta').textContent = 'Cluster capacity unavailable';
         return;
     }
-    const troubled = nodes.filter((node) => !node.ready || !node.schedulable || (node.pressure?.length ?? 0) > 0).length;
-    total.textContent = troubled > 0
-        ? `${nodes.length} nodes · ${troubled} need attention`
-        : `${nodes.length} nodes · all operational`;
+    const ready = nodes.filter((node) => node.ready).length;
+    // A deliberately unschedulable control-plane node is common and is not a
+    // health failure by itself. Keep it visible in the row without raising the
+    // infrastructure alarm unless readiness or pressure is also unhealthy.
+    const troubled = nodes.filter((node) => !node.ready || (node.pressure?.length ?? 0) > 0).length;
+    total.textContent = `${nodes.length} node${nodes.length === 1 ? '' : 's'}`;
+    total.classList.toggle('has-issues', troubled > 0);
+    $('cluster-node-ratio').textContent = `${ready} / ${nodes.length}`;
+    setMetricState($('infrastructure-state'), troubled > 0 ? 'Attention' : 'Ready', troubled > 0 ? 'error' : 'ok');
+    $('infrastructure-pressure').textContent = troubled > 0
+        ? `${troubled} node${troubled === 1 ? ' needs' : 's need'} attention` : 'No pressure';
+    $('infrastructure-meta').textContent = nodes.length === 1 && nodes[0].version
+        ? nodes[0].version : `${ready} of ${nodes.length} nodes ready`;
     box.innerHTML = nodes.map((node) => {
-        const pressure = node.pressure?.length
-            ? node.pressure.map((signal) => `<span class="node-signal node-signal-bad">${esc(signal.replace('Pressure', ' pressure'))}</span>`).join('')
-            : '<span class="node-signal">No pressure</span>';
+        const pressure = node.pressure?.length ? node.pressure.map((signal) => signal.replace('Pressure', '')).join(', ') : 'None';
         const unhealthy = !node.ready || (node.pressure?.length ?? 0) > 0;
-        return `<article class="node-status-card${unhealthy ? ' node-status-card-bad' : ''}">
-            <header>
-                <button class="node-status-name" type="button" data-name="${esc(node.name)}">${nodeNameHtml(node.name)}</button>
-                ${badge(node.ready ? 'Ready' : 'Not ready', node.ready)}
-            </header>
-            <div class="node-status-facts">
-                <span><strong>${node.pods ?? 0}</strong> scheduled pods</span>
-                <span class="${node.schedulable ? '' : 'node-fact-warn'}">${node.schedulable ? 'Schedulable' : 'Scheduling disabled'}</span>
-                <span class="mono">${esc(node.version || 'version unknown')}</span>
-            </div>
-            <div class="node-signals">${pressure}</div>
+        return `<article class="overview-node-row${unhealthy ? ' overview-node-row-bad' : ''}">
+            <button class="overview-node-name" type="button" data-name="${esc(node.name)}"><span class="overview-node-dot" aria-hidden="true"></span>${nodeNameHtml(node.name)}</button>
+            <span class="overview-node-fact"><small>Status</small><strong>${node.ready ? 'Ready' : 'Not ready'}</strong></span>
+            <span class="overview-node-fact"><small>Scheduling</small><strong>${node.schedulable ? 'Enabled' : 'Disabled'}</strong></span>
+            <span class="overview-node-fact"><small>Pods</small><strong>${node.pods ?? 0}</strong></span>
+            <span class="overview-node-fact"><small>Pressure</small><strong>${esc(pressure)}</strong></span>
         </article>`;
     }).join('');
-    box.querySelectorAll('.node-status-name').forEach((button) => {
+    box.querySelectorAll('.overview-node-name').forEach((button) => {
         button.addEventListener('click', () => openDrawer({ kind: 'Node', namespace: '', name: button.dataset.name }));
     });
 }
@@ -1139,8 +1229,10 @@ function updateCapacitySummary(metrics, sum) {
         $('capacity-node-count').textContent = 'Metrics unavailable';
         $('capacity-cpu-pct').textContent = '–%';
         $('capacity-memory-pct').textContent = '–%';
-        $('capacity-cpu-value').textContent = 'Install Metrics Server for live usage';
-        $('capacity-memory-value').textContent = 'Resource capacity is still available per node';
+        $('capacity-cpu-value').textContent = 'Live usage unavailable';
+        $('capacity-memory-value').textContent = 'Live usage unavailable';
+        $('capacity-cpu-meta').textContent = 'Install Metrics Server for usage data';
+        $('capacity-memory-meta').textContent = 'Allocatable memory is not reported';
         $('capacity-cpu-ring').style.setProperty('--value', 0);
         $('capacity-memory-ring').style.setProperty('--value', 0);
         setCapacityState($('capacity-cpu-ring'), null);
@@ -1150,11 +1242,13 @@ function updateCapacitySummary(metrics, sum) {
     }
     const cpuPercent = pct(sum.cpu, sum.cpuCap);
     const memoryPercent = pct(sum.mem, sum.memCap);
-    $('capacity-node-count').textContent = `${metrics.length} node${metrics.length === 1 ? '' : 's'}`;
+    $('capacity-node-count').textContent = `${metrics.length} reporting`;
     $('capacity-cpu-pct').textContent = `${cpuPercent}%`;
     $('capacity-memory-pct').textContent = `${memoryPercent}%`;
-    $('capacity-cpu-value').textContent = `${fmtCores(sum.cpu)} of ${fmtCores(sum.cpuCap)} cores`;
-    $('capacity-memory-value').textContent = `${fmtMem(sum.mem)} of ${fmtMem(sum.memCap)}`;
+    $('capacity-cpu-value').textContent = `${fmtCores(sum.cpu)} / ${fmtCores(sum.cpuCap)} cores`;
+    $('capacity-memory-value').textContent = `${fmtMem(sum.mem)} / ${fmtMem(sum.memCap)}`;
+    $('capacity-cpu-meta').textContent = `${fmtCores(Math.max(sum.cpuCap - sum.cpu, 0))} cores allocatable headroom`;
+    $('capacity-memory-meta').textContent = `${fmtMem(Math.max(sum.memCap - sum.mem, 0))} allocatable headroom`;
     $('capacity-cpu-ring').style.setProperty('--value', Math.min(cpuPercent, 100));
     $('capacity-memory-ring').style.setProperty('--value', Math.min(memoryPercent, 100));
     setCapacityState($('capacity-cpu-ring'), cpuPercent);
@@ -1168,6 +1262,16 @@ function setCapacityState(bar, value) {
     const progress = bar.querySelector('[role="progressbar"]');
     if (value === null) progress.removeAttribute('aria-valuenow');
     else progress.setAttribute('aria-valuenow', String(Math.min(value, 100)));
+    const state = bar.id === 'capacity-cpu-ring' ? $('capacity-cpu-state') : $('capacity-memory-state');
+    if (value === null) setMetricState(state, 'Unavailable', 'unavailable');
+    else if (value >= 90) setMetricState(state, 'Critical', 'error');
+    else if (value >= 70) setMetricState(state, 'High', 'warn');
+    else setMetricState(state, 'Normal', 'ok');
+}
+
+function setMetricState(element, label, state) {
+    element.textContent = label;
+    element.className = `overview-metric-state metric-state-${state}`;
 }
 
 // Cloud node names share a long generated prefix and differ only in the last
@@ -1228,15 +1332,17 @@ function loadNamespaces(scope) {
 
 // ---- Pods (enriched: live CPU/mem, IP, node, age, per-row actions) ----
 function loadPods(scope) {
-    return Promise.all([ListPods(scope.namespace), PodMetricsList(scope.namespace)])
-        .then(([pods, metrics]) => {
+    return PodsSnapshot(scope.namespace)
+        .then((snapshot) => {
             if (!isCurrentViewRequest(scope)) return;
+            const pods = snapshot?.pods ?? [];
+            const metrics = snapshot?.metrics ?? [];
             const usage = {};
-            for (const m of metrics ?? []) usage[`${m.namespace}/${m.name}`] = m;
+            for (const m of metrics) usage[`${m.namespace}/${m.name}`] = m;
             const body = $('pods-body');
             body.innerHTML = '';
             $('pods-empty').hidden = (pods?.length ?? 0) > 0;
-            for (const p of pods ?? []) {
+            for (const p of pods) {
                 const m = usage[`${p.namespace}/${p.name}`];
                 const cpu = m ? `${m.cpuMilli}m` : '–';
                 const mem = m ? `${m.memMi}Mi` : '–';
@@ -1467,19 +1573,30 @@ $('btn-scale').addEventListener('click', () => { if (drawerRef) scaleRef(drawerR
 
 // Open the Scale modal for a deployment, prefilling its current replica count.
 function scaleRef(ref) {
-    GetDetail(ref.kind, ref.namespace, ref.name)
-        .then((d) => {
-            const field = (d.info ?? []).find((f) => f.label === 'Replicas');
-            const current = field ? parseInt(field.value, 10) : 1;
-            openScaleModal(ref, Number.isNaN(current) ? 1 : current);
-        })
-        .catch(() => openScaleModal(ref, 1));
+	const connectionID = $('cluster-select').value;
+	const scope = openScaleModal(ref, 1, { loading: true, connectionID });
+	GetDetail(ref.kind, ref.namespace, ref.name)
+		.then((d) => {
+			if (!isCurrentModalRequest(scope) || $('cluster-select').value !== connectionID) return;
+			const field = (d.info ?? []).find((f) => f.label === 'Replicas');
+			const current = field ? parseInt(field.value, 10) : 1;
+			const input = $('modal-input');
+			input.value = String(Number.isNaN(current) ? 1 : current);
+			input.disabled = false;
+			$('modal-ok').disabled = false;
+		})
+		.catch((err) => {
+			if (!isCurrentModalRequest(scope)) return;
+			$('modal-error').textContent = errMsg(err);
+			$('modal-error').hidden = false;
+		});
 }
 
 function restartRef(ref) {
+    const connectionID = $('cluster-select').value;
     showConfirm(`Rolling-restart deployment “${ref.name}”?`, { title: 'Restart deployment', icon: '🔄', okText: 'Restart' }).then((ok) => {
         if (!ok) return;
-        RestartDeployment(ref.namespace, ref.name)
+        RestartDeploymentOwned(connectionID, ref.namespace, ref.name)
             .then(() => { if (drawerRef && drawerRef.name === ref.name) loadDetails(); refreshCurrentView(); })
             .catch((err) => showError(errMsg(err)));
     });
@@ -1487,45 +1604,52 @@ function restartRef(ref) {
 
 // Rolling-restart for StatefulSet / DaemonSet (fn = RestartStatefulSet|RestartDaemonSet).
 function restartWorkload(ref, fn) {
+    const connectionID = $('cluster-select').value;
     showConfirm(`Rolling-restart ${ref.kind} “${ref.name}”?`, { title: `Restart ${ref.kind}`, icon: '🔄', okText: 'Restart' }).then((ok) => {
         if (!ok) return;
-        fn(ref.namespace, ref.name)
+        fn(connectionID, ref.namespace, ref.name)
             .then(() => { if (drawerRef && drawerRef.name === ref.name) loadDetails(); refreshCurrentView(); })
             .catch((err) => showError(errMsg(err)));
     });
 }
 
-function openScaleModal(ref, current) {
-    openModal({
-        title: `Scale "${ref.name}"`,
+function openScaleModal(ref, current, { loading = false, connectionID = $('cluster-select').value } = {}) {
+	let scope;
+	scope = openModal({
+		title: `Scale "${ref.name}"`,
         eyebrow: 'Workload action',
-        description: `${ref.namespace || 'cluster-scoped'} · Deployment`,
-        size: 'compact',
-        okText: 'Scale',
-        bodyHtml: `<div class="modal-field">
-            <label for="modal-input">Desired replicas</label>
-            <input type="number" id="modal-input" class="modal-number" min="0" max="1000" value="${current}">
+		description: `${ref.namespace || 'cluster-scoped'} · Deployment`,
+		size: 'compact',
+		ownerKey: modalOwner('scale', connectionID, ref.kind, ref.namespace, ref.name),
+		okText: 'Scale',
+		okDisabled: loading,
+		bodyHtml: `<div class="modal-field">
+			<label for="modal-input">Desired replicas</label>
+			<input type="number" id="modal-input" class="modal-number" min="0" max="1000" value="${current}"${loading ? ' disabled' : ''}>
             <p class="modal-hint">Setting this to zero stops every Pod managed by this Deployment.</p>
         </div>`,
-        onOpen: () => { const el = $('modal-input'); el.focus(); el.select(); },
-        onOk: () => {
-            const n = parseInt($('modal-input').value, 10);
-            if (Number.isNaN(n) || n < 0) return Promise.reject('Enter a non-negative number.');
-            return ScaleDeployment(ref.namespace, ref.name, n).then(() => {
+		onOpen: () => { const el = $('modal-input'); el.focus(); el.select(); },
+		onOk: () => {
+			if (!isCurrentModalRequest(scope) || $('cluster-select').value !== connectionID) return Promise.reject('The active cluster changed. Reopen Scale.');
+			const n = parseInt($('modal-input').value, 10);
+			if (Number.isNaN(n) || n < 0) return Promise.reject('Enter a non-negative number.');
+			return ScaleDeploymentOwned(connectionID, ref.namespace, ref.name, n).then(() => {
                 if (drawerRef && drawerRef.name === ref.name && !$('drawer').hidden) loadDetails();
                 loadSidebarCounts();
                 refreshCurrentView();
             });
-        },
-    });
+		},
+	});
+	return scope;
 }
 
 $('btn-restart').addEventListener('click', () => {
     const ref = drawerRef;
     if (!ref) return;
+    const connectionID = $('cluster-select').value;
     showConfirm(`Rolling-restart deployment “${ref.name}”?`, { title: 'Restart deployment', icon: '🔄', okText: 'Restart' }).then((ok) => {
         if (!ok) return;
-        RestartDeployment(ref.namespace, ref.name)
+        RestartDeploymentOwned(connectionID, ref.namespace, ref.name)
             .then(() => { loadDetails(); refreshCurrentView(); })
             .catch((err) => showError(errMsg(err)));
     });
@@ -1537,9 +1661,10 @@ $('drawer-backdrop').addEventListener('click', closeDrawer);
 $('btn-delete').addEventListener('click', () => {
     const ref = drawerRef;
     if (!ref) return;
+    const connectionID = $('cluster-select').value;
     showConfirm(`Delete ${ref.kind} “${ref.name}”${ref.namespace ? ` in ${ref.namespace}` : ''}?\nThis cannot be undone.`, { title: `Delete ${ref.kind}`, icon: '🗑', okText: 'Delete', danger: true }).then((ok) => {
         if (!ok) return;
-        DeleteResource(ref.kind, ref.namespace, ref.name)
+        DeleteResourceOwned(connectionID, ref.kind, ref.namespace, ref.name)
             .then(() => { closeDrawer(); refreshCurrentView(); })
             .catch((err) => showError(errMsg(err)));
     });
@@ -1941,6 +2066,9 @@ function loadTraffic(scope) {
             if (reqId !== trafficReqId || !isCurrentViewRequest(scope)) return;
             const ings = flows?.ingresses ?? [];
             const svcs = flows?.services ?? [];
+			const warnings = flows?.warnings ?? [];
+			$('traffic-warnings').textContent = warnings.join(' · ');
+			$('traffic-warnings').hidden = warnings.length === 0;
 
             renderFlowSummary(flows, ings, svcs);
 
@@ -1965,6 +2093,7 @@ function loadTraffic(scope) {
             svcBox.innerHTML = '';
             $('flow-summary').innerHTML = '';
             $('flow-updated').textContent = '';
+			$('traffic-warnings').hidden = true;
             showDashError(err);
         });
 }
@@ -2772,9 +2901,14 @@ $('btn-pf-start').addEventListener('click', () => {
     btn.disabled = true;
     btn.textContent = 'Starting…';
     StartPortForward(operationID, ref.kind, ref.namespace, ref.name, local, remote, keepRunning)
-        .then((info) => {
-            const drawerStillOwnsRequest = isCurrentDrawerRequest(scope);
-            if (!shouldRetainStartedForward({ drawerStillOwnsRequest, keepRunning })) {
+		.then((info) => {
+			const drawerStillOwnsRequest = isCurrentDrawerRequest(scope);
+			if (!shouldRetainStartedForward({
+				drawerStillOwnsRequest,
+				keepRunning,
+				connectionCurrent: requestScopes.isCurrentConnection(connectionToken),
+				resultConnectionMatches: info.connectionId === $('cluster-select').value,
+			})) {
                 StopPortForward(info.key);
                 return;
             }
@@ -3141,10 +3275,15 @@ $('btn-create').addEventListener('click', () => openCreateModal(currentView));
 $('btn-import').addEventListener('click', openImportModal);
 
 function openCreateModal(view) {
-    const kind = VIEW_KIND[view];
-    if (!kind) { openImportModal(); return; }
-    const ns = NAMESPACED_VIEWS.has(view) ? (currentNamespace || 'default') : '';
-    openYamlApplyModal({
+	const kind = VIEW_KIND[view];
+	if (!kind) { openImportModal(); return; }
+	const ns = NAMESPACED_VIEWS.has(view) ? (currentNamespace || 'default') : '';
+	const set = accessPeek(kind, ns);
+	if (!allowed(set, 'create')) {
+		showError(denyReason(kind, ns, 'create'));
+		return;
+	}
+	openYamlApplyModal({
         title: `Create ${kind}`,
         okText: 'Create',
         value: templateFor(kind, ns),
@@ -3166,6 +3305,7 @@ function openImportModal() {
 // Create — creating a name that already exists is an update, and the preview is
 // what makes that visible beforehand instead of afterwards.
 function openYamlApplyModal({ title, okText, value = '', placeholder = '', emptyMessage }) {
+    const connectionID = $('cluster-select').value;
     openModal({
         title,
         eyebrow: 'Kubernetes manifest',
@@ -3184,7 +3324,7 @@ function openYamlApplyModal({ title, okText, value = '', placeholder = '', empty
         onOk: () => {
             const v = modalYaml('modal-yaml').trim();
             if (!v) return Promise.reject(emptyMessage);
-            return ApplyYAML(v).then(applyReport, (err) => {
+            return ApplyYAMLOwned(connectionID, v).then(applyReport, (err) => {
                 markApplyFailures(err);
                 throw err;
             });
@@ -3398,11 +3538,12 @@ function renderSizing(r) {
     $('sz-scope').textContent = [
         `${t.pods ?? 0} pods · ${t.containers ?? 0} containers`,
         r.nodes ? `${r.nodes} ready node${r.nodes === 1 ? '' : 's'}` : '',
+		r.metricsAvailable ? `${r.metricsObserved ?? 0}/${r.metricsExpected ?? 0} container metrics` : '',
     ].filter(Boolean).join(' · ');
 
     $('sz-bars').innerHTML =
-        szTile('CPU', t.cpuRequest, t.cpuUsage, r.allocCpu, r.cpuReservedPct, szCPU, 'cores', r.metricsAvailable)
-        + szTile('Memory', t.memRequest, t.memUsage, r.allocMem, r.memReservedPct, szMem, '', r.metricsAvailable);
+		szTile('CPU', t.cpuRequest, t.cpuUsage, r.allocCpu, r.cpuReservedPct, szCPU, 'cores', r.metricsComplete)
+		+ szTile('Memory', t.memRequest, t.memUsage, r.allocMem, r.memReservedPct, szMem, '', r.metricsComplete);
 
     const note = $('sz-note');
     note.textContent = r.note || '';
@@ -3415,6 +3556,8 @@ function renderSizing(r) {
     const namespaces = r.namespaces ?? [];
     $('sz-ns-total').textContent = `${namespaces.length} namespace${namespaces.length === 1 ? '' : 's'} in scope`;
     $('sz-ns-body').innerHTML = namespaces.map((ns) => {
+		const namespaceMetricsComplete = r.metricsAvailable
+			&& (ns.metricsObserved ?? 0) === (ns.metricsExpected ?? 0);
         const quotaBits = [];
         if ((ns.quota ?? []).length) quotaBits.push(`${ns.quota.length} quota`);
         if (ns.limitRanges) quotaBits.push(`${ns.limitRanges} LimitRange`);
@@ -3427,8 +3570,8 @@ function renderSizing(r) {
         return `<tr>
             <td>${esc(ns.namespace)}</td>
             <td class="sz-num">${ns.pods ?? 0}</td>
-            <td>${szCell(ns.cpuRequest, ns.cpuUsage, szCPU, r.metricsAvailable)}</td>
-            <td>${szCell(ns.memRequest, ns.memUsage, szMem, r.metricsAvailable)}</td>
+			<td>${szCell(ns.cpuRequest, ns.cpuUsage, szCPU, namespaceMetricsComplete)}</td>
+			<td>${szCell(ns.memRequest, ns.memUsage, szMem, namespaceMetricsComplete)}</td>
             <td class="sz-num">${undeclared}</td>
             <td>${quota}</td>
         </tr>`;
@@ -3553,7 +3696,6 @@ function renderSizingContainers() {
     $('sz-cont-count').textContent = seriousOnly
         ? `${rows.length} of ${(r.containers ?? []).length}`
         : `${rows.length}`;
-    const haveMetrics = r.metricsAvailable;
     // Namespace/pod/container in one cell: three separate columns cost width the
     // findings column needs, and they are read as one identity anyway.
     $('sz-cont-body').innerHTML = rows.map((c) => `<tr class="${(c.severity ?? 0) >= 4 ? 'sz-row-bad' : ''}">
@@ -3562,8 +3704,8 @@ function renderSizingContainers() {
             <span class="sz-ref-sub">${esc(c.namespace)} / ${esc(c.pod)}</span>
         </span></td>
         <td><span class="chip">${esc(c.qos || '—')}</span></td>
-        <td>${szCell(c.cpuRequest, c.cpuUsage, szCPU, haveMetrics)}</td>
-        <td>${szCell(c.memRequest, c.memUsage, szMem, haveMetrics)}</td>
+		<td>${szCell(c.cpuRequest, c.cpuUsage, szCPU, !!c.metricsObserved)}</td>
+		<td>${szCell(c.memRequest, c.memUsage, szMem, !!c.metricsObserved)}</td>
         <td>${(c.findings ?? []).map((f) => `<div class="sz-finding">${esc(f)}</div>`).join('')}</td>
     </tr>`).join('');
     $('sz-cont-empty').hidden = rows.length > 0;
@@ -3598,15 +3740,22 @@ function szMem(bytes) {
 const accessResolved = new Map(); // key -> AccessSet | null
 const accessPending = new Map();  // key -> Promise, so a burst asks once
 
-function accessKey(kind, namespace) { return `${kind}|${namespace ?? ''}`; }
+function accessKey(kind, namespace, connection = requestScopes.connectionToken()) {
+	return `${connection}\0${kind}|${namespace ?? ''}`;
+}
 
 function accessSet(kind, namespace) {
-    const key = accessKey(kind, namespace);
+	const connection = requestScopes.connectionToken();
+	const key = accessKey(kind, namespace, connection);
     if (accessResolved.has(key)) return Promise.resolve(accessResolved.get(key));
     if (!accessPending.has(key)) {
-        accessPending.set(key, CanI(kind, namespace ?? '')
-            .catch(() => null)
-            .then((set) => { accessResolved.set(key, set); accessPending.delete(key); return set; }));
+		accessPending.set(key, CanI(kind, namespace ?? '')
+			.catch(() => null)
+			.then((set) => {
+				if (requestScopes.isCurrentConnection(connection)) accessResolved.set(key, set);
+				accessPending.delete(key);
+				return requestScopes.isCurrentConnection(connection) ? set : null;
+			}));
     }
     return accessPending.get(key);
 }
@@ -3677,10 +3826,10 @@ function openRowMenu(btn, ref) {
         actions.push({ label: 'Resume rollout', need: 'patch', run: () => pauseRef(ref, false) });
     }
     if (ref.kind === 'StatefulSet') {
-        actions.push({ label: 'Restart', need: 'patch', run: () => restartWorkload(ref, RestartStatefulSet) });
+        actions.push({ label: 'Restart', need: 'patch', run: () => restartWorkload(ref, RestartStatefulSetOwned) });
     }
     if (ref.kind === 'DaemonSet') {
-        actions.push({ label: 'Restart', need: 'patch', run: () => restartWorkload(ref, RestartDaemonSet) });
+        actions.push({ label: 'Restart', need: 'patch', run: () => restartWorkload(ref, RestartDaemonSetOwned) });
     }
     if (ref.kind === 'Node') {
         actions.push({ label: 'Cordon', need: 'patch', run: () => nodeSchedule(ref, false) });
@@ -3736,9 +3885,10 @@ function renderRowMenu(menu, btn, actions) {
 function closeRowMenu() { $('row-menu').hidden = true; }
 
 function deleteRef(ref) {
+    const connectionID = $('cluster-select').value;
     showConfirm(`Delete ${ref.kind} “${ref.name}”${ref.namespace ? ` in ${ref.namespace}` : ''}?\nThis cannot be undone.`, { title: `Delete ${ref.kind}`, icon: '🗑', okText: 'Delete', danger: true }).then((ok) => {
         if (!ok) return;
-        DeleteResource(ref.kind, ref.namespace, ref.name)
+        DeleteResourceOwned(connectionID, ref.kind, ref.namespace, ref.name)
             .then(() => { loadSidebarCounts(); refreshCurrentView(); })
             .catch((err) => showError(errMsg(err)));
     });
@@ -3755,7 +3905,7 @@ function pauseRef(ref, paused) {
         ),
         () => {
             if ($('cluster-select').value !== cluster) throw new Error('The active cluster changed before the action started.');
-            return SetDeploymentPaused(ref.namespace, ref.name, paused);
+            return SetDeploymentPausedOwned(cluster, ref.namespace, ref.name, paused);
         },
     )
         .then((changed) => { if (changed) refreshCurrentView(); })
@@ -3773,7 +3923,7 @@ function nodeSchedule(ref, schedulable) {
         ),
         () => {
             if ($('cluster-select').value !== cluster) throw new Error('The active cluster changed before the action started.');
-            return SetNodeSchedulable(ref.name, schedulable);
+            return SetNodeSchedulableOwned(cluster, ref.name, schedulable);
         },
     )
         .then((changed) => { if (changed) refreshCurrentView(); })
@@ -3781,18 +3931,20 @@ function nodeSchedule(ref, schedulable) {
 }
 
 function drainRef(ref) {
+    const connectionID = $('cluster-select').value;
     showConfirm(`Drain node “${ref.name}”?\nThis cordons it and evicts its pods (DaemonSet pods are kept).`, { title: 'Drain node', icon: '🚰', okText: 'Drain', danger: true }).then((ok) => {
         if (!ok) return;
-        DrainNode(ref.name)
+        DrainNodeOwned(connectionID, ref.name)
             .then(() => refreshCurrentView())
             .catch((err) => showError(errMsg(err)));
     });
 }
 
 function runCronNow(ref) {
+    const connectionID = $('cluster-select').value;
     showConfirm(`Trigger CronJob “${ref.name}” now (create a Job)?`, { title: 'Trigger CronJob', icon: '⏱', okText: 'Trigger' }).then((ok) => {
         if (!ok) return;
-        RunCronJobNow(ref.namespace, ref.name)
+        RunCronJobNowOwned(connectionID, ref.namespace, ref.name)
             .then(() => { loadSidebarCounts(); showAlert('Job created.', { title: 'Triggered', icon: '✅' }); })
             .catch((err) => showError(errMsg(err)));
     });
@@ -3800,19 +3952,22 @@ function runCronNow(ref) {
 
 // Rollout history modal with per-revision Rollback.
 function openRolloutModal(ref) {
-    openModal({
-        title: `Rollout history — ${ref.name}`,
+	const connectionID = $('cluster-select').value;
+	const scope = openModal({
+		title: `Rollout history — ${ref.name}`,
         eyebrow: 'Deployment',
-        description: `${ref.namespace || 'cluster-scoped'} · Compare revisions before choosing a rollback target.`,
+		description: `${ref.namespace || 'cluster-scoped'} · Compare revisions before choosing a rollback target.`,
+		ownerKey: modalOwner('rollout', connectionID, ref.kind, ref.namespace, ref.name),
         okText: 'Close',
         okStyle: 'secondary',
         cancelText: null,
         bodyHtml: `<div id="rollout-list" class="rollout-list"><p class="empty-inline">Loading…</p></div>`,
         onOk: () => Promise.resolve(),
     });
-    RolloutHistory(ref.namespace, ref.name)
-        .then((revs) => {
-            const box = $('rollout-list');
+	RolloutHistory(ref.namespace, ref.name)
+		.then((revs) => {
+			if (!isCurrentModalRequest(scope) || $('cluster-select').value !== connectionID) return;
+			const box = $('rollout-list');
             if (!revs || revs.length === 0) { box.innerHTML = '<p class="empty-inline">No revisions.</p>'; return; }
             box.innerHTML = revs.map((r) =>
                 `<div class="rollout-row">
@@ -3824,19 +3979,26 @@ function openRolloutModal(ref) {
                     ${r.current ? '' : `<button class="btn btn-secondary btn-sm rollback-btn" data-rev="${r.revision}">Rollback</button>`}
                 </div>`).join('');
             box.querySelectorAll('.rollback-btn').forEach((btn) => {
-                btn.addEventListener('click', () => {
-                    const rev = parseInt(btn.dataset.rev, 10);
-                    showConfirm(`Rollback “${ref.name}” to revision ${rev}?`, { title: 'Rollback deployment', icon: '↩', okText: 'Rollback' }).then((ok) => {
-                        if (!ok) return;
-                        btn.disabled = true;
-                        RollbackDeployment(ref.namespace, ref.name, rev)
-                            .then(() => { closeModal(); refreshCurrentView(); })
+				btn.addEventListener('click', () => {
+					if (!isCurrentModalRequest(scope) || $('cluster-select').value !== connectionID) return;
+					const rev = parseInt(btn.dataset.rev, 10);
+					showConfirm(`Rollback “${ref.name}” to revision ${rev}?`, { title: 'Rollback deployment', icon: '↩', okText: 'Rollback' }).then((ok) => {
+						if (!ok) return;
+						if (!isCurrentModalRequest(scope) || $('cluster-select').value !== connectionID) {
+							showError('The active cluster changed. Reopen rollout history.');
+							return;
+						}
+						btn.disabled = true;
+						RollbackDeploymentOwned(connectionID, ref.namespace, ref.name, rev)
+							.then(() => { closeModal(scope); refreshCurrentView(); })
                             .catch((err) => { showError(errMsg(err)); btn.disabled = false; });
                     });
                 });
             });
         })
-        .catch((err) => { $('rollout-list').innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
+		.catch((err) => {
+			if (isCurrentModalRequest(scope)) $('rollout-list').innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
+		});
 }
 
 // Close the row menu on any outside click / scroll / Esc.
@@ -3910,21 +4072,35 @@ document.addEventListener('change', (e) => {
 
 $('bulk-clear').addEventListener('click', clearSelection);
 $('bulk-delete').addEventListener('click', () => {
-    const refs = [...selectedRows.values()];
-    if (refs.length === 0) return;
-    showConfirm(`Delete ${refs.length} selected resource(s)?\nThis cannot be undone.`, { title: 'Delete selected', icon: '🗑', okText: `Delete ${refs.length}`, danger: true }).then((ok) => {
-        if (!ok) return;
+	const refs = [...selectedRows.values()];
+	if (refs.length === 0) return;
+	const connection = requestScopes.connectionToken();
+	const connectionID = $('cluster-select').value;
+	Promise.all(refs.map((ref) => ref.kind === 'HelmRelease' ? null : accessSet(ref.kind, ref.namespace)))
+		.then((sets) => {
+			if (!requestScopes.isCurrentConnection(connection)) return;
+			const denied = refs.find((ref, index) => ref.kind !== 'HelmRelease' && !allowed(sets[index], 'delete'));
+			if (denied) {
+				showError(denyReason(denied.kind, denied.namespace, 'delete'));
+				return;
+			}
+			return showConfirm(`Delete ${refs.length} selected resource(s)?\nThis cannot be undone.`, { title: 'Delete selected', icon: '🗑', okText: `Delete ${refs.length}`, danger: true });
+		}).then((ok) => {
+		if (!ok) return;
+		if (!requestScopes.isCurrentConnection(connection) || $('cluster-select').value !== connectionID) {
+			throw new Error('The active cluster changed before the action started.');
+		}
         Promise.allSettled(refs.map((r) => r.kind === 'HelmRelease'
-            ? HelmUninstall(r.namespace, r.name)
-            : DeleteResource(r.kind, r.namespace, r.name)))
+            ? HelmUninstallOwned(connectionID, r.namespace, r.name)
+            : DeleteResourceOwned(connectionID, r.kind, r.namespace, r.name)))
             .then((results) => {
                 const failed = results.filter((r) => r.status === 'rejected').length;
                 clearSelection();
                 loadSidebarCounts();
                 refreshCurrentView();
                 if (failed) showError(`${failed} of ${refs.length} could not be deleted.`);
-            });
-    });
+	}).catch((err) => showError(errMsg(err)));
+});
 });
 
 function sortTable(th) {
@@ -4013,9 +4189,11 @@ function openPalette() {
 let paletteAll = [];
 let paletteHits = [];          // live resource-search results (async, from SearchResources)
 let paletteSearchTimer = null;
+let paletteSearchGeneration = 0;
 
 function closePalette() {
-    $('palette').hidden = true;
+	paletteSearchGeneration++;
+	$('palette').hidden = true;
     $('palette-backdrop').hidden = true;
     clearTimeout(paletteSearchTimer);
 }
@@ -4032,12 +4210,19 @@ function gotoHit(h) {
 
 // Debounced global resource search feeding extra palette rows.
 function schedulePaletteSearch(term) {
-    clearTimeout(paletteSearchTimer);
-    if (term.length < 2) { paletteHits = []; return; }
-    paletteSearchTimer = setTimeout(() => {
-        SearchResources(term)
-            .then((hits) => {
-                paletteHits = (hits || []).map((h) => ({
+	clearTimeout(paletteSearchTimer);
+	const generation = ++paletteSearchGeneration;
+	const connection = requestScopes.connectionToken();
+	const query = term.trim();
+	if (query.length < 2) { paletteHits = []; return; }
+	paletteSearchTimer = setTimeout(() => {
+		SearchResources(query)
+			.then((hits) => {
+				if (generation !== paletteSearchGeneration
+					|| !requestScopes.isCurrentConnection(connection)
+					|| $('palette').hidden
+					|| $('palette-input').value.trim() !== query) return;
+				paletteHits = (hits || []).map((h) => ({
                     kind: `${h.kind}${h.namespace ? ' · ' + h.namespace : ''}`,
                     label: h.name,
                     resource: true,
@@ -4045,7 +4230,12 @@ function schedulePaletteSearch(term) {
                 }));
                 renderPalette();
             })
-            .catch(() => { paletteHits = []; });
+			.catch(() => {
+				if (generation === paletteSearchGeneration && requestScopes.isCurrentConnection(connection)) {
+					paletteHits = [];
+					renderPalette();
+				}
+			});
     }, 250);
 }
 
@@ -4158,11 +4348,12 @@ function modalOwner(type, ...parts) {
 }
 
 function openHelmDetailModal(ref, initialTab = 'resources') {
+    const connectionID = $('cluster-select').value;
     const scope = openModal({
         title: `Release · ${ref.name}`,
         eyebrow: 'Helm release',
         description: `${ref.namespace} · Inspect live resources, configuration and revision history.`,
-        ownerKey: modalOwner('helm-detail', ref.namespace, ref.name),
+        ownerKey: modalOwner('helm-detail', connectionID, ref.namespace, ref.name),
         okText: 'Close',
         okStyle: 'secondary',
         cancelText: null,
@@ -4190,7 +4381,6 @@ function openHelmDetailModal(ref, initialTab = 'resources') {
     const tabs = [...$('modal-body').querySelectorAll('.helm-tab')];
     const runTestsButton = $('helm-run-tests');
     let panes = { values: 'Loading…', manifest: 'Loading…', notes: 'Loading…' };
-    let resourcesLoaded = false;
     let historyLoaded = false;
     const show = (requested) => {
         const tabName = ['resources', 'values', 'manifest', 'notes', 'history'].includes(requested) ? requested : 'resources';
@@ -4204,10 +4394,6 @@ function openHelmDetailModal(ref, initialTab = 'resources') {
             button.setAttribute('aria-selected', String(active));
             button.tabIndex = active ? 0 : -1;
         });
-        if (tabName === 'resources' && !resourcesLoaded) {
-            resourcesLoaded = true;
-            loadHelmReleaseResources(ref, scope, resourcesBox);
-        }
         if (tabName === 'history' && !historyLoaded) {
             historyLoaded = true;
             loadHelmHistory(ref, scope, historyBox);
@@ -4225,16 +4411,21 @@ function openHelmDetailModal(ref, initialTab = 'resources') {
     });
     show(initialTab);
 
-    HelmGet(ref.namespace, ref.name)
-        .then((d) => {
+    HelmSnapshot(ref.namespace, ref.name)
+		.then((snapshot) => {
             if (!isCurrentModalRequest(scope)) return;
+			const d = snapshot.detail;
             metaBox.innerHTML = `<span class="chip">${esc(d.chart)}</span><span class="chip">app ${esc(d.appVersion || '—')}</span><span class="chip">revision ${d.revision}</span>${helmStatusBadge({ status: d.status })}`;
             panes = { values: d.values || '(no user-supplied values)', manifest: d.manifest || '', notes: d.notes || '(no notes)' };
+			renderHelmReleaseResources(snapshot.resources ?? [], scope, resourcesBox);
             const activeTab = tabs.find((button) => button.classList.contains('active'))?.dataset.htab;
             if (activeTab && !['resources', 'history'].includes(activeTab)) contentBox.textContent = panes[activeTab];
         })
         .catch((err) => {
-            if (isCurrentModalRequest(scope)) metaBox.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
+            if (!isCurrentModalRequest(scope)) return;
+            const message = esc(errMsg(err));
+            metaBox.innerHTML = `<p class="error">${message}</p>`;
+            resourcesBox.innerHTML = `<p class="error">${message}</p>`;
         });
 
     $('helm-upgrade-release').addEventListener('click', () => openHelmUpgradeModal(ref));
@@ -4255,7 +4446,7 @@ function openHelmDetailModal(ref, initialTab = 'resources') {
                         throw new Error('The active cluster or release changed before the test started.');
                     }
                     btn.disabled = true; btn.textContent = 'Testing…';
-                    const out = await HelmTest(ref.namespace, ref.name);
+                    const out = await HelmTestOwned(cluster, ref.namespace, ref.name);
                     if (isCurrentModalRequest(scope)) showAlert(out, { title: `Test results — ${ref.name}`, icon: '🧪' });
                 },
             );
@@ -4269,10 +4460,8 @@ function openHelmDetailModal(ref, initialTab = 'resources') {
     });
 }
 
-function loadHelmReleaseResources(ref, scope, box) {
-    HelmReleaseResources(ref.namespace, ref.name)
-        .then((list) => {
-            if (!isCurrentModalRequest(scope)) return;
+function renderHelmReleaseResources(list, scope, box) {
+	if (!isCurrentModalRequest(scope)) return;
             if (!list || list.length === 0) { box.innerHTML = '<p class="empty-inline">No resources found in the manifest.</p>'; return; }
             box.innerHTML = '';
             for (const r of list) {
@@ -4295,8 +4484,6 @@ function loadHelmReleaseResources(ref, scope, box) {
                 }
                 box.appendChild(div);
             }
-        })
-        .catch((err) => { if (isCurrentModalRequest(scope)) box.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
 }
 
 function loadHelmHistory(ref, scope, historyBox) {
@@ -4358,7 +4545,7 @@ function loadHelmHistory(ref, scope, historyBox) {
                             return;
                         }
                         btn.disabled = true;
-                        HelmRollback(ref.namespace, ref.name, rev)
+                        HelmRollbackOwned(cluster, ref.namespace, ref.name, rev)
                             .then(() => {
                                 if (isCurrentModalRequest(scope)) closeModal(scope);
                                 refreshCurrentView();
@@ -4376,6 +4563,7 @@ function loadHelmHistory(ref, scope, historyBox) {
 }
 
 function openHelmUpgradeModal(ref) {
+    const connectionID = $('cluster-select').value;
     let valuesEditor = null;
     let valuesLoading = true;
     let approvedPreview = null;
@@ -4390,7 +4578,7 @@ function openHelmUpgradeModal(ref) {
         title: `Upgrade values — ${ref.name}`,
         eyebrow: 'Helm release',
         description: `${ref.namespace} · Upgrade remains locked until these exact values are previewed.`,
-        ownerKey: modalOwner('helm-upgrade', ref.namespace, ref.name),
+        ownerKey: modalOwner('helm-upgrade', connectionID, ref.namespace, ref.name),
         okText: 'Upgrade',
         okDisabled: true,
         wide: true,
@@ -4416,7 +4604,7 @@ function openHelmUpgradeModal(ref) {
             if (!approvedPreview || approvedPreview.values !== vals) {
                 return Promise.reject('Preview these exact values before upgrading.');
             }
-            return HelmUpgradeValues(ref.namespace, ref.name, vals, approvedPreview.revision, approvedPreview.valuesDigest)
+            return HelmUpgradeValuesOwned(connectionID, ref.namespace, ref.name, vals, approvedPreview.revision, approvedPreview.valuesDigest)
                 .then(() => {
                     refreshCurrentView();
                     setTimeout(() => openHelmDetailModal(ref), 0);
@@ -4494,7 +4682,7 @@ function uninstallHelm(ref, modalScope = null) {
             return;
         }
         if (modalScope && isCurrentModalRequest(modalScope)) closeModal(modalScope);
-        HelmUninstall(ref.namespace, ref.name)
+        HelmUninstallOwned(cluster, ref.namespace, ref.name)
             .then(() => { loadSidebarCounts(); refreshCurrentView(); })
             .catch((err) => showError(errMsg(err)));
     });
@@ -4620,6 +4808,7 @@ function renderChartResults(results, box) {
 }
 
 function openChartInstallModal(chart) {
+    const connectionID = $('cluster-select').value;
     const ns = currentNamespace || 'default';
     const chartName = chart.normName || chart.name;
     const repoName = chart.sourceID || '';
@@ -4686,7 +4875,7 @@ function openChartInstallModal(chart) {
                 || approvedPreview.version !== ver || approvedPreview.values !== vals) {
                 return Promise.reject('Preview this exact release, namespace, version, and values before installing.');
             }
-            return HelmInstall(nsv, name, chart.repoURL, repoName, chartName, ver, vals, approvedPreview.digest)
+            return HelmInstallOwned(connectionID, nsv, name, chart.repoURL, repoName, chartName, ver, vals, approvedPreview.digest)
                 .then(() => {
                     let namespaceOption = [...$('namespace-select').options].find((option) => option.value === nsv);
                     if (!namespaceOption) {
@@ -4943,6 +5132,7 @@ $('btn-repo-update').addEventListener('click', () => {
 // ============ Live mode (auto-refresh) ============
 
 let liveTimer = null;
+let liveRefreshPending = false;
 const LIVE_REFRESH_MS = 5000;
 const LIVE_SIDEBAR_REFRESH_MS = 30000;
 
@@ -4957,8 +5147,14 @@ $('btn-live').addEventListener('click', () => {
             // Don't disrupt an active selection / open drawer / modal / palette.
             if (selectedRows.size > 0) return;
             if (!$('drawer').hidden || !$('modal').hidden || !$('palette').hidden) return;
-            refreshCurrentView();
-            if (Date.now() - navCountsRefreshedAt >= LIVE_SIDEBAR_REFRESH_MS) loadSidebarCounts();
+			if (liveRefreshPending) return;
+			liveRefreshPending = true;
+			Promise.resolve(refreshCurrentView())
+				.then(() => {
+					if (Date.now() - navCountsRefreshedAt >= LIVE_SIDEBAR_REFRESH_MS) return loadSidebarCounts();
+				})
+				.catch(() => {})
+				.finally(() => { liveRefreshPending = false; });
         }, LIVE_REFRESH_MS);
         $('btn-live').classList.add('live-on');
     }
@@ -5025,7 +5221,9 @@ function aiSuggestions(ref) {
     }
 }
 
-function aiKeyFor(ref) { return `${ref.kind}/${ref.namespace}/${ref.name}`; }
+function aiKeyFor(ref, connectionID = $('cluster-select').value) {
+	return `${connectionID}/${ref.kind}/${ref.namespace}/${ref.name}`;
+}
 
 // Called when the drawer opens on a new resource: the old thread belongs to a
 // different resource, so it is dropped rather than silently carried over.
@@ -5048,16 +5246,20 @@ function resetAIPanel(ref) {
 function prepareAIPanel() {
     refreshAIProviderBadge().then(renderAIThread);
     renderAIThread();
-    if (!aiContext && drawerRef) {
-        const ref = drawerRef;
-        $('ai-context-chips').innerHTML = '<span class="ai-chip ai-chip-loading">Collecting evidence…</span>';
-        AIResourceContext(ref.kind, ref.namespace, ref.name)
-            .then((c) => {
-                if (aiThreadKey !== aiKeyFor(ref)) return;
-                aiContext = c;
-                renderAIContextChips();
-            })
-            .catch(() => { $('ai-context-chips').innerHTML = ''; });
+	if (!aiContext && drawerRef) {
+		const ref = drawerRef;
+		const scope = activeDrawerScope;
+		const key = aiKeyFor(ref);
+		$('ai-context-chips').innerHTML = '<span class="ai-chip ai-chip-loading">Collecting evidence…</span>';
+		AIResourceContext(ref.kind, ref.namespace, ref.name)
+			.then((c) => {
+				if (!isCurrentDrawerRequest(scope) || aiThreadKey !== key) return;
+				aiContext = c;
+				renderAIContextChips();
+			})
+			.catch(() => {
+				if (isCurrentDrawerRequest(scope) && aiThreadKey === key) $('ai-context-chips').innerHTML = '';
+			});
     }
 }
 
@@ -5175,8 +5377,9 @@ function wireAISetupCard() {
 function sendAIQuestion(text) {
     const q = String(text || '').trim();
     if (!q || aiBusy || !drawerRef) return;
-    const ref = drawerRef;
-    const key = aiKeyFor(ref);
+	const ref = drawerRef;
+	const key = aiKeyFor(ref);
+	const scope = activeDrawerScope;
 
     aiThread.push({ role: 'user', content: q });
     aiBusy = true;
@@ -5185,20 +5388,20 @@ function sendAIQuestion(text) {
     $('btn-ai-send').disabled = true;
     renderAIThread();
 
-    AskAboutResource(ref.kind, ref.namespace, ref.name, aiThread)
-        .then((answer) => {
-            if (aiThreadKey !== key) return; // user moved to another resource
+	AskAboutResource(ref.kind, ref.namespace, ref.name, aiThread)
+		.then((answer) => {
+			if (!isCurrentDrawerRequest(scope) || aiThreadKey !== key) return;
             aiThread.push({ role: 'assistant', content: answer });
         })
         .catch((err) => {
-            if (aiThreadKey !== key) return;
+			if (!isCurrentDrawerRequest(scope) || aiThreadKey !== key) return;
             aiThread.push({ role: 'assistant', content: `⚠️ **${errMsg(err)}**\n\nOpen the ⚙ button above to check the provider settings.` });
         })
         .finally(() => {
             // The button is re-enabled even if the user moved on, otherwise the
             // composer would stay dead on the resource they switched to.
-            $('btn-ai-send').disabled = false;
-            if (aiThreadKey !== key) return;
+			if (!isCurrentDrawerRequest(scope) || aiThreadKey !== key) return;
+			$('btn-ai-send').disabled = false;
             aiBusy = false;
             renderAIThread();
         });
@@ -5401,13 +5604,18 @@ function populateRecent() {
 }
 
 function connectRecent(r) {
-    clearWelcomeError();
-    source = { mode: 'path', path: r.path, content: '' };
-    $('connecting-overlay').hidden = false;
+	if (welcomeConnectPending) return;
+	clearWelcomeError();
+	source = { mode: 'path', path: r.path, content: '' };
+	setWelcomeConnectPending(true);
+	$('connecting-overlay').hidden = false;
     ConnectWithPath(r.path, r.context)
         .then(() => enterDashboard(r.context))
         .catch(showWelcomeError)
-        .finally(() => { $('connecting-overlay').hidden = true; });
+		.finally(() => {
+			$('connecting-overlay').hidden = true;
+			setWelcomeConnectPending(false);
+		});
 }
 
 populateRecent();

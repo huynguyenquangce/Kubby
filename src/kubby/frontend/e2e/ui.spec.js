@@ -40,8 +40,11 @@ test('FR-2/FR-13: pasted kubeconfig enters a populated Overview', async ({ page 
     await connectDashboard(page);
 
     await expect(page.locator('#page-title')).toHaveText('Overview');
-    await expect(page.locator('#cluster-health-summary')).toContainText('5 of 6 pods are healthy');
+    await expect(page.locator('#cluster-health-title')).toHaveText('1 pod needs attention');
+    await expect(page.locator('#cluster-health-ratio')).toHaveText('5 / 6');
     await expect(page.locator('#stat-nodes')).toHaveText('2');
+    await expect(page.locator('#infrastructure-state')).toHaveText('Ready');
+    await expect(page.locator('.overview-node-row').filter({ hasText: 'kubby-control-plane' })).not.toHaveClass(/overview-node-row-bad/);
     await expect(page.locator('#overview-errors-body')).toContainText('checkout-7b8d9f-2kw7p');
     await expect(page.locator('#overview-toppods-body')).toContainText('api-6df7fdd9f8-4zj8g');
     await expect(page.locator('#overview-events-body')).toContainText('BackOff');

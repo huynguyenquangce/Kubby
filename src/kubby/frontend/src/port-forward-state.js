@@ -22,8 +22,8 @@ export function forwardsToStopOnDrawerClose(forwards, ref) {
         .map((forward) => forward.key);
 }
 
-export function shouldRetainStartedForward({ drawerStillOwnsRequest, keepRunning }) {
-    return !!keepRunning || !!drawerStillOwnsRequest;
+export function shouldRetainStartedForward({ drawerStillOwnsRequest, keepRunning, connectionCurrent, resultConnectionMatches }) {
+	return !!connectionCurrent && !!resultConnectionMatches && (!!keepRunning || !!drawerStillOwnsRequest);
 }
 
 export function shouldCancelPendingForward(pending, ref) {

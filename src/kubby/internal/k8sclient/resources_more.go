@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -127,11 +129,26 @@ func ListJobs(ctx context.Context, client kubernetes.Interface, ns string) ([]Jo
 			Completions: fmt.Sprintf("%d/%s", j.Status.Succeeded, comp),
 			Succeeded:   j.Status.Succeeded,
 			Active:      j.Status.Active,
-			IsError:     j.Status.Failed > 0,
+			IsError:     jobIsError(&j),
 			Age:         age(j.CreationTimestamp),
 		})
 	}
 	return out, nil
+}
+
+func jobIsError(job *batchv1.Job) bool {
+	for _, condition := range job.Status.Conditions {
+		if condition.Status != corev1.ConditionTrue {
+			continue
+		}
+		switch condition.Type {
+		case batchv1.JobComplete:
+			return false
+		case batchv1.JobFailed:
+			return true
+		}
+	}
+	return false
 }
 
 func ListCronJobs(ctx context.Context, client kubernetes.Interface, ns string) ([]CronJobInfo, error) {

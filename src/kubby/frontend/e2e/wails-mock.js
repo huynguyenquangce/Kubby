@@ -26,6 +26,16 @@ const DEFAULT_FIXTURES = {
         { apiVersion: 'apps/v1', kind: 'Deployment', refKind: 'Deployment', namespace: 'payments', name: 'checkout', status: '2/2 ready', health: 'healthy', ready: true },
         { apiVersion: 'v1', kind: 'Service', refKind: 'Service', namespace: 'payments', name: 'checkout', status: 'Present', health: 'unknown', ready: false },
     ],
+    HelmSnapshot: {
+        detail: {
+            name: 'checkout', namespace: 'payments', revision: 4, status: 'deployed', chart: 'checkout-2.4.0', appVersion: '1.8.2',
+            values: 'replicaCount: 2\n', manifest: 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: checkout\n', notes: 'Checkout is ready.',
+        },
+        resources: [
+            { apiVersion: 'apps/v1', kind: 'Deployment', refKind: 'Deployment', namespace: 'payments', name: 'checkout', status: '2/2 ready', health: 'healthy', ready: true },
+            { apiVersion: 'v1', kind: 'Service', refKind: 'Service', namespace: 'payments', name: 'checkout', status: 'Present', health: 'unknown', ready: false },
+        ],
+    },
     HelmHistory: [
         { revision: 4, status: 'deployed', chart: 'checkout-2.4.0', updated: '3m', description: 'Upgrade complete' },
         { revision: 3, status: 'superseded', chart: 'checkout-2.3.0', updated: '2d', description: 'Upgrade complete' },
@@ -125,14 +135,16 @@ const DEFAULT_FIXTURES = {
         unexposed: [],
         warnings: [],
     },
-    ListPods: [
-        { namespace: 'payments', name: 'api-6df7fdd9f8-4zj8g', status: 'Running', ready: '1/1', restarts: 0, cpuMilli: 90, memMi: 128, podIP: '10.244.1.7', node: 'kubby-worker', age: '12m', isError: false },
-        { namespace: 'payments', name: 'checkout-7b8d9f-2kw7p', status: 'CrashLoopBackOff', ready: '0/1', restarts: 7, cpuMilli: 4, memMi: 32, podIP: '10.244.1.8', node: 'kubby-worker', age: '9m', isError: true },
-    ],
-    PodMetricsList: [
-        { namespace: 'payments', name: 'api-6df7fdd9f8-4zj8g', cpuMilli: 90, memMi: 128 },
-        { namespace: 'payments', name: 'checkout-7b8d9f-2kw7p', cpuMilli: 4, memMi: 32 },
-    ],
+    PodsSnapshot: {
+        pods: [
+            { namespace: 'payments', name: 'api-6df7fdd9f8-4zj8g', status: 'Running', ready: '1/1', restarts: 0, podIP: '10.244.1.7', node: 'kubby-worker', age: '12m', isError: false },
+            { namespace: 'payments', name: 'checkout-7b8d9f-2kw7p', status: 'CrashLoopBackOff', ready: '0/1', restarts: 7, podIP: '10.244.1.8', node: 'kubby-worker', age: '9m', isError: true },
+        ],
+        metrics: [
+            { namespace: 'payments', name: 'api-6df7fdd9f8-4zj8g', cpuMilli: 90, memMi: 128 },
+            { namespace: 'payments', name: 'checkout-7b8d9f-2kw7p', cpuMilli: 4, memMi: 32 },
+        ],
+    },
     ListNodes: [
         { name: 'kubby-control-plane', status: 'Ready', role: 'control-plane', version: 'v1.34.0', age: '3d', isError: false },
         { name: 'kubby-worker', status: 'Ready', role: 'worker', version: 'v1.34.0', age: '3d', isError: false },
@@ -210,12 +222,14 @@ export async function connectDashboard(page, options = {}) {
     }
     await page.goto('/');
     await page.getByRole('button', { name: 'Paste kubeconfig' }).click();
-    await page.locator('#paste-area').fill('apiVersion: v1\nkind: Config\ncurrent-context: kind-kubby-dev');
+    // Pasted kubeconfig uses the shared CodeMirror YAML editor. Drive the
+    // editable surface so E2E follows the same editor-handle path as production.
+    await page.locator('#paste-area .cm-content').fill('apiVersion: v1\nkind: Config\ncurrent-context: kind-kubby-dev');
     await page.locator('#btn-load-paste').click();
     await page.locator('#context-row').waitFor({ state: 'visible' });
     await page.locator('#btn-connect').click();
     await page.locator('#dashboard').waitFor({ state: 'visible' });
-    await page.locator('#cluster-health-score').filter({ hasText: '83' }).waitFor();
+    await page.locator('#cluster-health-title').filter({ hasText: '1 pod needs attention' }).waitFor();
 }
 
 export function collectPageErrors(page) {

@@ -11,7 +11,7 @@ export function AppVersion():Promise<string>;
 
 export function ApplyPreview(arg1:string):Promise<k8sclient.ApplyDiff>;
 
-export function ApplyYAML(arg1:string):Promise<string>;
+export function ApplyYAMLOwned(arg1:string,arg2:string):Promise<string>;
 
 export function AskAboutResource(arg1:string,arg2:string,arg3:string,arg4:Array<main.AIMessage>):Promise<string>;
 
@@ -45,6 +45,8 @@ export function CustomKinds():Promise<k8sclient.CustomKindList>;
 
 export function DeleteResource(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function DeleteResourceOwned(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
 export function DeploymentTree(arg1:string,arg2:string):Promise<k8sclient.RelationNode>;
 
 export function Diagnostics(arg1:string):Promise<string>;
@@ -52,6 +54,8 @@ export function Diagnostics(arg1:string):Promise<string>;
 export function DisconnectCluster(arg1:string):Promise<string>;
 
 export function DrainNode(arg1:string):Promise<void>;
+
+export function DrainNodeOwned(arg1:string,arg2:string):Promise<void>;
 
 export function ExecResize(arg1:number,arg2:number):Promise<void>;
 
@@ -75,19 +79,31 @@ export function HelmHistory(arg1:string,arg2:string):Promise<Array<k8sclient.Hel
 
 export function HelmInstall(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string):Promise<void>;
 
+export function HelmInstallOwned(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string,arg8:string,arg9:string):Promise<void>;
+
 export function HelmInstallPreview(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string):Promise<k8sclient.HelmDiff>;
 
 export function HelmReleaseResources(arg1:string,arg2:string):Promise<Array<k8sclient.HelmResource>>;
 
 export function HelmRollback(arg1:string,arg2:string,arg3:number):Promise<void>;
 
+export function HelmRollbackOwned(arg1:string,arg2:string,arg3:string,arg4:number):Promise<void>;
+
+export function HelmSnapshot(arg1:string,arg2:string):Promise<k8sclient.HelmReleaseSnapshot>;
+
 export function HelmTest(arg1:string,arg2:string):Promise<string>;
 
+export function HelmTestOwned(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function HelmUninstall(arg1:string,arg2:string):Promise<void>;
+
+export function HelmUninstallOwned(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function HelmUpgradePreview(arg1:string,arg2:string,arg3:string):Promise<k8sclient.HelmDiff>;
 
 export function HelmUpgradeValues(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<void>;
+
+export function HelmUpgradeValuesOwned(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:string):Promise<void>;
 
 export function IngressTree(arg1:string,arg2:string):Promise<k8sclient.RelationNode>;
 
@@ -165,27 +181,41 @@ export function PodMetricsList(arg1:string):Promise<Array<k8sclient.PodMetric>>;
 
 export function PodsOnNode(arg1:string):Promise<Array<k8sclient.PodInfo>>;
 
+export function PodsSnapshot(arg1:string):Promise<k8sclient.PodsSnapshot>;
+
 export function RecentConnections():Promise<Array<main.RecentConnection>>;
 
 export function RemoveHelmRepo(arg1:string):Promise<void>;
 
 export function RestartDaemonSet(arg1:string,arg2:string):Promise<void>;
 
+export function RestartDaemonSetOwned(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function RestartDeployment(arg1:string,arg2:string):Promise<void>;
+
+export function RestartDeploymentOwned(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function RestartStatefulSet(arg1:string,arg2:string):Promise<void>;
 
+export function RestartStatefulSetOwned(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function RollbackDeployment(arg1:string,arg2:string,arg3:number):Promise<void>;
+
+export function RollbackDeploymentOwned(arg1:string,arg2:string,arg3:string,arg4:number):Promise<void>;
 
 export function RolloutHistory(arg1:string,arg2:string):Promise<Array<k8sclient.RolloutRevision>>;
 
 export function RunCronJobNow(arg1:string,arg2:string):Promise<void>;
+
+export function RunCronJobNowOwned(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SaveAIConfig(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;
 
 export function SaveTextToFile(arg1:string,arg2:string):Promise<string>;
 
 export function ScaleDeployment(arg1:string,arg2:string,arg3:number):Promise<void>;
+
+export function ScaleDeploymentOwned(arg1:string,arg2:string,arg3:string,arg4:number):Promise<void>;
 
 export function SearchCharts(arg1:string):Promise<Array<k8sclient.ChartSearchResult>>;
 
@@ -197,7 +227,11 @@ export function ServiceTree(arg1:string,arg2:string):Promise<k8sclient.RelationN
 
 export function SetDeploymentPaused(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
+export function SetDeploymentPausedOwned(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
+
 export function SetNodeSchedulable(arg1:string,arg2:boolean):Promise<void>;
+
+export function SetNodeSchedulableOwned(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
 export function SidebarCounts(arg1:string,arg2:boolean):Promise<Array<k8sclient.NavCount>>;
 

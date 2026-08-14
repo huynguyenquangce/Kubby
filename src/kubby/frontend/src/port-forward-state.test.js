@@ -47,9 +47,12 @@ test('closing a drawer stops only its non-background tunnels', () => {
 });
 
 test('a late Start result survives only for a current drawer or background mode', () => {
-    assert.equal(shouldRetainStartedForward({ drawerStillOwnsRequest: true, keepRunning: false }), true);
-    assert.equal(shouldRetainStartedForward({ drawerStillOwnsRequest: false, keepRunning: true }), true);
-    assert.equal(shouldRetainStartedForward({ drawerStillOwnsRequest: false, keepRunning: false }), false);
+	const owned = { connectionCurrent: true, resultConnectionMatches: true };
+	assert.equal(shouldRetainStartedForward({ ...owned, drawerStillOwnsRequest: true, keepRunning: false }), true);
+	assert.equal(shouldRetainStartedForward({ ...owned, drawerStillOwnsRequest: false, keepRunning: true }), true);
+	assert.equal(shouldRetainStartedForward({ ...owned, drawerStillOwnsRequest: false, keepRunning: false }), false);
+	assert.equal(shouldRetainStartedForward({ ...owned, connectionCurrent: false, drawerStillOwnsRequest: false, keepRunning: true }), false);
+	assert.equal(shouldRetainStartedForward({ ...owned, resultConnectionMatches: false, drawerStillOwnsRequest: true, keepRunning: false }), false);
 });
 
 test('drawer close cancels only its pending foreground start', () => {

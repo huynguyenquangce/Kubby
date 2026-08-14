@@ -79,7 +79,9 @@ the stable IDs.
 
 Cluster state is protected by `stateMu`. A bound method calls `requireCluster()`
 once and keeps the returned pointer as its immutable snapshot for the whole I/O;
-it must not re-read active state after the call has started. Add, switch and
+it must not re-read active state after the call has started. Every UI write also
+carries the expected connection ID into an `*Owned` App method, so a confirmation
+opened on cluster A cannot mutate a same-named object after switching to B. Add, switch and
 disconnect serialize through `transitionMu`, advance `connectionEpoch`, publish
 one active entry, and invalidate the old log/exec/port-forward lifecycle. Session
 close happens outside its registry lock.
@@ -89,9 +91,17 @@ cluster-derived — namespace options, sidebar counts, and the dynamic custom-re
 sections. Forgetting the last two left the sidebar describing the previous cluster
 (a real bug).
 
+Connectivity is proved with `Discovery.ServerVersion`, not a cluster-wide
+Namespace list. A namespace-scoped ServiceAccount is a valid connection; normal
+RBAC probes and API errors describe what it may access afterwards.
+
 ## Recent connections
 
 `recent.go` persists to `%AppData%/kubby/recent.json`.
+
+The file is updated under one App mutex with a private temporary file, `Sync`,
+and atomic rename. This prevents overlapping welcome-screen connects/forgets from
+losing updates or exposing a partially-written JSON document.
 
 > **Security rule:** it stores **only file paths + context names**. Pasted
 > kubeconfig *content* is never written to disk — it can contain client

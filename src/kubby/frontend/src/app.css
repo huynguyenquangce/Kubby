@@ -52,6 +52,11 @@
    would otherwise override [hidden] and leave elements permanently visible). */
 [hidden] { display: none !important; }
 
+.recent-item-disabled {
+	pointer-events: none;
+	opacity: 0.55;
+}
+
 /* ============ Dark theme (toggled via data-theme="dark" on <html>) ============ */
 :root[data-theme="dark"] {
     color-scheme: dark;

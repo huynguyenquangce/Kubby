@@ -79,7 +79,7 @@
             </div>
 
             <div id="tab-paste" class="tab-panel" hidden>
-                <textarea id="paste-area" class="paste-area" placeholder="apiVersion: v1&#10;kind: Config&#10;clusters:&#10;- ..."></textarea>
+				<div id="paste-area" class="paste-area yaml-host" aria-label="Pasted kubeconfig YAML"></div>
                 <button id="btn-load-paste" class="btn btn-secondary btn-block">Load pasted config</button>
             </div>
 
@@ -295,79 +295,75 @@
 
             <main id="content" class="content">
                 <!-- Overview -->
-                <section id="view-overview" class="view">
-                    <article id="overview-pulse" class="overview-pulse">
-                        <header class="overview-pulse-head">
-                            <div><span class="overview-eyebrow">Live cluster telemetry</span><h2>Cluster pulse</h2><p>Workload health and resource pressure at a glance.</p></div>
-                            <span id="cluster-health-badge" class="health-state">Checking…</span>
-                        </header>
-                        <div class="overview-pulse-grid">
-                            <section class="overview-health-block" aria-labelledby="overview-health-title">
-                                <div class="overview-block-title"><span class="overview-block-icon overview-block-icon-health" aria-hidden="true">✓</span><div><h3 id="overview-health-title">Workload health</h3><span id="cluster-health-summary">Loading pod status…</span></div></div>
-                                <div class="health-reading">
-                                    <div class="health-score-wrap"><strong id="cluster-health-score" class="health-score">–</strong><span>%</span></div>
-                                    <div class="health-progress-wrap">
-                                        <div class="health-progress-meta"><span>Healthy pods</span><strong id="cluster-health-ratio">– / –</strong></div>
-                                        <div class="health-progress" role="progressbar" aria-label="Healthy pods" aria-valuemin="0" aria-valuemax="100"><span id="cluster-health-fill"></span></div>
-                                        <p id="cluster-health-note">Calculated from the current pod status returned by the cluster.</p>
-                                    </div>
-                                </div>
-                            </section>
-                            <section class="overview-capacity-block" aria-labelledby="overview-capacity-title">
-                                <div class="overview-block-title"><span class="overview-block-icon" aria-hidden="true">↗</span><div><h3 id="overview-capacity-title">Capacity</h3><span>Current utilization across <strong id="capacity-node-count">Loading…</strong></span></div></div>
-                                <div class="capacity-bars">
-                                    <div class="capacity-metric">
-                                        <div id="capacity-cpu-ring" class="capacity-bar" style="--value:0">
-                                            <div><span>CPU</span><strong id="capacity-cpu-pct">–%</strong></div>
-                                            <div class="capacity-track" role="progressbar" aria-label="CPU utilization" aria-valuemin="0" aria-valuemax="100"><span></span></div>
-                                        </div>
-                                        <small id="capacity-cpu-value">Waiting for metrics</small>
-                                    </div>
-                                    <div class="capacity-metric">
-                                        <div id="capacity-memory-ring" class="capacity-bar capacity-bar-memory" style="--value:0">
-                                            <div><span>Memory</span><strong id="capacity-memory-pct">–%</strong></div>
-                                            <div class="capacity-track" role="progressbar" aria-label="Memory utilization" aria-valuemin="0" aria-valuemax="100"><span></span></div>
-                                        </div>
-                                        <small id="capacity-memory-value">Waiting for metrics</small>
-                                    </div>
-                                </div>
-                                <p id="capacity-hint" class="capacity-hint" hidden>Metrics Server is unavailable. Resource browsing still works normally.</p>
-                            </section>
+				<section id="view-overview" class="view">
+					<p id="overview-warnings" class="structure-warning" hidden></p>
+
+                    <article id="overview-pulse" class="overview-health-banner" aria-labelledby="cluster-health-title">
+                        <div class="overview-health-main">
+                            <span id="cluster-health-icon" class="overview-health-icon" aria-hidden="true">·</span>
+                            <div><h2 id="cluster-health-title">Checking cluster health</h2><p id="cluster-health-summary">Loading live workload status…</p></div>
+                        </div>
+                        <div class="overview-health-facts" aria-label="Cluster health facts">
+                            <div><strong id="cluster-health-ratio">– / –</strong><span>Pods ready</span></div>
+                            <div><strong id="cluster-node-ratio">– / –</strong><span>Nodes ready</span></div>
+                            <div><strong id="stat-errors">–</strong><span>Active issues</span></div>
                         </div>
                     </article>
 
-                    <div class="stat-cards overview-kpis" aria-label="Cluster resource totals">
-                        <div class="stat-card"><span class="stat-icon stat-icon-blue"><svg class="ico"><use href="#i-nodes"/></svg></span><div><div class="stat-label">Nodes</div><div class="stat-value" id="stat-nodes">–</div><div class="stat-meta">Cluster capacity</div></div></div>
-                        <div class="stat-card"><span class="stat-icon stat-icon-purple"><svg class="ico"><use href="#i-namespaces"/></svg></span><div><div class="stat-label">Namespaces</div><div class="stat-value" id="stat-namespaces">–</div><div class="stat-meta">Logical scopes</div></div></div>
-                        <div class="stat-card"><span class="stat-icon stat-icon-teal"><svg class="ico"><use href="#i-pods"/></svg></span><div><div class="stat-label">Pods</div><div class="stat-value" id="stat-pods">–</div><div class="stat-meta">Across all namespaces</div></div></div>
-                        <div class="stat-card"><span class="stat-icon stat-icon-indigo"><svg class="ico"><use href="#i-deployments"/></svg></span><div><div class="stat-label">Deployments</div><div class="stat-value" id="stat-deployments">–</div><div class="stat-meta">Managed workloads</div></div></div>
-                        <div class="stat-card stat-card-error"><span class="stat-icon stat-icon-error">!</span><div><div class="stat-label">Errors</div><div class="stat-value" id="stat-errors">–</div><div class="stat-meta">Requires attention</div></div></div>
+                    <div class="overview-metrics" aria-label="Cluster capacity and totals">
+                        <article id="capacity-cpu-ring" class="overview-metric-card capacity-bar" style="--value:0">
+                            <header><span>CPU usage</span><strong id="capacity-cpu-state" class="overview-metric-state">Checking</strong></header>
+                            <div class="overview-metric-reading"><strong id="capacity-cpu-pct">–%</strong><span id="capacity-cpu-value">Waiting for metrics</span></div>
+                            <div class="capacity-track" role="progressbar" aria-label="CPU utilization" aria-valuemin="0" aria-valuemax="100"><span></span></div>
+                            <p id="capacity-cpu-meta">Live allocatable usage</p>
+                        </article>
+                        <article id="capacity-memory-ring" class="overview-metric-card capacity-bar capacity-bar-memory" style="--value:0">
+                            <header><span>Memory usage</span><strong id="capacity-memory-state" class="overview-metric-state">Checking</strong></header>
+                            <div class="overview-metric-reading"><strong id="capacity-memory-pct">–%</strong><span id="capacity-memory-value">Waiting for metrics</span></div>
+                            <div class="capacity-track" role="progressbar" aria-label="Memory utilization" aria-valuemin="0" aria-valuemax="100"><span></span></div>
+                            <p id="capacity-memory-meta">Live allocatable usage</p>
+                        </article>
+                        <article class="overview-metric-card">
+                            <header><span>Infrastructure</span><strong id="infrastructure-state" class="overview-metric-state">Checking</strong></header>
+                            <div class="overview-metric-reading"><strong id="stat-nodes">–</strong><span>nodes</span></div>
+                            <div class="overview-resource-line"><span id="capacity-node-count">Loading metrics…</span><i></i><span id="infrastructure-pressure">Checking pressure</span></div>
+                            <p id="infrastructure-meta">Cluster capacity</p>
+                        </article>
+                        <article class="overview-metric-card">
+                            <header><span>Workloads</span><strong id="workload-state" class="overview-metric-state">Checking</strong></header>
+                            <div class="overview-metric-reading"><strong id="stat-deployments">–</strong><span>deployments</span></div>
+                            <div class="overview-resource-line"><span><b id="stat-namespaces">–</b> namespaces</span><i></i><span><b id="stat-pods">–</b> pods</span></div>
+                            <p id="workload-meta">Loading desired state…</p>
+                        </article>
+                    </div>
+                    <p id="capacity-hint" class="capacity-hint overview-capacity-hint" hidden>Metrics Server is unavailable. Resource browsing still works normally.</p>
+
+                    <div class="overview-grid">
+                        <section class="overview-section overview-attention-section">
+                            <header class="overview-section-head">
+                                <div><h3>Attention needed</h3><p>Failures and warnings that may require action.</p></div>
+                                <div class="overview-head-actions"><span id="attention-count" class="overview-section-count">Checking</span><button id="overview-ai-diagnose" class="btn btn-ai btn-sm" hidden><svg class="btn-ico"><use href="#i-sparkle"/></svg>Diagnose with AI</button></div>
+                            </header>
+                            <div class="overview-table-wrap"><table class="plain overview-table"><thead><tr><th>Namespace</th><th>Pod</th><th>Status</th><th>Restarts</th></tr></thead>
+                                <tbody id="overview-errors-body"></tbody></table>
+                            <p class="overview-empty overview-empty-horizontal" id="overview-errors-empty" hidden><span>✓</span><span><strong>Nothing needs attention</strong><small>All monitored workloads are currently healthy.</small></span></p></div>
+                        </section>
+
+                        <section class="overview-section overview-consumers-section">
+                            <header class="overview-section-head"><div><h3>Top consumers</h3><p>Highest current CPU usage.</p></div><span id="top-consumers-state" class="overview-section-count">Live metrics</span></header>
+                            <div id="overview-toppods-body" class="overview-consumer-list"></div>
+                            <p class="overview-empty" id="overview-toppods-empty" hidden><span>—</span><strong>No live metrics</strong><small>Install Metrics Server to see resource usage.</small></p>
+                        </section>
                     </div>
 
                     <section class="overview-section overview-node-section">
-                        <header class="overview-section-head"><div><span class="overview-eyebrow">Infrastructure</span><h3>Node status</h3><p>Readiness, scheduling and pressure signals by machine.</p></div><span class="nm-total" id="node-status-total"></span></header>
+                        <header class="overview-section-head"><div><h3>Node status</h3><p>Readiness, scheduling and pressure signals.</p></div><span class="overview-section-count" id="node-status-total"></span></header>
                         <div id="node-status" class="node-status-grid"></div>
                         <p class="empty-inline" id="node-status-empty" hidden>No node status is available for this connection.</p>
                     </section>
 
-                    <div class="overview-grid">
-                        <section class="overview-section">
-                            <header class="overview-section-head"><div><span class="overview-eyebrow overview-eyebrow-danger">Actionable now</span><h3>Attention needed</h3><p>Failing pods that need investigation.</p></div><button id="overview-ai-diagnose" class="btn btn-ai btn-sm" hidden><svg class="btn-ico"><use href="#i-sparkle"/></svg>Diagnose with AI</button></header>
-                            <div class="overview-table-wrap"><table class="plain overview-table"><thead><tr><th>Namespace</th><th>Pod</th><th>Status</th><th>Restarts</th></tr></thead>
-                                <tbody id="overview-errors-body"></tbody></table>
-                            <p class="overview-empty" id="overview-errors-empty" hidden><span>✓</span><strong>Everything looks healthy</strong><small>No pods currently need attention.</small></p></div>
-                        </section>
-
-                        <section class="overview-section">
-                            <header class="overview-section-head"><div><span class="overview-eyebrow">Resource pressure</span><h3>Top consumers</h3><p>Pods currently using the most CPU.</p></div></header>
-                            <div class="overview-table-wrap"><table class="plain overview-table"><thead><tr><th>Namespace</th><th>Pod</th><th>CPU</th><th>Memory</th></tr></thead>
-                                <tbody id="overview-toppods-body"></tbody></table>
-                            <p class="overview-empty" id="overview-toppods-empty" hidden><span>—</span><strong>No live metrics</strong><small>Install Metrics Server to see resource usage.</small></p></div>
-                        </section>
-                    </div>
-
                     <section class="overview-section">
-                        <header class="overview-section-head"><div><span class="overview-eyebrow">Activity</span><h3>Recent events</h3><p>The latest signals reported by workloads and controllers.</p></div></header>
+                        <header class="overview-section-head"><div><h3>Recent events</h3><p>Latest signals from workloads and controllers.</p></div></header>
                         <div class="overview-table-wrap overview-events-wrap"><table class="plain overview-table"><thead><tr><th>Type</th><th>Object</th><th>Reason</th><th>Age</th><th>Message</th></tr></thead>
                             <tbody id="overview-events-body"></tbody></table>
                         <p class="overview-empty" id="overview-events-empty" hidden><span>—</span><strong>No recent events</strong><small>The cluster has not reported new activity.</small></p></div>
@@ -597,6 +593,7 @@
 
                 <!-- Traffic flow (Ingress → Service → Pod topology) -->
                 <section id="view-traffic" class="view" hidden>
+                    <p id="traffic-warnings" class="structure-warning" hidden></p>
                     <div class="flow-summary" id="flow-summary"></div>
 
                     <div class="flow-toolbar">

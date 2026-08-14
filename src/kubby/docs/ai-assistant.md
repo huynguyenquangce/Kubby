@@ -72,9 +72,11 @@ truncated snapshot.
 
 Before evidence reaches either the preview or a provider, `DiagnosticContext`
 redacts every Secret `data`/`stringData` value and every literal `env[].value`
-while preserving field names and `valueFrom` references. It also filters common
-credential shapes from events and logs (Bearer tokens and password/token/API-key
-assignments). Tests use unique sentinels to prevent those values from returning.
+while preserving field names and `valueFrom` references. Arbitrary ConfigMap and
+custom-resource trees are walked recursively; separator and camelCase credential
+keys (`accessToken`, `adminPassword`, URLs/connection strings) are default-redacted.
+It also filters common credential shapes and URI userinfo from events and logs.
+Tests use unique sentinels to prevent those values from returning.
 
 This is defense in depth, not a proof that arbitrary free-form logs can never
 contain sensitive application data. The exact post-redaction payload remains

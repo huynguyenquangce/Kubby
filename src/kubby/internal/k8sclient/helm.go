@@ -1,13 +1,20 @@
 package k8sclient
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
@@ -16,6 +23,7 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/repo"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -59,11 +67,39 @@ func (g *restClientGetter) ToRawKubeConfigLoader() clientcmd.ClientConfig {
 	return clientcmd.NewDefaultClientConfig(*clientcmdapi.NewConfig(), overrides)
 }
 
-func newHelmConfig(c *Cluster, namespace string) (*action.Configuration, error) {
+const (
+	helmOperationTimeout = 5 * time.Minute
+	helmChartHTTPTimeout = 120 * time.Second
+)
+
+type helmContextRoundTripper struct {
+	ctx  context.Context
+	next http.RoundTripper
+}
+
+func (t helmContextRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return t.next.RoundTrip(req.Clone(t.ctx))
+}
+
+func newHelmConfig(ctx context.Context, c *Cluster, namespace string) (*action.Configuration, error) {
 	if namespace == "" {
 		namespace = "default"
 	}
-	getter := &restClientGetter{cfg: c.Rest, namespace: namespace}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	restConfig := rest.CopyConfig(c.Rest)
+	if restConfig.Timeout == 0 || restConfig.Timeout > helmOperationTimeout {
+		restConfig.Timeout = helmOperationTimeout
+	}
+	previousWrap := restConfig.WrapTransport
+	restConfig.WrapTransport = func(transport http.RoundTripper) http.RoundTripper {
+		if previousWrap != nil {
+			transport = previousWrap(transport)
+		}
+		return helmContextRoundTripper{ctx: ctx, next: transport}
+	}
+	getter := &restClientGetter{cfg: restConfig, namespace: namespace}
 	cfg := new(action.Configuration)
 	if err := cfg.Init(getter, namespace, "secret", func(string, ...interface{}) {}); err != nil {
 		return nil, err
@@ -84,8 +120,8 @@ type HelmReleaseDetail struct {
 	Manifest   string `json:"manifest"`
 }
 
-func HelmGet(c *Cluster, namespace, name string) (*HelmReleaseDetail, error) {
-	cfg, err := newHelmConfig(c, namespace)
+func HelmGet(ctx context.Context, c *Cluster, namespace, name string) (*HelmReleaseDetail, error) {
+	cfg, err := newHelmConfig(ctx, c, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -118,8 +154,8 @@ type HelmRevision struct {
 	Description string `json:"description"`
 }
 
-func HelmHistory(c *Cluster, namespace, name string) ([]HelmRevision, error) {
-	cfg, err := newHelmConfig(c, namespace)
+func HelmHistory(ctx context.Context, c *Cluster, namespace, name string) ([]HelmRevision, error) {
+	cfg, err := newHelmConfig(ctx, c, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -145,28 +181,31 @@ func HelmHistory(c *Cluster, namespace, name string) ([]HelmRevision, error) {
 	return out, nil
 }
 
-func HelmRollback(c *Cluster, namespace, name string, revision int) error {
-	cfg, err := newHelmConfig(c, namespace)
+func HelmRollback(ctx context.Context, c *Cluster, namespace, name string, revision int) error {
+	cfg, err := newHelmConfig(ctx, c, namespace)
 	if err != nil {
 		return err
 	}
 	rb := action.NewRollback(cfg)
 	rb.Version = revision
+	rb.Timeout = helmOperationTimeout
 	return rb.Run(name)
 }
 
-func HelmUninstall(c *Cluster, namespace, name string) error {
-	cfg, err := newHelmConfig(c, namespace)
+func HelmUninstall(ctx context.Context, c *Cluster, namespace, name string) error {
+	cfg, err := newHelmConfig(ctx, c, namespace)
 	if err != nil {
 		return err
 	}
-	_, err = action.NewUninstall(cfg).Run(name)
+	uninstall := action.NewUninstall(cfg)
+	uninstall.Timeout = helmOperationTimeout
+	_, err = uninstall.Run(name)
 	return err
 }
 
 // HelmUpgradeValues re-runs a release with new values, reusing its current chart.
-func HelmUpgradeValues(c *Cluster, namespace, name, valuesYAML string, expectedRevision int, expectedValuesDigest string) error {
-	cfg, err := newHelmConfig(c, namespace)
+func HelmUpgradeValues(ctx context.Context, c *Cluster, namespace, name, valuesYAML string, expectedRevision int, expectedValuesDigest string) error {
+	cfg, err := newHelmConfig(ctx, c, namespace)
 	if err != nil {
 		return err
 	}
@@ -191,7 +230,8 @@ func HelmUpgradeValues(c *Cluster, namespace, name, valuesYAML string, expectedR
 	}
 	up := action.NewUpgrade(cfg)
 	up.Namespace = namespace
-	_, err = up.Run(name, rel.Chart, vals)
+	up.Timeout = helmOperationTimeout
+	_, err = up.RunWithContext(ctx, name, rel.Chart, vals)
 	return err
 }
 
@@ -209,12 +249,26 @@ func parseValues(valuesYAML string) (map[string]interface{}, error) {
 // locateAndLoadChart resolves a chart from a repo URL, fingerprints the exact
 // archive bytes, and loads it into memory. The digest binds a preview to the
 // artifact that a later install is allowed to write.
-func locateAndLoadChart(inst *action.Install, repoURL, repoName, chartName, version string) (*chart.Chart, string, error) {
+func locateAndLoadChart(ctx context.Context, inst *action.Install, repoURL, repoName, chartName, version string) (*chart.Chart, string, error) {
 	if err := configureChartSource(&inst.ChartPathOptions, repoURL, version, repoName); err != nil {
+		return nil, "", err
+	}
+	if archive, handled, err := locateHTTPChart(ctx, &inst.ChartPathOptions, chartName); handled {
+		if err != nil {
+			return nil, "", err
+		}
+		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(archive))
+		ch, err := loader.LoadArchive(bytes.NewReader(archive))
+		return ch, digest, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
 	chartPath, err := inst.ChartPathOptions.LocateChart(chartName, cli.New())
 	if err != nil {
+		return nil, "", err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
 	archive, err := os.ReadFile(chartPath)
@@ -224,6 +278,107 @@ func locateAndLoadChart(inst *action.Install, repoURL, repoName, chartName, vers
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(archive))
 	ch, err := loader.Load(chartPath)
 	return ch, digest, err
+}
+
+// locateHTTPChart implements the HTTP(S) part of Helm's chart resolution with
+// request contexts. Helm's ChartPathOptions getter has a fixed 120-second HTTP
+// timeout but no context, so a cluster switch could otherwise leave a download
+// alive after the owning Helm operation was canceled.
+func locateHTTPChart(ctx context.Context, options *action.ChartPathOptions, chartName string) ([]byte, bool, error) {
+	if options.RepoURL == "" {
+		parsed, err := url.Parse(chartName)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return nil, false, nil
+		}
+		archive, err := fetchHelmHTTP(ctx, options, chartName)
+		return archive, true, err
+	}
+	base, err := url.Parse(options.RepoURL)
+	if err != nil || (base.Scheme != "http" && base.Scheme != "https") {
+		return nil, false, nil
+	}
+	indexURL, err := repo.ResolveReferenceURL(options.RepoURL, "index.yaml")
+	if err != nil {
+		return nil, true, err
+	}
+	indexYAML, err := fetchHelmHTTP(ctx, options, indexURL)
+	if err != nil {
+		return nil, true, err
+	}
+	index := &repo.IndexFile{}
+	if err := yaml.Unmarshal(indexYAML, index); err != nil {
+		return nil, true, fmt.Errorf("parse chart repository index: %w", err)
+	}
+	index.SortEntries()
+	version, err := index.Get(chartName, options.Version)
+	if err != nil {
+		return nil, true, err
+	}
+	if len(version.URLs) == 0 {
+		return nil, true, fmt.Errorf("chart %q version %q has no download URL", chartName, version.Version)
+	}
+	chartURL, err := repo.ResolveReferenceURL(options.RepoURL, version.URLs[0])
+	if err != nil {
+		return nil, true, err
+	}
+	archive, err := fetchHelmHTTP(ctx, options, chartURL)
+	return archive, true, err
+}
+
+func fetchHelmHTTP(ctx context.Context, options *action.ChartPathOptions, target string) ([]byte, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: options.InsecureSkipTLSverify} // #nosec G402 -- explicit user repository option
+	if options.CaFile != "" {
+		pem, err := os.ReadFile(options.CaFile)
+		if err != nil {
+			return nil, err
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil || roots == nil {
+			roots = x509.NewCertPool()
+		}
+		if !roots.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("Helm repository CA file contains no certificates")
+		}
+		tlsConfig.RootCAs = roots
+	}
+	if options.CertFile != "" || options.KeyFile != "" {
+		if options.CertFile == "" || options.KeyFile == "" {
+			return nil, fmt.Errorf("Helm repository client certificate and key must be configured together")
+		}
+		certificate, err := tls.LoadX509KeyPair(options.CertFile, options.KeyFile)
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig.Certificates = []tls.Certificate{certificate}
+	}
+	transport.TLSClientConfig = tlsConfig
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/gzip,application/octet-stream,application/x-yaml,text/yaml")
+	if options.Username != "" && options.Password != "" && helmCredentialsAllowed(options.RepoURL, target, options.PassCredentialsAll) {
+		request.SetBasicAuth(options.Username, options.Password)
+	}
+	response, err := (&http.Client{Transport: transport, Timeout: helmChartHTTPTimeout}).Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch %s: %s", target, response.Status)
+	}
+	return io.ReadAll(response.Body)
+}
+
+func helmCredentialsAllowed(repoURL, target string, passAll bool) bool {
+	if passAll {
+		return true
+	}
+	repoParsed, repoErr := url.Parse(repoURL)
+	targetParsed, targetErr := url.Parse(target)
+	return repoErr == nil && targetErr == nil && repoParsed.Scheme == targetParsed.Scheme && repoParsed.Host == targetParsed.Host
 }
 
 func configureChartSource(options *action.ChartPathOptions, repoURL, version string, repoNames ...string) error {
@@ -307,8 +462,8 @@ func ChartDefaultValues(repoURL, repoName, chartName, version string) (string, e
 }
 
 // HelmInstall installs a chart from a repository URL into the cluster.
-func HelmInstall(c *Cluster, namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML, expectedDigest string) error {
-	cfg, err := newHelmConfig(c, namespace)
+func HelmInstall(ctx context.Context, c *Cluster, namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML, expectedDigest string) error {
+	cfg, err := newHelmConfig(ctx, c, namespace)
 	if err != nil {
 		return err
 	}
@@ -316,7 +471,8 @@ func HelmInstall(c *Cluster, namespace, releaseName, repoURL, repoName, chartNam
 	inst.ReleaseName = releaseName
 	inst.Namespace = namespace
 	inst.CreateNamespace = true
-	ch, digest, err := locateAndLoadChart(inst, repoURL, repoName, chartName, version)
+	inst.Timeout = helmOperationTimeout
+	ch, digest, err := locateAndLoadChart(ctx, inst, repoURL, repoName, chartName, version)
 	if err != nil {
 		return err
 	}
@@ -327,7 +483,7 @@ func HelmInstall(c *Cluster, namespace, releaseName, repoURL, repoName, chartNam
 	if err != nil {
 		return err
 	}
-	_, err = inst.Run(ch, vals)
+	_, err = inst.RunWithContext(ctx, ch, vals)
 	return err
 }
 
@@ -343,8 +499,8 @@ type HelmDiff struct {
 
 // HelmInstallPreview renders (dry-run) the manifest a fresh install would create,
 // without touching the cluster.
-func HelmInstallPreview(c *Cluster, namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML string) (*HelmDiff, error) {
-	cfg, err := newHelmConfig(c, namespace)
+func HelmInstallPreview(ctx context.Context, c *Cluster, namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML string) (*HelmDiff, error) {
+	cfg, err := newHelmConfig(ctx, c, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -356,7 +512,8 @@ func HelmInstallPreview(c *Cluster, namespace, releaseName, repoURL, repoName, c
 	inst.Namespace = namespace
 	inst.DryRun = true
 	inst.ClientOnly = false // talk to the apiserver for capabilities/version
-	ch, digest, err := locateAndLoadChart(inst, repoURL, repoName, chartName, version)
+	inst.Timeout = helmOperationTimeout
+	ch, digest, err := locateAndLoadChart(ctx, inst, repoURL, repoName, chartName, version)
 	if err != nil {
 		return nil, err
 	}
@@ -364,7 +521,7 @@ func HelmInstallPreview(c *Cluster, namespace, releaseName, repoURL, repoName, c
 	if err != nil {
 		return nil, err
 	}
-	rel, err := inst.Run(ch, vals)
+	rel, err := inst.RunWithContext(ctx, ch, vals)
 	if err != nil {
 		return nil, err
 	}
@@ -373,8 +530,8 @@ func HelmInstallPreview(c *Cluster, namespace, releaseName, repoURL, repoName, c
 
 // HelmUpgradePreview renders (dry-run) the manifest an upgrade-values would
 // produce and returns it alongside the current manifest for diffing.
-func HelmUpgradePreview(c *Cluster, namespace, name, valuesYAML string) (*HelmDiff, error) {
-	cfg, err := newHelmConfig(c, namespace)
+func HelmUpgradePreview(ctx context.Context, c *Cluster, namespace, name, valuesYAML string) (*HelmDiff, error) {
+	cfg, err := newHelmConfig(ctx, c, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +546,8 @@ func HelmUpgradePreview(c *Cluster, namespace, name, valuesYAML string) (*HelmDi
 	up := action.NewUpgrade(cfg)
 	up.Namespace = namespace
 	up.DryRun = true
-	proposed, err := up.Run(name, current.Chart, vals)
+	up.Timeout = helmOperationTimeout
+	proposed, err := up.RunWithContext(ctx, name, current.Chart, vals)
 	if err != nil {
 		return nil, err
 	}
@@ -401,8 +559,8 @@ func HelmUpgradePreview(c *Cluster, namespace, name, valuesYAML string) (*HelmDi
 
 // HelmGetRevision returns the detail (manifest/values/notes) of one specific
 // revision — used to diff two history points or preview a rollback target.
-func HelmGetRevision(c *Cluster, namespace, name string, revision int) (*HelmReleaseDetail, error) {
-	cfg, err := newHelmConfig(c, namespace)
+func HelmGetRevision(ctx context.Context, c *Cluster, namespace, name string, revision int) (*HelmReleaseDetail, error) {
+	cfg, err := newHelmConfig(ctx, c, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -438,14 +596,35 @@ type HelmResource struct {
 	Ready      bool   `json:"ready"`  // compatibility for older generated bindings
 }
 
+type HelmReleaseSnapshot struct {
+	Detail    *HelmReleaseDetail `json:"detail"`
+	Resources []HelmResource     `json:"resources"`
+}
+
+func HelmSnapshot(ctx context.Context, c *Cluster, namespace, name string) (*HelmReleaseSnapshot, error) {
+	detail, err := HelmGet(ctx, c, namespace, name)
+	if err != nil {
+		return nil, err
+	}
+	resources, err := helmReleaseResourcesFromDetail(ctx, c, namespace, detail)
+	if err != nil {
+		return nil, err
+	}
+	return &HelmReleaseSnapshot{Detail: detail, Resources: resources}, nil
+}
+
 // HelmReleaseResources parses a release's manifest into the objects it owns and
 // fetches live readiness with bounded concurrency. The manifest's exact GVK is
 // retained so CRDs and cluster-scoped objects drill into the right resource.
 func HelmReleaseResources(ctx context.Context, c *Cluster, namespace, name string) ([]HelmResource, error) {
-	detail, err := HelmGet(c, namespace, name)
+	detail, err := HelmGet(ctx, c, namespace, name)
 	if err != nil {
 		return nil, err
 	}
+	return helmReleaseResourcesFromDetail(ctx, c, namespace, detail)
+}
+
+func helmReleaseResourcesFromDetail(ctx context.Context, c *Cluster, namespace string, detail *HelmReleaseDetail) ([]HelmResource, error) {
 	type target struct {
 		index int
 		kind  APIKind
@@ -570,17 +749,16 @@ func resourceHealth(ctx context.Context, c *Cluster, kind APIKind, ns, name stri
 		if err != nil {
 			return helmHealthError(err)
 		}
-		if p.Status.Phase == "Succeeded" {
+		if p.DeletionTimestamp != nil {
+			return "Terminating", "degraded"
+		}
+		if p.Status.Phase == corev1.PodSucceeded {
 			return string(p.Status.Phase), "healthy"
 		}
-		ready := p.Status.Phase == "Running" && len(p.Status.ContainerStatuses) > 0
-		for _, container := range p.Status.ContainerStatuses {
-			ready = ready && container.Ready
-		}
-		if ready {
+		if podIsReady(p) {
 			return string(p.Status.Phase), "healthy"
 		}
-		if p.Status.Phase == "Pending" {
+		if p.Status.Phase == corev1.PodPending {
 			return string(p.Status.Phase), "pending"
 		}
 		return string(p.Status.Phase), "degraded"
@@ -624,13 +802,14 @@ func helmHealthError(err error) (string, string) {
 }
 
 // HelmTest runs a release's test hooks and reports each hook's outcome.
-func HelmTest(c *Cluster, namespace, name string) (string, error) {
-	cfg, err := newHelmConfig(c, namespace)
+func HelmTest(ctx context.Context, c *Cluster, namespace, name string) (string, error) {
+	cfg, err := newHelmConfig(ctx, c, namespace)
 	if err != nil {
 		return "", err
 	}
 	t := action.NewReleaseTesting(cfg)
 	t.Namespace = namespace
+	t.Timeout = helmOperationTimeout
 	rel, runErr := t.Run(name)
 	if rel == nil {
 		if runErr != nil {

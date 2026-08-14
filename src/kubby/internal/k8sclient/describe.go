@@ -475,19 +475,38 @@ func trimTo(s string, max int) string {
 
 // ListEvents returns the events involving a specific object (like `kubectl describe`).
 func ListEvents(ctx context.Context, c *Cluster, kind, namespace, name string) ([]EventInfo, error) {
-	selector := fields.Set{
+	selectorFields := fields.Set{
 		"involvedObject.name": name,
 		// Events record the plain kind — a group-qualified reference like
 		// "VirtualService.networking.istio.io" would never match.
 		"involvedObject.kind": bareKind(kind),
-	}.AsSelector().String()
-
-	ns := namespace
-	if clusterScopedKinds[kind] {
-		ns = "" // cluster-scoped object events live in the default namespace
 	}
 
-	list, err := c.Clientset.CoreV1().Events(ns).List(ctx, metav1.ListOptions{FieldSelector: selector})
+	ns := namespace
+	if resolved, err := c.ResolveKind(kind); err == nil {
+		if !resolved.Namespaced {
+			ns = "" // cluster-scoped object events live outside a resource namespace
+		}
+		// Name+kind are reusable identities. Add the live UID whenever it can be
+		// read so events from a deleted/recreated object do not leak into the new
+		// drawer. A failed UID lookup degrades to the old selector rather than
+		// hiding events from a token that can list them but not get the object.
+		if c.Dynamic != nil {
+			var obj *unstructured.Unstructured
+			if resolved.Namespaced {
+				obj, err = c.Dynamic.Resource(resolved.GVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+			} else {
+				obj, err = c.Dynamic.Resource(resolved.GVR).Get(ctx, name, metav1.GetOptions{})
+			}
+			if err == nil && obj.GetUID() != "" {
+				selectorFields["involvedObject.uid"] = string(obj.GetUID())
+			}
+		}
+	} else if clusterScopedKinds[bareKind(kind)] {
+		ns = ""
+	}
+
+	list, err := c.Clientset.CoreV1().Events(ns).List(ctx, metav1.ListOptions{FieldSelector: selectorFields.AsSelector().String()})
 	if err != nil {
 		return nil, err
 	}

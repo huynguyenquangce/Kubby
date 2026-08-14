@@ -35,7 +35,9 @@ SizingReport
 ├── Containers  []ContainerSizing   — only those with a finding, worst first
 ├── Advice      []string            — what the aggregate says
 ├── AllocCPU / AllocMem / Nodes     — Ready nodes only
-└── MetricsAvailable, Note
+├── MetricsAvailable / MetricsComplete
+├── MetricsExpected / MetricsObserved / MetricsCoveragePct
+└── Note
 ```
 
 Four independent reads run concurrently: pods, pod metrics, quotas + limit ranges,
@@ -44,10 +46,12 @@ nodes. Only the pod list is fatal; the rest degrade.
 **Allocatable counts Ready nodes only.** A NotReady node's capacity is not
 available, so including it would overstate headroom.
 
-**Metrics are optional.** Without metrics-server the requests/limits half is still
+**Metrics are optional and coverage is explicit.** Without metrics-server the requests/limits half is still
 worth showing — *"nothing declares a memory limit"* needs no measurement — so the
 report sets `MetricsAvailable: false` and a `Note`, and the UI shows `—` rather
-than zeroes.
+than zeroes. A successful metrics List does not mean every container was observed:
+aggregate usage and usage-based advice are suppressed unless observed equals
+expected, and namespace/container rows retain the same coverage ownership.
 
 ## Do not add the three "missing" counts together
 

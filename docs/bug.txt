@@ -386,3 +386,60 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   treatment, focus trap/restore, and tone-aware stackable dialogs. The repository
   form is now a standard-width source section plus a separately aligned optional
   authentication section; destructive confirmation focuses Cancel by default.
+- [2026-08-14] Confirmed actions could mutate a different active cluster, and
+  Helm work could outlive a connection transition. Root cause: confirmation
+  dialogs carried only resource names, most App write methods re-read the active
+  cluster, and Helm REST/actions had no owned cancellation lifecycle. Fix: every
+  UI write now supplies an expected connection ID checked in Go, connection
+  changes cancel open confirms and registered Helm operations, Helm REST requests
+  use cancellable contexts, and actions have finite timeouts.
+- [2026-08-14] Several live-state screens could report false health or false
+  emptiness. Root causes: Pod readiness ignored PodReady/deletion/init semantics,
+  Job health used historical failure counts, traffic guessed from Pod phase rather
+  than EndpointSlice, Istio swallowed discovery/RBAC errors, and Overview rendered
+  failed sections as zero. Fix: shared live Pod/Job contracts, EndpointSlice
+  readiness with explicit fallback, operational warnings for partial Istio and
+  Overview sections, UID-qualified owner/event joins, and terminating-object
+  exclusion throughout current-state aggregates.
+- [2026-08-14] Local persistence and diagnostic evidence had concurrency and
+  confidentiality gaps. Root causes: Helm repository/recent JSON updates were
+  direct read-modify-writes without serialization/atomic durability, overlapping
+  recent connects were not gated, and arbitrary camelCase credential keys in
+  ConfigMaps/custom resources escaped AI redaction. Fix: private synced temporary
+  files plus atomic rename under mutexes, exact connection/result pairing and
+  pending UI gating, and recursive separator/camelCase credential redaction with
+  URI defense-in-depth.
+- [2026-08-14] Drain, CronJob trigger, port-forward and right-sizing could report
+  misleading success. Root causes: eviction errors were discarded, long manual
+  Job names truncated away uniqueness, Service forwarding selected merely Running
+  Pods, and partial metrics were summed as if complete. Fix: sorted partial-drain
+  errors, server-generated Job names, deterministic ready EndpointSlice selection
+  with PodReady fallback, and observed/expected coverage that suppresses incomplete
+  aggregate usage and advice.
+- [2026-08-14] Live refresh and topology/Helm detail paths did avoidable repeated
+  work on slow or large clusters. Root causes: the five-second timer could overlap
+  an unfinished refresh; Traffic serialized four independent Lists, rescanned all
+  namespace Pods per Service and refreshed discovery on every non-Istio load;
+  opening a Helm release fetched it twice; Helm repo downloads held or serialized
+  unrelated work; and Pods crossed the Wails bridge twice. Fix: single-flight live
+  refresh, concurrent Traffic fan-out with a selector index and one-minute negative
+  optional-kind cache, one Helm/Pods snapshot per screen, and repository downloads
+  outside the configuration lock with bounded Update concurrency. Large-table DOM
+  virtualization and lazy editor/terminal loading remain measured follow-up work.
+- [2026-08-14] Final concurrency review found four ownership/publication gaps.
+  Root causes: Create/Import re-resolved the active cluster after dispatch; Istio
+  gateway health counted PodReady without its fronting Service's EndpointSlice;
+  Helm chart HTTP acquisition lacked the operation context; and concurrent repo
+  updates wrote live Helm cache filenames directly. Fix: connection-owned YAML
+  apply, end-to-end EndpointSlice gateway readiness, context-aware authenticated
+  chart index/archive requests, and validated per-download temp caches atomically
+  published under a short repository lock.
+- [2026-08-14] Overview looked like a promotional telemetry page and obscured the
+  operational evidence needed to decide what to inspect next. Root causes: an
+  oversized dark hero, a derived health percentage with no actionable meaning,
+  repeated KPI tiles, and card-heavy node/top-consumer layouts gave decoration and
+  healthy totals the same weight as active failures. Fix: a compact semantic health
+  banner with ready/total facts, four comparable capacity/state cards, issue-first
+  evidence, compact CPU-ranked consumers, scan-friendly node rows, responsive
+  stacking, and inspected light/dark Playwright baselines. Deliberately disabled
+  scheduling remains visible without falsely alarming a Ready control-plane node.

@@ -65,10 +65,12 @@ test('terminal uses a PTY emulator instead of a line-mode command input', () => 
 test('overview uses bundled typography and dashboard-specific table contracts', () => {
     assert.match(mainJS, /@fontsource-variable\/inter\/wght\.css/);
     const overview = indexHTML.match(/<section id="view-overview"[\s\S]*?<section id="view-nodes"/)?.[0] ?? '';
-    assert.match(overview, /class="overview-pulse"/);
+    assert.match(overview, /class="overview-health-banner"/);
+    assert.match(overview, /class="overview-metrics"/);
     assert.match(overview, /class="overview-section-head"/);
+    assert.doesNotMatch(overview, /Cluster pulse|cluster-health-score/);
     const tables = [...overview.matchAll(/<table([^>]*)>/g)];
-    assert.ok(tables.length >= 3);
+    assert.ok(tables.length >= 2);
     for (const table of tables) assert.match(table[1], /class="[^"]*plain[^"]*"/);
 });
 
@@ -94,6 +96,24 @@ test('overview avoids duplicate node usage and exposes a one-call cluster struct
     assert.match(clear, /resetStructureInspector\(\)/);
 });
 
+test('pods load through one snapshot binding', () => {
+    const loader = mainJS.match(/function loadPods\(scope\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    assert.match(loader, /return PodsSnapshot\(scope\.namespace\)/);
+    assert.doesNotMatch(loader, /Promise\.all|\bListPods\(|\bPodMetricsList\(/);
+});
+
+test('live refresh is single-flight', () => {
+    assert.match(mainJS, /let liveRefreshPending = false/);
+    assert.match(mainJS, /if \(liveRefreshPending\) return/);
+    assert.match(mainJS, /\.finally\(\(\) => \{ liveRefreshPending = false; \}\)/);
+});
+
+test('helm release modal uses one detail and resources snapshot', () => {
+    const modal = mainJS.slice(mainJS.indexOf('function openHelmDetailModal'), mainJS.indexOf('function loadHelmHistory'));
+    assert.match(modal, /HelmSnapshot\(ref\.namespace, ref\.name\)/);
+    assert.doesNotMatch(modal, /Promise\.all|\bHelmGet\(|\bHelmReleaseResources\(/);
+});
+
 test('live logs use owned batches and a bounded buffer', () => {
     assert.match(mainJS, /EventsOn\('loglines'/);
     assert.match(mainJS, /new LineRingBuffer\(5000\)/);
@@ -113,13 +133,31 @@ test('drawer lazily loads tabs and shares one Pod container request', () => {
     assert.equal([...mainJS.matchAll(/\bPodContainers\(/g)].length, 1);
 });
 
-test('previously direct cluster writes cross the confirmation boundary', () => {
-    for (const binding of ['SetDeploymentPaused', 'SetNodeSchedulable', 'UpdateYAML', 'HelmTest']) {
+test('pasted kubeconfig uses the shared YAML editor handle', () => {
+	assert.match(indexHTML, /id="paste-area"[^>]*class="[^"]*yaml-host/);
+	assert.doesNotMatch(indexHTML, /<textarea[^>]*id="paste-area"/);
+	assert.match(mainJS, /const pasteEditor = createYamlEditor\(\$\('paste-area'\)/);
+	assert.match(mainJS, /pasteEditor\.getValue\(\)/);
+});
+
+test('cluster writes cross confirmation and connection-ownership boundaries', () => {
+    for (const binding of ['SetDeploymentPausedOwned', 'SetNodeSchedulableOwned', 'UpdateYAML', 'HelmTestOwned']) {
         const call = mainJS.lastIndexOf(`${binding}(`);
         assert.notEqual(call, -1, `${binding} should remain wired`);
         const nearby = mainJS.slice(Math.max(0, call - 1600), call + 500);
         assert.match(nearby, /confirmedAction\(/, `${binding} must stay behind explicit confirmation`);
     }
+	assert.match(mainJS, /connectionOwnershipChanged\(\)[\s\S]*closeDialog\(false\)/);
+	for (const binding of ['DeleteResourceOwned', 'RestartDeploymentOwned', 'DrainNodeOwned', 'RunCronJobNowOwned', 'HelmUninstallOwned']) {
+		assert.match(mainJS, new RegExp(`${binding}\\(connectionID|${binding}\\(cluster`));
+	}
+});
+
+test('create and import YAML apply to the modal-owning connection only', () => {
+    const modal = mainJS.slice(mainJS.indexOf('function openYamlApplyModal'), mainJS.indexOf('function applyReport'));
+    assert.match(modal, /const connectionID = \$\('cluster-select'\)\.value/);
+    assert.match(modal, /ApplyYAMLOwned\(connectionID, v\)/);
+    assert.doesNotMatch(modal, /\bApplyYAML\(/);
 });
 
 test('Helm install requires the digest from an exact successful preview', () => {
