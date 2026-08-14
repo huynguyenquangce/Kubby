@@ -11,14 +11,16 @@ import (
 
 // ChartSearchResult is one chart returned from an Artifact Hub search.
 type ChartSearchResult struct {
-	Name        string `json:"name"`
-	NormName    string `json:"normalizedName"`
-	Repo        string `json:"repo"`
-	RepoURL     string `json:"repoURL"`
-	Version     string `json:"version"`
-	AppVersion  string `json:"appVersion"`
-	Description string `json:"description"`
-	Stars       int    `json:"stars"`
+	Name        string   `json:"name"`
+	NormName    string   `json:"normalizedName"`
+	Repo        string   `json:"repo"`
+	RepoURL     string   `json:"repoURL"`
+	SourceID    string   `json:"sourceID"` // configured repo name; empty for Artifact Hub/direct URLs
+	Version     string   `json:"version"`
+	AppVersion  string   `json:"appVersion"`
+	Description string   `json:"description"`
+	Stars       int      `json:"stars"`
+	Versions    []string `json:"versions,omitempty"`
 }
 
 // SearchCharts queries Artifact Hub for Helm charts matching the query.

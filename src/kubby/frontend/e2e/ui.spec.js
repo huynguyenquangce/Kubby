@@ -132,7 +132,13 @@ test('FR-31/FR-38: Settings modal closes with Escape and remains viewport-bounde
     await expect(page.locator('#modal')).toBeVisible();
     await expect(page.locator('#modal')).toHaveAttribute('aria-labelledby', 'modal-title');
     await expect(page.locator('#modal-title')).toHaveText('Settings');
+    await expect(page.locator('#modal-eyebrow')).toHaveText('Application');
     await expect(page.locator('#about-version')).toContainText('0.1.0-test');
+    await expect(page.locator('#ai-provider')).toBeFocused();
+    const providerBox = await page.locator('#ai-provider').boundingBox();
+    const modelBox = await page.locator('#ai-model').boundingBox();
+    expect(Math.abs(providerBox.x - modelBox.x)).toBeLessThanOrEqual(2);
+    expect(modelBox.y).toBeGreaterThan(providerBox.y);
     const bounds = await page.locator('#modal').evaluate((element) => {
         const rect = element.getBoundingClientRect();
         return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: innerWidth, height: innerHeight };
@@ -157,5 +163,54 @@ test('FR-5: every built-in navigation target renders without a browser exception
         await expect(page.locator(`#view-${target}`)).toBeVisible();
         await expect(page.locator('#dash-error')).toBeHidden();
     }
+    expect(pageErrors).toEqual([]);
+});
+
+test('FR-23/24/25: Helm workspace keeps release, catalog, and repository context together', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1180, height: 780 });
+    await connectDashboard(page);
+    await page.locator('.nav-item[data-view="helm"]').click();
+
+    await expect(page.locator('#helm-total')).toHaveText('1');
+    await expect(page.locator('#helm-deployed')).toHaveText('1');
+    await expect(page.locator('#helm-body .helm-release-row')).toHaveCount(1);
+    await page.locator('#helm-body .helm-open-release').click();
+    await expect(page.locator('#modal-title')).toHaveText('Release · checkout');
+    await expect(page.locator('#helm-upgrade-release')).toBeVisible();
+    await expect(page.locator('#modal-cancel')).toBeHidden();
+    await page.locator('#helm-uninstall-release').click();
+    await expect(page.locator('#dialog')).toHaveClass(/dialog-danger/);
+    await expect(page.locator('#dialog-cancel')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#modal')).toBeVisible();
+    await page.locator('.helm-tab[data-htab="history"]').click();
+    await expect(page.locator('#helm-history')).toContainText('Revision 4');
+    await page.keyboard.press('Escape');
+
+    await page.locator('.helm-workspace-tab[data-helm-section="catalog"]').click();
+    await page.locator('#chart-query').fill('nginx');
+    await page.locator('#chart-search-go').click();
+    await expect(page.locator('#chart-results .chart-item')).toContainText('nginx');
+    await page.locator('#chart-results .chart-item .btn-primary').click();
+    await expect(page.locator('#modal-title')).toHaveText('Install nginx');
+    await expect(page.locator('.helm-namespace-note')).toContainText('namespace does not exist');
+    await page.keyboard.press('Escape');
+
+    await page.locator('.helm-workspace-tab[data-helm-section="repositories"]').click();
+    await expect(page.locator('#helm-panel-repositories')).toContainText('Shared with the Helm CLI');
+    await expect(page.locator('#helmrepos-body')).toContainText('Private');
+    await page.locator('#btn-repo-add').click();
+    await expect(page.locator('#modal-title')).toHaveText('Add Helm repository');
+    await expect(page.locator('#modal-description')).toContainText('user-level Helm configuration');
+    const repoModal = await page.locator('#modal').boundingBox();
+    expect(repoModal.width).toBeLessThanOrEqual(700);
+    const userBox = await page.locator('#repo-user').boundingBox();
+    const passBox = await page.locator('#repo-pass').boundingBox();
+    expect(Math.abs(userBox.y - passBox.y)).toBeLessThanOrEqual(2);
+    await page.keyboard.press('Escape');
+    await page.locator('#helmrepos-body .repo-browse').click();
+    await expect(page.locator('#helm-catalog-source')).toHaveValue('repo:team-charts');
+    await expect(page.locator('#chart-results')).toContainText('checkout');
     expect(pageErrors).toEqual([]);
 });

@@ -195,10 +195,12 @@ export namespace k8sclient {
 	    normalizedName: string;
 	    repo: string;
 	    repoURL: string;
+	    sourceID: string;
 	    version: string;
 	    appVersion: string;
 	    description: string;
 	    stars: number;
+	    versions?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ChartSearchResult(source);
@@ -210,10 +212,12 @@ export namespace k8sclient {
 	        this.normalizedName = source["normalizedName"];
 	        this.repo = source["repo"];
 	        this.repoURL = source["repoURL"];
+	        this.sourceID = source["sourceID"];
 	        this.version = source["version"];
 	        this.appVersion = source["appVersion"];
 	        this.description = source["description"];
 	        this.stars = source["stars"];
+	        this.versions = source["versions"];
 	    }
 	}
 	export class ClusterRoleBindingInfo {
@@ -840,6 +844,8 @@ export namespace k8sclient {
 	    current: string;
 	    proposed: string;
 	    chartDigest: string;
+	    releaseRevision: number;
+	    valuesDigest: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new HelmDiff(source);
@@ -850,6 +856,8 @@ export namespace k8sclient {
 	        this.current = source["current"];
 	        this.proposed = source["proposed"];
 	        this.chartDigest = source["chartDigest"];
+	        this.releaseRevision = source["releaseRevision"];
+	        this.valuesDigest = source["valuesDigest"];
 	    }
 	}
 	export class HelmReleaseDetail {
@@ -888,6 +896,7 @@ export namespace k8sclient {
 	    updated: string;
 	    secretName: string;
 	    isError: boolean;
+	    isPending: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new HelmReleaseInfo(source);
@@ -902,11 +911,13 @@ export namespace k8sclient {
 	        this.updated = source["updated"];
 	        this.secretName = source["secretName"];
 	        this.isError = source["isError"];
+	        this.isPending = source["isPending"];
 	    }
 	}
 	export class HelmRepo {
 	    name: string;
 	    url: string;
+	    authenticated: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new HelmRepo(source);
@@ -916,13 +927,17 @@ export namespace k8sclient {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.url = source["url"];
+	        this.authenticated = source["authenticated"];
 	    }
 	}
 	export class HelmResource {
+	    apiVersion: string;
 	    kind: string;
+	    refKind: string;
 	    name: string;
 	    namespace: string;
 	    status: string;
+	    health: string;
 	    ready: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -931,10 +946,13 @@ export namespace k8sclient {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.apiVersion = source["apiVersion"];
 	        this.kind = source["kind"];
+	        this.refKind = source["refKind"];
 	        this.name = source["name"];
 	        this.namespace = source["namespace"];
 	        this.status = source["status"];
+	        this.health = source["health"];
 	        this.ready = source["ready"];
 	    }
 	}

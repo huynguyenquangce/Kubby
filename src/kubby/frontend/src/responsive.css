@@ -188,6 +188,24 @@
         flex-wrap: wrap;
     }
 
+    .modal-form-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .modal-form-grid .field-full {
+        grid-column: auto;
+    }
+
+    .modal-foot-secondary,
+    .modal-foot-actions {
+        width: 100%;
+    }
+
+    .modal-foot-actions {
+        justify-content: flex-end;
+        margin-left: 0;
+    }
+
     .detail-row {
         grid-template-columns: minmax(90px, 0.4fr) minmax(0, 1fr);
     }
@@ -195,6 +213,29 @@
     .modal {
         width: calc(100vw - 1rem);
         max-height: calc(100vh - 1rem);
+        border-radius: 14px;
+    }
+
+    .dialog {
+        width: calc(100vw - 1rem);
+    }
+
+    .dialog-message {
+        padding-left: 1.35rem;
+    }
+}
+
+@media (max-width: 420px) {
+    .modal-foot-actions .btn {
+        flex: 1 1 0;
+    }
+
+    .modal-context-card {
+        flex-direction: column;
+    }
+
+    .dialog-foot .btn {
+        flex: 1 1 0;
     }
 }
 
@@ -223,6 +264,10 @@
 
     .stat-cards {
         grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+    }
+
+    .helm-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
@@ -268,6 +313,32 @@
     .flow-arrow {
         display: none;
     }
+
+    .helm-catalog-search {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .helm-catalog-search .btn {
+        width: 100%;
+    }
+
+    .helm-panel-toolbar,
+    .helm-release-hero {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .helm-inline-search {
+        width: 100%;
+    }
+
+    .helm-release-actions {
+        justify-content: flex-start;
+    }
+
+    .chart-item {
+        align-items: flex-start;
+    }
 }
 
 @container workspace (max-width: 520px) {
@@ -284,6 +355,32 @@
     .stat-card,
     .structure-stat {
         border-radius: 10px;
+    }
+
+    .helm-summary {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .helm-workspace-tabs {
+        width: 100%;
+        overflow-x: auto;
+    }
+
+    .helm-workspace-tab {
+        flex: 1 0 auto;
+    }
+
+    .helm-local-note,
+    .helm-res-row,
+    .rollout-row,
+    .chart-item {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .rollout-actions {
+        width: 100%;
+        flex-wrap: wrap;
     }
 }
 

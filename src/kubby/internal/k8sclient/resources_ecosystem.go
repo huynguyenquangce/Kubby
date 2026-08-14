@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -11,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 )
 
 var crdGVR = schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}
@@ -63,25 +65,57 @@ type HelmReleaseInfo struct {
 	Updated    string `json:"updated"`
 	SecretName string `json:"secretName"` // the backing Secret (for drill-in)
 	IsError    bool   `json:"isError"`
+	IsPending  bool   `json:"isPending"`
 }
 
-// ListHelmReleases lists Helm 3 releases, which are stored as Secrets of type
-// helm.sh/release.v1 with owner=helm labels.
-func ListHelmReleases(ctx context.Context, client kubernetes.Interface, namespace string) ([]HelmReleaseInfo, error) {
-	list, err := client.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{LabelSelector: "owner=helm"})
+// ListHelmReleases returns one current row per Helm 3 release. Helm stores every
+// revision as a separate Secret, so rendering the raw list would duplicate a
+// release after each upgrade and inflate the sidebar count. Metadata is enough:
+// the labels identify the release, revision and status without transferring the
+// compressed chart payload kept in Secret.data.
+func ListHelmReleases(ctx context.Context, client metadata.Interface, namespace string) ([]HelmReleaseInfo, error) {
+	list, err := client.Resource(schema.GroupVersionResource{Version: "v1", Resource: "secrets"}).Namespace(namespace).
+		List(ctx, metav1.ListOptions{LabelSelector: "owner=helm"})
 	if err != nil {
 		return nil, err
 	}
-	out := make([]HelmReleaseInfo, 0, len(list.Items))
+	latest := make(map[string]metav1.PartialObjectMetadata, len(list.Items))
 	for _, s := range list.Items {
-		status := s.Labels["status"]
+		if s.DeletionTimestamp != nil || s.Labels["name"] == "" {
+			continue
+		}
+		key := s.Namespace + "\x00" + s.Labels["name"]
+		current, ok := latest[key]
+		if !ok || helmRevisionAfter(s, current) {
+			latest[key] = s
+		}
+	}
+	out := make([]HelmReleaseInfo, 0, len(latest))
+	for _, s := range latest {
+		status := strings.ToLower(s.Labels["status"])
+		pending := strings.HasPrefix(status, "pending-") || status == "uninstalling"
 		out = append(out, HelmReleaseInfo{
 			Namespace: s.Namespace, Name: s.Labels["name"], Revision: s.Labels["version"],
 			Status: status, Updated: age(s.CreationTimestamp), SecretName: s.Name,
-			IsError: status == "failed" || status == "pending-rollback",
+			IsError: status == "failed", IsPending: pending,
 		})
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Namespace != out[j].Namespace {
+			return out[i].Namespace < out[j].Namespace
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
+}
+
+func helmRevisionAfter(candidate, current metav1.PartialObjectMetadata) bool {
+	candidateRevision, candidateErr := strconv.Atoi(candidate.Labels["version"])
+	currentRevision, currentErr := strconv.Atoi(current.Labels["version"])
+	if candidateErr == nil && currentErr == nil && candidateRevision != currentRevision {
+		return candidateRevision > currentRevision
+	}
+	return candidate.CreationTimestamp.After(current.CreationTimestamp.Time)
 }
 
 type ResourceQuotaInfo struct {

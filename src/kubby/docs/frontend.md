@@ -199,6 +199,26 @@ table scrolls and the page does not. Combine that with `table-layout: fixed` and
 percentage widths on the `<th>`s: without it one long cell — a findings string, a
 long pod name — widens the whole table.
 
+## Helm workspace
+
+Helm is one product area, not two sidebar destinations. `#view-helm` owns three
+ARIA tabs: **Releases**, **Catalog**, and **Repositories**. Releases are scoped by
+the cluster and namespace controls; repository configuration is local to the
+machine and says so in the page. Browsing a repository switches to Catalog with
+that source selected instead of opening a second chart-search experience.
+
+The release list is a task table, not a generic Kubernetes resource list, and
+therefore uses `class="plain"`. It shows only the latest revision and separates
+deployed, pending, and failed states. Release detail owns Resources, Values,
+Manifest, Notes, and History in one modal so an operation does not discard the
+user's context. Install and Upgrade are guided two-stage flows: edit inputs, then
+preview the exact operation. Their primary action stays disabled until the
+backend returns the corresponding preview ownership data.
+
+Keep tab buttons semantic (`role="tab"`, `aria-selected`, roving `tabIndex`) and
+support Left/Right arrows. At narrow widths, cards and action groups stack while
+the tab strip scrolls inside itself; the page must not gain a horizontal scrollbar.
+
 ## The YAML editor (`src/editor.js`)
 
 Every place you type a manifest — the drawer's YAML tab, Create, Import YAML, and
@@ -287,6 +307,27 @@ README. Keep the mark vector-based in the UI; `build/appicon.png` and
 `build/windows/icon.ico` are generated raster derivatives for Wails packaging.
 Do not replace the mark with the concept-board raster or the old Wails logo.
 
+## Modal system
+
+Every application modal reuses the single `#modal` shell. `openModal` supplies a
+short eyebrow, task title, optional description, one of the `compact`, `standard`,
+`editor`, or `wide` sizes, and explicit footer actions. Read-only detail modals
+hide Cancel and use one quiet Close action; mutating forms keep Cancel plus one
+clear primary verb. The contextual secondary action lives on the left side of the
+footer so Preview is not mistaken for the final write.
+
+Modal content uses `.modal-context-card`, `.modal-form-grid`,
+`.modal-section-title`, and `.modal-inline-note`. Do not return to a flex row of
+unbounded labels: helper text changes label height and makes adjacent inputs look
+misaligned. Forms collapse to one column below 620 px, all sizes remain viewport
+bounded, and body scrolling never moves the header or footer.
+
+`openModal` and the stackable dialog restore prior focus when closed and trap Tab
+inside the active overlay. A destructive dialog focuses Cancel, not the destructive
+action. Enter on a focused button must retain that button's own meaning; it must not
+fall through to generic modal submit. Keep alert/error/confirm tone in the shared
+dialog shell so light/dark and accessibility behavior cannot diverge by feature.
+
 ## Chrome
 
 - Sidebar groups are an **accordion**, collapsed state persisted in `localStorage`.
@@ -310,8 +351,10 @@ Do not replace the mark with the concept-board raster or the old Wails logo.
 The frontend side of [performance.md](performance.md):
 
 - **One bound call per screen**, not one per kind.
-- Live logs arrive as owned batches and enter a bounded ring buffer; one line must
-  never mean one bridge call plus one full repaint.
+- Live logs arrive as owned, rate-limited batches and enter a bounded ring
+  buffer. The unfiltered follow view appends text chunks and trims old chunks;
+  one line must never mean one bridge call or one full-history repaint. Drawer
+  tabs load lazily, and Logs/Terminal share their Pod container lookup.
 - Line diffs use the linear-memory Myers/bisect module. Its work-budget fallback
   is intentionally a non-minimal delete/add block; never restore an `n*m` matrix.
 - **Ownership scopes** from `request-scope.js` on any connection, view, namespace,

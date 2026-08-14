@@ -115,9 +115,9 @@ Requirements are grouped by capability. **Status** legend: ✅ implemented · �
 
 | ID | Requirement | Status | Notes |
 |---|---|---|---|
-| FR-23 | Manage installed releases. | ✅ | List; view **Resources + live health**, **Values / Manifest / Notes**; **History** with diff-vs-current and **rollback**; **Upgrade values** with a dry-run **preview diff**; **run tests**; **uninstall**. |
-| FR-24 | Discover and install charts. | ✅ | Search **Artifact Hub**; install with a version dropdown, real default `values.yaml`, README, maintainer/home links, and a dry-run preview. |
-| FR-25 | Manage chart repositories. | ✅ | Add / remove / update repos (writes the user's `repositories.yaml`); browse and install charts from a repo; repository URLs are clickable. |
+| FR-23 | Manage installed releases. | ✅ | The Helm workspace lists only each release's latest revision and separates deployed, pending and failed status. Release detail owns **Resources + live health**, **Values / Manifest / Notes**, and **History** with diff-vs-current and **rollback**; **Upgrade values** requires an exact revision-and-values-bound dry-run preview; **run tests** and **uninstall** require confirmation. |
+| FR-24 | Discover and install charts. | ✅ | The workspace Catalog searches **Artifact Hub** or a configured repository; install provides a version dropdown, real default `values.yaml`, README/maintainer/home metadata where available, and an exact chart-digest-bound dry-run preview. A successful install selects its namespace and opens the release. |
+| FR-25 | Manage chart repositories. | ✅ | The workspace Repositories tab identifies its **Local machine** scope; add / remove / update repos writes the user's `repositories.yaml`; browse hands off to Catalog. Private-repository credentials remain backend-side and are reused for defaults, preview and install. Repository URLs are clickable. |
 
 Helm is implemented **in-process** via the Helm Go SDK — no `helm` binary and no Tiller. Search/install/browse require internet access.
 
@@ -131,8 +131,8 @@ Helm is implemented **in-process** via the Helm Go SDK — no `helm` binary and 
 | FR-33 | **Custom resources are first-class sections.** Any kind the cluster's CRDs define gets its own sidebar entry, list view and drawer. | ✅ | A **Custom Resources** group is built from the CRD list at connect time (Istio, cert-manager, Argo, Gateway API…), each with a generic Namespace / Name / Status / Age table drilling into the usual Details / YAML / Events / Delete drawer, and each findable in the command palette. Hidden entirely on a cluster with no CRDs. Deliberately no count badges — that would be one list request per CRD on every refresh. Capped at 60 kinds, with the overflow stated rather than hidden. |
 | FR-29 | Collapsible sidebar groups, consistent line-icon set, and a polished theme with light/dark modes. | ✅ | Accordion groups (state persisted); SVG icons; **Nord** color theme. |
 | FR-30 | Live auto-refresh mode. | ✅ | Refreshes the current view every 5 s; pauses while a selection/drawer/modal/palette is open. |
-| FR-31 | Native browser popups replaced by in-app dialogs. | ✅ | Stackable, theme-aware confirm/alert dialogs. |
-| FR-38 | The complete desktop workflow remains usable under browser/WebView zoom and narrow windows. | ✅ | The shell retains navigation through an off-canvas menu when the rail/sidebar no longer fit; top-bar actions remain reachable; dashboard, topology, drawer and modal layouts adapt to the remaining workspace rather than the outer window width. Supported verification matrix: 80–200% zoom on common 1366×768 and 1920×1080 displays. |
+| FR-31 | Native browser popups replaced by in-app dialogs. | ✅ | One theme-aware modal system provides task hierarchy, fixed header/footer, compact/standard/editor/wide sizes, aligned responsive forms, inline errors, focus restoration and focus trapping. Stackable confirm/alert dialogs use explicit success/error/danger tone; destructive confirmation initially focuses Cancel. |
+| FR-38 | The complete desktop workflow remains usable under browser/WebView zoom and narrow windows. | ✅ | The shell retains navigation through an off-canvas menu when the rail/sidebar no longer fit; top-bar actions remain reachable; dashboard, topology, drawer and every modal size adapt to the remaining workspace rather than the outer window width. Modal grids collapse to one column while actions remain reachable. Supported verification matrix: 80–200% zoom on common 1366×768 and 1920×1080 displays. |
 
 ### 7.7 Tooling
 

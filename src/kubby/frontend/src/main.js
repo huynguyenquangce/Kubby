@@ -20,7 +20,7 @@ import {
 } from './port-forward-state.js';
 import { createRequestScopes } from './request-scope.js';
 import { createSerialWriter, validTerminalSize } from './terminal-io.js';
-import { createFrameScheduler, LineRingBuffer } from './log-buffer.js';
+import { createFrameScheduler, IncrementalLogView, LineRingBuffer } from './log-buffer.js';
 import { lineDiff } from './line-diff.js';
 import { confirmedAction, summarizeLineChanges } from './confirmed-action.js';
 
@@ -161,8 +161,7 @@ const PAGE_TITLES = {
     clusterroles: 'ClusterRoles',
     clusterrolebindings: 'ClusterRoleBindings',
     crds: 'CustomResourceDefinitions',
-    helm: 'Helm Releases',
-    helmrepos: 'Helm Repositories',
+    helm: 'Helm',
     resourcequotas: 'ResourceQuotas',
     limitranges: 'LimitRanges',
 };
@@ -193,8 +192,7 @@ const PAGE_SUBTITLES = {
     clusterroles: 'Inspect cluster-wide access rules.',
     clusterrolebindings: 'See which subjects receive cluster-wide permissions.',
     crds: 'Browse the custom APIs installed in this cluster.',
-    helm: 'Manage releases, values, history, tests, and upgrades.',
-    helmrepos: 'Manage chart repositories and browse available packages.',
+    helm: 'Manage releases, discover charts, and configure repositories in one workspace.',
     resourcequotas: 'Review namespace resource limits and current usage.',
     limitranges: 'Inspect default and enforced container resource policies.',
 };
@@ -238,6 +236,7 @@ const $ = (id) => document.getElementById(id);
 let source = { mode: 'path', path: '', content: '' };
 let currentView = 'overview';
 let currentNamespace = '';
+let helmSection = 'releases';
 const requestScopes = createRequestScopes();
 
 function isCurrentViewRequest(scope) {
@@ -671,7 +670,7 @@ function selectView(view) {
         });
     }
     // The instant filter applies to table views only (not the dashboard-style views).
-    const hasTable = view !== 'overview' && view !== 'structure' && view !== 'traffic' && view !== 'sizing';
+    const hasTable = view !== 'overview' && view !== 'structure' && view !== 'traffic' && view !== 'sizing' && view !== 'helm';
     $('view-search').hidden = !hasTable;
     $('view-filter').value = '';
     updateNsScope();
@@ -689,7 +688,9 @@ function updateRailActive(view) {
 
 function updateNsScope() {
     const scopeEl = $('ns-scope');
-    scopeEl.textContent = NAMESPACED_VIEWS.has(currentView)
+    scopeEl.textContent = currentView === 'helm' && helmSection === 'repositories'
+        ? 'Local machine'
+        : NAMESPACED_VIEWS.has(currentView)
         ? (currentNamespace === '' ? 'All namespaces' : `Namespace: ${currentNamespace}`)
         : '';
 }
@@ -789,27 +790,97 @@ function doRefresh(scope) {
                     <td>${(l.types || '').split(',').map((t) => t.trim()).filter(Boolean).map((t) => `<span class="chip">${esc(t)}</span>`).join('') || '<span class="dim">—</span>'}</td>
                     <td>${esc(l.age)}</td>`);
         case 'helm': return loadHelm(scope);
-        case 'helmrepos': return loadHelmRepos(scope);
         case 'traffic': return loadTraffic(scope);
     }
 }
 
-// Helm releases are backed by Secrets — rows drill into the underlying Secret.
 function loadHelm(scope) {
+    renderHelmSection();
+    if (helmSection === 'catalog') return loadHelmCatalogSources(scope);
+    if (helmSection === 'repositories') return loadHelmRepos(scope);
+    return loadHelmReleases(scope);
+}
+
+function setHelmSection(section, { refresh = true } = {}) {
+    if (!['releases', 'catalog', 'repositories'].includes(section)) return;
+    helmSection = section;
+    renderHelmSection();
+    updateNsScope();
+    if (refresh && currentView === 'helm') refreshCurrentView();
+}
+
+function renderHelmSection() {
+    document.querySelectorAll('.helm-workspace-tab').forEach((tab) => {
+        const active = tab.dataset.helmSection === helmSection;
+        tab.classList.toggle('active', active);
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+    });
+    document.querySelectorAll('[data-helm-panel]').forEach((panel) => {
+        panel.hidden = panel.dataset.helmPanel !== helmSection;
+    });
+}
+
+function helmStatusBadge(release) {
+    const status = String(release.status || 'unknown').toLowerCase();
+    const tone = release.isError || status === 'failed' ? 'bad'
+        : release.isPending || status.startsWith('pending-') || status === 'uninstalling' ? 'warn'
+        : status === 'deployed' ? 'ok' : 'neutral';
+    return `<span class="helm-status helm-status-${tone}"><i></i>${esc(status)}</span>`;
+}
+
+// The backend returns one latest revision per release; history belongs inside
+// release detail rather than appearing as duplicate rows here.
+function loadHelmReleases(scope) {
+    $('helm-loading').hidden = false;
+    $('helm-empty').hidden = true;
     return ListHelmReleases(scope.namespace)
         .then((rels) => {
             if (!isCurrentViewRequest(scope)) return;
             const body = $('helm-body');
             body.innerHTML = '';
-            $('helm-empty').hidden = (rels?.length ?? 0) > 0;
-            for (const r of rels ?? []) {
-                body.appendChild(row(
-                    `<td>${esc(r.namespace)}</td><td>${esc(r.name)}</td><td>${esc(r.revision)}</td><td>${badge(r.status, !r.isError)}</td><td>${esc(r.updated)}</td>`,
-                    { isError: r.isError, ref: { kind: 'HelmRelease', namespace: r.namespace, name: r.name, secretName: r.secretName } },
-                ));
+            $('helm-loading').hidden = true;
+            const releases = rels ?? [];
+            $('helm-empty').hidden = releases.length > 0;
+            $('helm-total').textContent = String(releases.length);
+            $('helm-deployed').textContent = String(releases.filter((r) => String(r.status).toLowerCase() === 'deployed').length);
+            $('helm-pending').textContent = String(releases.filter((r) => r.isPending).length);
+            $('helm-failed').textContent = String(releases.filter((r) => r.isError).length);
+            for (const r of releases) {
+                const ref = { kind: 'HelmRelease', namespace: r.namespace, name: r.name, secretName: r.secretName };
+                const tr = document.createElement('tr');
+                tr.className = 'clickable helm-release-row';
+                if (r.isError) tr.classList.add('error-row');
+                tr.dataset.filter = `${r.name} ${r.namespace} ${r.revision} ${r.status}`.toLowerCase();
+                tr.innerHTML = `<td><button class="helm-release-link" type="button">${esc(r.name)}</button></td>
+                    <td>${esc(r.namespace)}</td><td class="mono">${esc(r.revision)}</td><td>${helmStatusBadge(r)}</td>
+                    <td>${esc(r.updated)}</td><td class="col-actions"><button class="btn btn-secondary btn-sm helm-open-release" type="button">Open</button>${actionsBtn()}</td>`;
+                tr.addEventListener('click', (event) => {
+                    if (!event.target.closest('button')) openHelmDetailModal(ref);
+                });
+                tr.querySelector('.helm-release-link').addEventListener('click', () => openHelmDetailModal(ref));
+                tr.querySelector('.helm-open-release').addEventListener('click', () => openHelmDetailModal(ref));
+                wireRowActions(tr, ref);
+                body.appendChild(tr);
             }
+            filterHelmReleases();
         })
-        .catch((err) => viewError(scope, err));
+        .catch((err) => {
+            if (isCurrentViewRequest(scope)) $('helm-loading').hidden = true;
+            viewError(scope, err);
+        });
+}
+
+function filterHelmReleases() {
+    const term = $('helm-release-filter').value.trim().toLowerCase();
+    const rows = [...$('helm-body').querySelectorAll('tr')];
+    let shown = 0;
+    for (const tr of rows) {
+        const match = !term || tr.dataset.filter.includes(term);
+        tr.hidden = !match;
+        if (match) shown++;
+    }
+    $('helm-release-count').textContent = term ? `${shown} / ${rows.length}` : String(rows.length);
 }
 
 // Kinds whose backend List method takes no namespace argument.
@@ -1269,6 +1340,9 @@ function loadSecrets(scope) {
 
 let drawerRef = null; // { kind, namespace, name, isPod }
 let activeDrawerScope = null;
+let drawerLoadedTabs = new Set();
+let drawerContainerOwnerKey = '';
+let drawerContainerPromise = null;
 
 function isCurrentDrawerRequest(scope) {
     return !!drawerRef
@@ -1284,6 +1358,7 @@ function openDrawer(ref) {
     drawerRef = ref;
     activeDrawerScope = requestScopes.openDrawer(ref);
     const scope = activeDrawerScope;
+    resetDrawerLoads(scope);
     const isDeployment = ref.kind === 'Deployment';
     const canForward = !!ref.isPod || ref.kind === 'Service';
     // A custom resource is referenced kubectl-style as "Kind.group" so the
@@ -1310,10 +1385,33 @@ function openDrawer(ref) {
 
     resetAIPanel(ref);
     setDrawerTab(ref.tab ?? 'details');
-    loadDetails(scope);
-    loadYAML(scope);
-    if (ref.isPod) { prepareLogs(scope); prepareTerminal(scope); }
-    if (canForward) prepareForward();
+}
+
+function resetDrawerLoads(scope) {
+    drawerLoadedTabs = new Set();
+    drawerContainerOwnerKey = requestScopes.drawerOwnerKey(scope);
+    drawerContainerPromise = null;
+}
+
+function drawerPodContainers(scope) {
+    const ownerKey = requestScopes.drawerOwnerKey(scope);
+    if (ownerKey !== drawerContainerOwnerKey) return Promise.reject(new Error('The Pod drawer changed.'));
+    if (!drawerContainerPromise) {
+        const ref = scope.ref;
+        drawerContainerPromise = PodContainers(ref.namespace, ref.name);
+    }
+    return drawerContainerPromise;
+}
+
+function ensureDrawerTabLoaded(name) {
+    const scope = activeDrawerScope;
+    if (!scope || !isCurrentDrawerRequest(scope) || drawerLoadedTabs.has(name)) return;
+    drawerLoadedTabs.add(name);
+    if (name === 'details') loadDetails(scope);
+    else if (name === 'yaml') loadYAML(scope);
+    else if (name === 'logs' && scope.ref.isPod) prepareLogs(scope);
+    else if (name === 'terminal' && scope.ref.isPod) prepareTerminal(scope);
+    else if (name === 'forward' && (scope.ref.isPod || scope.ref.kind === 'Service')) prepareForward();
 }
 
 // Disable what this token cannot do, rather than hiding it — a greyed-out
@@ -1400,11 +1498,14 @@ function restartWorkload(ref, fn) {
 function openScaleModal(ref, current) {
     openModal({
         title: `Scale "${ref.name}"`,
+        eyebrow: 'Workload action',
+        description: `${ref.namespace || 'cluster-scoped'} · Deployment`,
+        size: 'compact',
         okText: 'Scale',
         bodyHtml: `<div class="modal-field">
-            <label for="modal-input">Replicas</label>
+            <label for="modal-input">Desired replicas</label>
             <input type="number" id="modal-input" class="modal-number" min="0" max="1000" value="${current}">
-            <p class="modal-hint">Use the arrows or type a number, then Scale.</p>
+            <p class="modal-hint">Setting this to zero stops every Pod managed by this Deployment.</p>
         </div>`,
         onOpen: () => { const el = $('modal-input'); el.focus(); el.select(); },
         onOk: () => {
@@ -1456,6 +1557,7 @@ function setDrawerTab(name) {
     $('dpanel-terminal').hidden = name !== 'terminal';
     $('dpanel-forward').hidden = name !== 'forward';
     $('dpanel-ai').hidden = name !== 'ai';
+    ensureDrawerTabLoaded(name);
     if (name === 'ai') { prepareAIPanel(); $('ai-input').focus(); }
     if (name === 'terminal') requestAnimationFrame(() => {
         ensureTerminal();
@@ -2219,15 +2321,18 @@ function setYamlStatus(text, cls) {
 
 // ---- Logs (static fetch + live follow + search + download) ----
 const logLines = new LineRingBuffer(5000);
+const logTextView = new IncrementalLogView($('logs-view'), logLines.capacity);
 let following = false;
 let logStreamSequence = 0;
 let activeLogStreamID = '';
+let pendingLiveLogLines = [];
 
 // The backend batches lines to avoid one Wails event per line. A stream ID is
 // still required because cancellation cannot retract a batch already in flight.
 EventsOn('loglines', (batch) => {
     if (!following || !batch || batch.streamId !== activeLogStreamID) return;
     logLines.pushMany(batch.lines);
+    pendingLiveLogLines.push(...(batch.lines ?? []));
     logRenderScheduler.request();
 });
 
@@ -2236,8 +2341,10 @@ EventsOn('logerror', (failure) => {
     following = false;
     activeLogStreamID = '';
     $('logs-follow').checked = false;
+    pendingLiveLogLines = [];
+    logRenderScheduler.cancel();
     logLines.replace([failure.message || 'Log stream ended unexpectedly.']);
-    logRenderScheduler.flush();
+    renderLogs();
 });
 
 function prepareLogs(scope = activeDrawerScope) {
@@ -2247,7 +2354,9 @@ function prepareLogs(scope = activeDrawerScope) {
     select.innerHTML = '';
     $('logs-follow').checked = false;
     $('logs-search').value = '';
-    PodContainers(ref.namespace, ref.name)
+    logLines.replace(['Loading containers…']);
+    renderLogs();
+    drawerPodContainers(scope)
         .then((containers) => {
             if (!isCurrentDrawerRequest(scope)) return;
             for (const c of containers ?? []) {
@@ -2284,16 +2393,30 @@ function loadStaticLogs(scope = activeDrawerScope) {
 }
 
 function renderLogs() {
+    pendingLiveLogLines = [];
     const term = $('logs-search').value.trim().toLowerCase();
     const buffered = logLines.toArray();
     const lines = term ? buffered.filter((l) => l.toLowerCase().includes(term)) : buffered;
     const view = $('logs-view');
     const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 40;
-    view.textContent = lines.join('\n') || '(no logs)';
+    logTextView.replace(lines);
     if (following || atBottom) view.scrollTop = view.scrollHeight;
 }
 
-const logRenderScheduler = createFrameScheduler(renderLogs);
+function flushLiveLogLines() {
+    const lines = pendingLiveLogLines;
+    pendingLiveLogLines = [];
+    if (!following || lines.length === 0) return;
+    if ($('logs-search').value.trim()) {
+        renderLogs();
+        return;
+    }
+    logTextView.append(lines);
+    const view = $('logs-view');
+    view.scrollTop = view.scrollHeight;
+}
+
+const logRenderScheduler = createFrameScheduler(flushLiveLogLines);
 
 function startFollow() {
     const ref = drawerRef;
@@ -2302,6 +2425,7 @@ function startFollow() {
     const streamID = `${requestScopes.drawerOwnerKey(scope)}:${++logStreamSequence}`;
     following = true;
     activeLogStreamID = streamID;
+    pendingLiveLogLines = [];
     logLines.clear();
     renderLogs();
     StartLogStream(ref.namespace, ref.name, $('logs-container').value, streamID).catch((err) => {
@@ -2317,6 +2441,7 @@ function startFollow() {
 function stopFollow() {
     activeLogStreamID = '';
     logRenderScheduler.cancel();
+    pendingLiveLogLines = [];
     if (following) {
         following = false;
         StopLogStream();
@@ -2330,7 +2455,10 @@ $('logs-follow').addEventListener('change', (e) => {
     else { stopFollow(); loadStaticLogs(); }
 });
 
-$('logs-search').addEventListener('input', renderLogs);
+$('logs-search').addEventListener('input', () => {
+    logRenderScheduler.cancel();
+    renderLogs();
+});
 
 $('btn-logs-reload').addEventListener('click', () => {
     if (following) { StopLogStream(); startFollow(); }
@@ -2454,7 +2582,7 @@ function prepareTerminal(scope = activeDrawerScope) {
     const select = $('term-container');
     select.innerHTML = '';
     resetTerminalUI({ clear: true });
-    PodContainers(ref.namespace, ref.name)
+    drawerPodContainers(scope)
         .then((containers) => {
             if (!isCurrentDrawerRequest(scope)) return;
             for (const c of containers ?? []) {
@@ -2794,6 +2922,8 @@ let activeModalScope = null;
 // must be destroyed when the modal closes — closeModal wipes the body's HTML,
 // and a CodeMirror instance left pointing at removed nodes leaks its listeners.
 let modalEditors = {};
+let modalReturnFocus = null;
+let dialogReturnFocus = null;
 
 function mountModalEditor(id, { value = '', placeholder = '', onChange } = {}) {
     const host = $(id);
@@ -2820,17 +2950,36 @@ function isCurrentModalRequest(scope) {
 }
 
 function openModal({ title, bodyHtml, okText = 'OK', onOk, onOpen, extraText = '', onExtra = null,
-    ownerKey = `modal\0${title}`, okDisabled = false }) {
+    ownerKey = `modal\0${title}`, okDisabled = false, wide = false, size = 'standard',
+    eyebrow = '', description = '', cancelText = 'Cancel', okStyle = 'primary' }) {
     // A modal can transition directly into another modal (chart search → install).
     // Dispose the old content before reusing its IDs and invalidate every callback
     // that still belongs to it.
+    const modal = $('modal');
+    if (modal.hidden) modalReturnFocus = document.activeElement;
     disposeModalContent();
     const scope = requestScopes.openModal(ownerKey);
     activeModalScope = scope;
     $('modal-title').textContent = title;
+    const eyebrowEl = $('modal-eyebrow');
+    eyebrowEl.textContent = eyebrow;
+    eyebrowEl.hidden = !eyebrow;
+    const descriptionEl = $('modal-description');
+    descriptionEl.textContent = description;
+    descriptionEl.hidden = !description;
+    if (description) modal.setAttribute('aria-describedby', 'modal-description');
+    else modal.removeAttribute('aria-describedby');
+    modal.classList.remove('modal-compact', 'modal-wide', 'modal-editor');
+    const resolvedSize = wide ? 'wide' : size;
+    if (resolvedSize !== 'standard') modal.classList.add(`modal-${resolvedSize}`);
     $('modal-body').innerHTML = bodyHtml;
-    $('modal-ok').textContent = okText;
-    $('modal-ok').disabled = okDisabled;
+    const ok = $('modal-ok');
+    ok.textContent = okText;
+    ok.disabled = okDisabled;
+    ok.className = `btn btn-${okStyle}`;
+    const cancel = $('modal-cancel');
+    cancel.hidden = cancelText === null;
+    if (cancelText !== null) cancel.textContent = cancelText;
     $('modal-error').hidden = true;
     modalOnOk = onOk;
     // An optional secondary action (Import YAML's Preview). Hidden unless given.
@@ -2840,8 +2989,15 @@ function openModal({ title, bodyHtml, okText = 'OK', onOk, onOpen, extraText = '
     extra.disabled = false;
     if (onExtra) extra.textContent = extraText || 'More';
     $('modal-backdrop').hidden = false;
-    $('modal').hidden = false;
+    modal.hidden = false;
     if (onOpen) onOpen();
+    setTimeout(() => {
+        if (!isCurrentModalRequest(scope) || modal.contains(document.activeElement)) return;
+        const target = modal.querySelector('[autofocus]')
+            || modal.querySelector('#modal-body input:not([type="hidden"]), #modal-body select, #modal-body textarea, #modal-body button:not([disabled])')
+            || $('modal-close');
+        target?.focus();
+    }, 0);
     return scope;
 }
 
@@ -2851,6 +3007,7 @@ function closeModal(scope = null) {
     requestScopes.closeModal();
     activeModalScope = null;
     $('modal').hidden = true;
+    $('modal').classList.remove('modal-compact', 'modal-wide', 'modal-editor');
     $('modal-backdrop').hidden = true;
     disposeModalContent();
     $('modal-extra').hidden = true;
@@ -2858,12 +3015,15 @@ function closeModal(scope = null) {
     $('modal-ok').disabled = false;
     modalOnOk = null;
     modalOnExtra = null;
+    const target = modalReturnFocus;
+    modalReturnFocus = null;
+    if (target?.isConnected) setTimeout(() => target.focus(), 0);
 }
 
 function modalError(msg, scope = activeModalScope) {
     if (!isCurrentModalRequest(scope)) return;
     const el = $('modal-error');
-    el.textContent = msg;
+    el.querySelector('p').textContent = msg;
     el.hidden = false;
 }
 
@@ -2910,10 +3070,16 @@ $('modal-backdrop').addEventListener('click', () => closeModal());
 // (e.g. confirming a rollback from inside the Helm history modal).
 let dialogResolve = null;
 
-function openDialog({ title, message, icon, okText, cancelText, danger }) {
+function openDialog({ title, message, icon, okText, cancelText, danger, tone = '' }) {
     return new Promise((resolve) => {
+        dialogReturnFocus = document.activeElement;
         $('dialog-title').textContent = title;
         $('dialog-icon').textContent = icon;
+        const resolvedTone = tone || (danger ? 'danger' : title === 'Error' ? 'error' : icon === '✅' ? 'success' : 'default');
+        $('dialog').className = `dialog dialog-${resolvedTone}`;
+        $('dialog-eyebrow').textContent = resolvedTone === 'danger' ? 'Confirmation required'
+            : resolvedTone === 'error' ? 'Something went wrong'
+            : resolvedTone === 'success' ? 'Action completed' : (cancelText === null ? 'Notice' : 'Please confirm');
         $('dialog-message').textContent = message; // textContent → newlines preserved via CSS, no HTML injection
         $('dialog-ok').textContent = okText;
         const cancelBtn = $('dialog-cancel');
@@ -2923,7 +3089,7 @@ function openDialog({ title, message, icon, okText, cancelText, danger }) {
         $('dialog-backdrop').hidden = false;
         $('dialog').hidden = false;
         dialogResolve = resolve;
-        setTimeout(() => $('dialog-ok').focus(), 0);
+        setTimeout(() => (danger && cancelText !== null ? cancelBtn : $('dialog-ok')).focus(), 0);
     });
 }
 
@@ -2932,9 +3098,23 @@ function closeDialog(result) {
     $('dialog').hidden = true;
     $('dialog-backdrop').hidden = true;
     $('dialog-ok').classList.remove('btn-danger');
+    $('dialog').className = 'dialog';
     const resolve = dialogResolve;
     dialogResolve = null;
     if (resolve) resolve(result);
+    const target = dialogReturnFocus;
+    dialogReturnFocus = null;
+    if (target?.isConnected) setTimeout(() => target.focus(), 0);
+}
+
+function trapOverlayFocus(container, event) {
+    const items = [...container.querySelectorAll('button:not([disabled]):not([hidden]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+        .filter((element) => element.getClientRects().length > 0);
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
 }
 
 // A simple notice (one OK button). Returns a promise that resolves when dismissed.
@@ -2944,7 +3124,7 @@ function showAlert(message, { title = 'Notice', icon = 'ℹ️' } = {}) {
 // An error notice with warning styling.
 function showError(message, title = 'Error') {
     recordError(message);
-    return openDialog({ title, message, icon: '⚠️', okText: 'OK', cancelText: null });
+    return openDialog({ title, message, icon: '⚠️', okText: 'OK', cancelText: null, tone: 'error' });
 }
 // A confirm dialog. Resolves true (OK) or false (Cancel/Esc/backdrop).
 function showConfirm(message, { title = 'Confirm', icon = '❓', okText = 'Confirm', danger = false } = {}) {
@@ -2988,6 +3168,9 @@ function openImportModal() {
 function openYamlApplyModal({ title, okText, value = '', placeholder = '', emptyMessage }) {
     openModal({
         title,
+        eyebrow: 'Kubernetes manifest',
+        description: 'Review the YAML and preview server-side changes before applying them to the cluster.',
+        size: 'editor',
         okText,
         bodyHtml: `<div id="modal-yaml" class="yaml-host yaml-host-modal"></div>
                    <div id="modal-preview" class="pv" hidden></div>`,
@@ -3148,7 +3331,8 @@ document.addEventListener('keydown', (e) => {
     // The stackable alert/confirm dialog takes precedence over everything.
     if (!$('dialog').hidden) {
         if (e.key === 'Escape') { e.preventDefault(); closeDialog(false); }
-        else if (e.key === 'Enter') { e.preventDefault(); closeDialog(true); }
+        else if (e.key === 'Enter') { e.preventDefault(); closeDialog(e.target !== $('dialog-cancel')); }
+        else if (e.key === 'Tab') trapOverlayFocus($('dialog'), e);
         return;
     }
     // A CodeMirror editor handles some of these keys itself — Escape closes its
@@ -3163,12 +3347,17 @@ document.addEventListener('keydown', (e) => {
         if (!$('drawer').hidden) closeDrawer();
         return;
     }
+    if (e.key === 'Tab' && !$('modal').hidden) {
+        trapOverlayFocus($('modal'), e);
+        return;
+    }
     // Enter submits the modal only when focus is NOT in something that owns Enter:
     // a textarea, an input that opts out (.no-enter-submit), or the YAML editor —
     // whose editable element is a contenteditable div, not a textarea, so checking
     // the tag name alone would let Enter apply a half-typed manifest.
     if (e.key === 'Enter' && !$('modal').hidden
         && e.target.tagName !== 'TEXTAREA'
+        && !e.target.closest('button')
         && !(e.target.closest && e.target.closest('.cm-editor'))
         && !e.target.classList.contains('no-enter-submit')) {
         e.preventDefault();
@@ -3461,9 +3650,9 @@ function openRowMenu(btn, ref) {
     let actions;
     if (ref.kind === 'HelmRelease') {
         actions = [
-            { label: 'Values & manifest', run: () => openHelmDetailModal(ref) },
-            { label: 'History & rollback…', run: () => openHelmHistoryModal(ref) },
-            { label: 'Upgrade values…', run: () => openHelmUpgradeModal(ref) },
+            { label: 'Open release', run: () => openHelmDetailModal(ref) },
+            { label: 'History & rollback…', run: () => openHelmDetailModal(ref, 'history') },
+            { label: 'Upgrade…', run: () => openHelmUpgradeModal(ref) },
             { label: 'Uninstall', danger: true, run: () => uninstallHelm(ref) },
         ];
         renderRowMenu(menu, btn, actions);
@@ -3473,12 +3662,12 @@ function openRowMenu(btn, ref) {
     // It is the verb the *API* wants, not the one the label suggests: a rolling
     // restart is a patch, and scaling is an update of the scale subresource.
     actions = [
-        { label: 'Open details', need: 'get', run: () => { openDrawer(ref); setDrawerTab('details'); } },
-        { label: 'Edit YAML', need: 'get', run: () => { openDrawer(ref); setDrawerTab('yaml'); } },
+        { label: 'Open details', need: 'get', run: () => openDrawer({ ...ref, tab: 'details' }) },
+        { label: 'Edit YAML', need: 'get', run: () => openDrawer({ ...ref, tab: 'yaml' }) },
     ];
     if (ref.isPod) {
-        actions.push({ label: 'View logs', need: 'logs', run: () => { openDrawer(ref); setDrawerTab('logs'); } });
-        actions.push({ label: 'Terminal', need: 'exec', run: () => { openDrawer(ref); setDrawerTab('terminal'); } });
+        actions.push({ label: 'View logs', need: 'logs', run: () => openDrawer({ ...ref, tab: 'logs' }) });
+        actions.push({ label: 'Terminal', need: 'exec', run: () => openDrawer({ ...ref, tab: 'terminal' }) });
     }
     if (ref.kind === 'Deployment') {
         actions.push({ label: 'Scale…', need: 'update', run: () => scaleRef(ref) });
@@ -3613,7 +3802,11 @@ function runCronNow(ref) {
 function openRolloutModal(ref) {
     openModal({
         title: `Rollout history — ${ref.name}`,
+        eyebrow: 'Deployment',
+        description: `${ref.namespace || 'cluster-scoped'} · Compare revisions before choosing a rollback target.`,
         okText: 'Close',
+        okStyle: 'secondary',
+        cancelText: null,
         bodyHtml: `<div id="rollout-list" class="rollout-list"><p class="empty-inline">Loading…</p></div>`,
         onOk: () => Promise.resolve(),
     });
@@ -3662,11 +3855,11 @@ document.addEventListener('scroll', closeRowMenu, true);
 // columns in its header, shifting every row one cell left and pushing the page
 // into a horizontal scroll. That happened to ResourceQuotas once and to
 // Right-sizing again. Opting out by class puts the decision next to the markup.
-document.querySelectorAll('#content .view:not(#view-overview):not(#view-helmrepos) table:not(.plain) thead tr').forEach((tr) => {
+document.querySelectorAll('#content .view:not(#view-overview) table:not(.plain) thead tr').forEach((tr) => {
     tr.insertAdjacentHTML('afterbegin', '<th class="no-sort col-check"><input type="checkbox" class="select-all" title="Select all"></th>');
 });
-// Overview cards, Pods, and Helm Repos define their own columns.
-document.querySelectorAll('#content .view:not(#view-overview):not(#view-pods):not(#view-helmrepos) table:not(.plain) thead tr').forEach((tr) => {
+// Overview cards and Pods define their own columns; plain tables opt out.
+document.querySelectorAll('#content .view:not(#view-overview):not(#view-pods) table:not(.plain) thead tr').forEach((tr) => {
     tr.insertAdjacentHTML('beforeend', '<th>Age</th><th class="no-sort col-actions">Actions</th>');
 });
 
@@ -3906,7 +4099,7 @@ document.addEventListener('keydown', (e) => {
 
 function extLink(url, text) {
     if (!url) return '';
-    return `<span class="ext-link mono" data-url="${esc(url)}" title="Open in browser">${esc(text || url)} ↗</span>`;
+    return `<button type="button" class="ext-link mono" data-url="${esc(url)}" title="Open in browser">${esc(text || url)} ↗</button>`;
 }
 document.addEventListener('click', (e) => {
     const el = e.target.closest('.ext-link');
@@ -3964,54 +4157,88 @@ function modalOwner(type, ...parts) {
     return [type, ...parts].join('\u0000');
 }
 
-function openHelmDetailModal(ref) {
+function openHelmDetailModal(ref, initialTab = 'resources') {
     const scope = openModal({
-        title: `Helm — ${ref.name}`,
+        title: `Release · ${ref.name}`,
+        eyebrow: 'Helm release',
+        description: `${ref.namespace} · Inspect live resources, configuration and revision history.`,
         ownerKey: modalOwner('helm-detail', ref.namespace, ref.name),
         okText: 'Close',
-        bodyHtml: `<div class="helm-tabs">
-                <button class="helm-tab active" data-htab="resources">Resources</button>
-                <button class="helm-tab" data-htab="values">Values</button>
-                <button class="helm-tab" data-htab="manifest">Manifest</button>
-                <button class="helm-tab" data-htab="notes">Notes</button>
-                <button id="helm-run-tests" class="btn btn-secondary btn-sm" style="margin-left:auto">Run tests</button>
+        okStyle: 'secondary',
+        cancelText: null,
+        wide: true,
+        bodyHtml: `<div class="helm-release-hero">
+                <div><span class="helm-kicker">${esc(ref.namespace)}</span><div id="helm-meta" class="helm-meta"><span class="helm-loading-inline">Loading release…</span></div></div>
+                <div class="helm-release-actions"><button id="helm-upgrade-release" class="btn btn-primary btn-sm">Upgrade</button><button id="helm-run-tests" class="btn btn-secondary btn-sm">Run tests</button><button id="helm-uninstall-release" class="btn btn-quiet-danger btn-sm">Uninstall</button></div>
             </div>
-            <div id="helm-meta" class="helm-meta"></div>
-            <div id="helm-resources" class="helm-resources">Loading…</div>
-            <pre id="helm-content" class="helm-content" hidden>Loading…</pre>`,
+            <div class="helm-tabs" role="tablist" aria-label="Release details">
+                <button class="helm-tab" type="button" role="tab" aria-selected="false" data-htab="resources">Resources</button>
+                <button class="helm-tab" type="button" role="tab" aria-selected="false" data-htab="values">Values</button>
+                <button class="helm-tab" type="button" role="tab" aria-selected="false" data-htab="manifest">Manifest</button>
+                <button class="helm-tab" type="button" role="tab" aria-selected="false" data-htab="notes">Notes</button>
+                <button class="helm-tab" type="button" role="tab" aria-selected="false" data-htab="history">History</button>
+            </div>
+            <div id="helm-resources" class="helm-resources">Loading resources…</div>
+            <pre id="helm-content" class="helm-content" hidden>Loading…</pre>
+            <div id="helm-history" class="rollout-list" hidden><p class="empty-inline">Loading history…</p></div>`,
         onOk: () => Promise.resolve(),
     });
     const metaBox = $('helm-meta');
     const resourcesBox = $('helm-resources');
     const contentBox = $('helm-content');
+    const historyBox = $('helm-history');
     const tabs = [...$('modal-body').querySelectorAll('.helm-tab')];
     const runTestsButton = $('helm-run-tests');
+    let panes = { values: 'Loading…', manifest: 'Loading…', notes: 'Loading…' };
+    let resourcesLoaded = false;
+    let historyLoaded = false;
+    const show = (requested) => {
+        const tabName = ['resources', 'values', 'manifest', 'notes', 'history'].includes(requested) ? requested : 'resources';
+        resourcesBox.hidden = tabName !== 'resources';
+        historyBox.hidden = tabName !== 'history';
+        contentBox.hidden = tabName === 'resources' || tabName === 'history';
+        if (!contentBox.hidden) contentBox.textContent = panes[tabName];
+        tabs.forEach((button) => {
+            const active = button.dataset.htab === tabName;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-selected', String(active));
+            button.tabIndex = active ? 0 : -1;
+        });
+        if (tabName === 'resources' && !resourcesLoaded) {
+            resourcesLoaded = true;
+            loadHelmReleaseResources(ref, scope, resourcesBox);
+        }
+        if (tabName === 'history' && !historyLoaded) {
+            historyLoaded = true;
+            loadHelmHistory(ref, scope, historyBox);
+        }
+    };
+    tabs.forEach((tab, index) => {
+        tab.addEventListener('click', () => show(tab.dataset.htab));
+        tab.addEventListener('keydown', (event) => {
+            if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+            event.preventDefault();
+            const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : (index - 1 + tabs.length) % tabs.length;
+            tabs[next].focus();
+            show(tabs[next].dataset.htab);
+        });
+    });
+    show(initialTab);
+
     HelmGet(ref.namespace, ref.name)
         .then((d) => {
             if (!isCurrentModalRequest(scope)) return;
-            metaBox.innerHTML = `<span class="chip">chart: ${esc(d.chart)}</span> <span class="chip">app: ${esc(d.appVersion || '-')}</span> <span class="chip">rev ${d.revision}</span> <span class="chip">${esc(d.status)}</span>`;
-            const panes = { values: d.values || '(no user-supplied values)', manifest: d.manifest || '', notes: d.notes || '(no notes)' };
-            const show = (tab) => {
-                const isRes = tab === 'resources';
-                resourcesBox.hidden = !isRes;
-                contentBox.hidden = isRes;
-                if (!isRes) contentBox.textContent = panes[tab];
-            };
-            show('resources');
-            tabs.forEach((t) => {
-                t.addEventListener('click', () => {
-                    tabs.forEach((x) => x.classList.toggle('active', x === t));
-                    show(t.dataset.htab);
-                });
-            });
+            metaBox.innerHTML = `<span class="chip">${esc(d.chart)}</span><span class="chip">app ${esc(d.appVersion || '—')}</span><span class="chip">revision ${d.revision}</span>${helmStatusBadge({ status: d.status })}`;
+            panes = { values: d.values || '(no user-supplied values)', manifest: d.manifest || '', notes: d.notes || '(no notes)' };
+            const activeTab = tabs.find((button) => button.classList.contains('active'))?.dataset.htab;
+            if (activeTab && !['resources', 'history'].includes(activeTab)) contentBox.textContent = panes[activeTab];
         })
         .catch((err) => {
             if (isCurrentModalRequest(scope)) metaBox.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
         });
 
-    // Resources tab: live health of every object the release owns.
-    loadHelmReleaseResources(ref, scope, resourcesBox);
-
+    $('helm-upgrade-release').addEventListener('click', () => openHelmUpgradeModal(ref));
+    $('helm-uninstall-release').addEventListener('click', () => uninstallHelm(ref, scope));
     runTestsButton.addEventListener('click', async () => {
         const btn = runTestsButton;
         const cluster = $('cluster-select').value;
@@ -4051,18 +4278,19 @@ function loadHelmReleaseResources(ref, scope, box) {
             for (const r of list) {
                 const div = document.createElement('div');
                 div.className = 'helm-res-row';
-                const openable = r.kind && r.name;
+                const openable = r.refKind && r.name;
+                const health = r.health || (r.ready ? 'healthy' : 'unknown');
                 div.innerHTML = `<div class="helm-res-main">
                         <span class="helm-res-kind">${esc(r.kind)}</span>
-                        <span class="helm-res-name${openable ? ' link' : ''}">${esc(r.name)}</span>
-                        <span class="chart-repo">${esc(r.namespace)}</span>
+                        ${openable ? `<button class="helm-res-name link" type="button">${esc(r.name)}</button>` : `<span class="helm-res-name">${esc(r.name)}</span>`}
+                        <span class="chart-repo">${esc(r.namespace || 'cluster-scoped')}</span>
                     </div>
-                    <div>${badge(r.status, r.ready)}</div>`;
+                    <div><span class="helm-resource-health helm-resource-${esc(health)}"><i></i>${esc(r.status)}</span></div>`;
                 if (openable) {
-                    const nameEl = div.querySelector('.helm-res-name.link');
+                    const nameEl = div.querySelector('button.helm-res-name');
                     nameEl.addEventListener('click', () => {
                         closeModal();
-                        openDrawer({ kind: r.kind, namespace: r.namespace, name: r.name });
+                        openDrawer({ kind: r.refKind, namespace: r.namespace, name: r.name });
                     });
                 }
                 box.appendChild(div);
@@ -4071,15 +4299,7 @@ function loadHelmReleaseResources(ref, scope, box) {
         .catch((err) => { if (isCurrentModalRequest(scope)) box.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
 }
 
-function openHelmHistoryModal(ref) {
-    const scope = openModal({
-        title: `Helm history — ${ref.name}`,
-        ownerKey: modalOwner('helm-history', ref.namespace, ref.name),
-        okText: 'Close',
-        bodyHtml: `<div id="helm-history" class="rollout-list"><p class="empty-inline">Loading…</p></div>`,
-        onOk: () => Promise.resolve(),
-    });
-    const historyBox = $('helm-history');
+function loadHelmHistory(ref, scope, historyBox) {
     HelmHistory(ref.namespace, ref.name)
         .then((revs) => {
             if (!isCurrentModalRequest(scope)) return;
@@ -4094,8 +4314,8 @@ function openHelmHistoryModal(ref) {
                         <div class="rollout-age">${esc(r.updated)} · ${esc(r.description)}</div>
                     </div>
                     <div class="rollout-actions">
-                        ${i === 0 ? '' : `<button class="btn btn-secondary btn-sm helm-diff-btn" data-rev="${r.revision}">Diff vs current</button>
-                        <button class="btn btn-secondary btn-sm helm-rollback-btn" data-rev="${r.revision}">Rollback</button>`}
+                        ${i === 0 ? '' : `<button class="btn btn-secondary btn-sm helm-diff-btn" data-rev="${r.revision}">Preview rollback</button>
+                        <button class="btn btn-secondary btn-sm helm-rollback-btn" data-rev="${r.revision}">Rollback to this</button>`}
                     </div>
                 </div>`).join('') + '<pre id="helm-hist-diff" class="helm-content diff-view" hidden></pre>';
             box.querySelectorAll('.helm-diff-btn').forEach((btn) => {
@@ -4105,21 +4325,21 @@ function openHelmHistoryModal(ref) {
                     // Toggle: clicking the same revision's Diff again hides the panel.
                     if (!pre.hidden && pre.dataset.rev === String(rev)) {
                         pre.hidden = true;
-                        box.querySelectorAll('.helm-diff-btn').forEach((b) => (b.textContent = 'Diff vs current'));
+                        box.querySelectorAll('.helm-diff-btn').forEach((b) => (b.textContent = 'Preview rollback'));
                         return;
                     }
                     pre.dataset.rev = String(rev);
                     pre.hidden = false;
                     pre.textContent = 'Loading diff…';
                     box.querySelectorAll('.helm-diff-btn').forEach((b) =>
-                        (b.textContent = b === btn ? '✕ Hide diff' : 'Diff vs current'));
+                        (b.textContent = b === btn ? '✕ Hide preview' : 'Preview rollback'));
                     Promise.all([
                         HelmGetRevision(ref.namespace, ref.name, rev),
                         HelmGetRevision(ref.namespace, ref.name, currentRev),
                     ])
                         .then(([older, current]) => {
                             if (!isCurrentModalRequest(scope) || pre.dataset.rev !== String(rev)) return;
-                            renderDiffInto(pre, older.manifest, current.manifest);
+                            renderDiffInto(pre, current.manifest, older.manifest, { collapse: 3 });
                             pre.scrollIntoView({ block: 'nearest' });
                         })
                         .catch((err) => {
@@ -4130,8 +4350,13 @@ function openHelmHistoryModal(ref) {
             box.querySelectorAll('.helm-rollback-btn').forEach((btn) => {
                 btn.addEventListener('click', () => {
                     const rev = parseInt(btn.dataset.rev, 10);
+                    const cluster = $('cluster-select').value;
                     showConfirm(`Rollback release “${ref.name}” to revision ${rev}?`, { title: 'Rollback release', icon: '↩', okText: 'Rollback' }).then((ok) => {
                         if (!ok || !isCurrentModalRequest(scope)) return;
+                        if ($('cluster-select').value !== cluster) {
+                            showError('The active cluster changed before rollback started. Reopen the release and try again.');
+                            return;
+                        }
                         btn.disabled = true;
                         HelmRollback(ref.namespace, ref.name, rev)
                             .then(() => {
@@ -4152,39 +4377,68 @@ function openHelmHistoryModal(ref) {
 
 function openHelmUpgradeModal(ref) {
     let valuesEditor = null;
+    let valuesLoading = true;
+    let approvedPreview = null;
+    let okButton = null;
+    let previewStatus = null;
+    const invalidatePreview = (message = '') => {
+        approvedPreview = null;
+        if (okButton) okButton.disabled = true;
+        if (previewStatus && message) previewStatus.textContent = message;
+    };
     const scope = openModal({
         title: `Upgrade values — ${ref.name}`,
+        eyebrow: 'Helm release',
+        description: `${ref.namespace} · Upgrade remains locked until these exact values are previewed.`,
         ownerKey: modalOwner('helm-upgrade', ref.namespace, ref.name),
         okText: 'Upgrade',
         okDisabled: true,
-        bodyHtml: `<p class="modal-hint">Edit the release values, then <strong>Preview</strong> the rendered diff before you Upgrade (reuses the current chart).</p>
+        wide: true,
+        extraText: '← Release details',
+        onExtra: () => { openHelmDetailModal(ref); },
+        bodyHtml: `<div class="helm-install-intro"><span class="helm-install-step">1</span><div><strong>Edit release values</strong><p>This reuses the chart currently installed for ${esc(ref.name)}.</p></div></div>
             <div id="helm-values" class="yaml-host yaml-host-modal"></div>
+            <div class="helm-install-intro helm-install-intro-values"><span class="helm-install-step">2</span><div><strong>Preview the exact upgrade</strong><p>Any values change invalidates the preview and disables Upgrade.</p></div></div>
             <div class="install-actions">
                 <button id="helm-preview-btn" class="btn btn-secondary btn-sm">👁 Preview diff</button>
                 <span id="helm-preview-status" class="modal-hint"></span>
             </div>
             <pre id="helm-upg-diff" class="helm-content diff-view" hidden></pre>`,
-        onOpen: () => { valuesEditor = mountModalEditor('helm-values', { value: '# loading…' }); },
+        onOpen: () => {
+            valuesEditor = mountModalEditor('helm-values', {
+                value: '# loading…',
+                onChange: () => { if (!valuesLoading) invalidatePreview('Values changed — preview again before upgrading.'); },
+            });
+        },
         onOk: () => {
             if (!isCurrentModalRequest(scope) || !valuesEditor) return Promise.reject('This Upgrade dialog is stale. Reopen it.');
             const vals = valuesEditor.getValue();
-            return HelmUpgradeValues(ref.namespace, ref.name, vals).then(() => refreshCurrentView());
+            if (!approvedPreview || approvedPreview.values !== vals) {
+                return Promise.reject('Preview these exact values before upgrading.');
+            }
+            return HelmUpgradeValues(ref.namespace, ref.name, vals, approvedPreview.revision, approvedPreview.valuesDigest)
+                .then(() => {
+                    refreshCurrentView();
+                    setTimeout(() => openHelmDetailModal(ref), 0);
+                });
         },
     });
-    const okButton = $('modal-ok');
+    okButton = $('modal-ok');
     const previewButton = $('helm-preview-btn');
     const previewBox = $('helm-upg-diff');
-    const previewStatus = $('helm-preview-status');
+    previewStatus = $('helm-preview-status');
     previewButton.disabled = true;
     HelmGet(ref.namespace, ref.name)
         .then((d) => {
             if (!isCurrentModalRequest(scope)) return;
             valuesEditor.setValue(d.values || '');
-            okButton.disabled = false;
+            valuesLoading = false;
+            invalidatePreview('Preview is required before Upgrade.');
             previewButton.disabled = false;
         })
         .catch((err) => {
             if (!isCurrentModalRequest(scope)) return;
+            valuesLoading = false;
             valuesEditor.setValue('');
             modalError(`Could not load current values: ${errMsg(err)}`, scope);
         });
@@ -4204,78 +4458,156 @@ function openHelmUpgradeModal(ref) {
             return;
         }
         const reqId = ++previewReqId;
+        approvedPreview = null;
+        okButton.disabled = true;
         pre.hidden = false; pre.textContent = 'Rendering (dry-run)…'; status.textContent = ''; btn.textContent = '✕ Hide preview';
         HelmUpgradePreview(ref.namespace, ref.name, vals)
             .then((diff) => {
                 if (!isCurrentModalRequest(scope) || reqId !== previewReqId) return;
-                renderDiffInto(pre, diff.current, diff.proposed);
-                status.textContent = 'Diff = current manifest → what Upgrade would apply.';
+                if (valuesEditor.getValue() !== vals) {
+                    invalidatePreview('Values changed while previewing — preview again.');
+                    return;
+                }
+                if (!diff.releaseRevision || !diff.valuesDigest) throw new Error('Preview did not return release ownership data.');
+                approvedPreview = { values: vals, revision: diff.releaseRevision, valuesDigest: diff.valuesDigest };
+                okButton.disabled = false;
+                renderDiffInto(pre, diff.current, diff.proposed, { collapse: 3 });
+                status.textContent = `Preview approved for revision ${diff.releaseRevision}.`;
             })
             .catch((err) => {
-                if (isCurrentModalRequest(scope) && reqId === previewReqId) pre.textContent = errMsg(err);
+                if (isCurrentModalRequest(scope) && reqId === previewReqId) {
+                    approvedPreview = null;
+                    okButton.disabled = true;
+                    pre.textContent = errMsg(err);
+                }
             });
     });
 }
 
-function uninstallHelm(ref) {
-    showConfirm(`Uninstall Helm release “${ref.name}” in ${ref.namespace}?\nThis removes all its resources.`, { title: 'Uninstall release', icon: '🗑', okText: 'Uninstall', danger: true }).then((ok) => {
+function uninstallHelm(ref, modalScope = null) {
+    const cluster = $('cluster-select').value;
+    const clusterName = $('cluster-select').selectedOptions[0]?.textContent ?? cluster;
+    showConfirm(`Uninstall Helm release “${ref.name}” in ${ref.namespace} from cluster “${clusterName}”?\nThis removes all its resources.`, { title: 'Uninstall release', icon: '🗑', okText: 'Uninstall', danger: true }).then((ok) => {
         if (!ok) return;
+        if ($('cluster-select').value !== cluster || (modalScope && !isCurrentModalRequest(modalScope))) {
+            showError('The active cluster or release changed before uninstall started. Reopen the release and try again.');
+            return;
+        }
+        if (modalScope && isCurrentModalRequest(modalScope)) closeModal(modalScope);
         HelmUninstall(ref.namespace, ref.name)
             .then(() => { loadSidebarCounts(); refreshCurrentView(); })
             .catch((err) => showError(errMsg(err)));
     });
 }
 
-// ---- Search charts (Artifact Hub) + install ----
+// ---- Catalog (Artifact Hub + configured repositories) + install ----
 
-$('btn-helm-search').addEventListener('click', openChartSearchModal);
+let helmCatalogRequestID = 0;
+let helmCatalogPreferredSource = '';
 
-function openChartSearchModal() {
-    const scope = openModal({
-        title: 'Search & install charts',
-        ownerKey: 'chart-search',
-        okText: 'Close',
-        bodyHtml: `<div class="chart-search-row">
-                <input id="chart-query" class="pf-input no-enter-submit" style="flex:1" type="text" placeholder="Search Artifact Hub (e.g. nginx, redis, prometheus)…" autocomplete="off">
-                <button id="chart-search-go" class="btn btn-primary btn-sm">Search</button>
-            </div>
-            <p class="modal-hint">Requires internet access to artifacthub.io.</p>
-            <div id="chart-results" class="chart-results"></div>`,
-        onOk: () => Promise.resolve(),
-    });
-    const queryInput = $('chart-query');
-    const resultsBox = $('chart-results');
-    const searchButton = $('chart-search-go');
-    let searchReqId = 0;
-    const run = () => {
-        if (!isCurrentModalRequest(scope)) return;
-        const q = queryInput.value.trim();
-        if (!q) return;
-        const reqId = ++searchReqId;
-        resultsBox.innerHTML = '<p class="empty-inline">Searching…</p>';
-        SearchCharts(q)
-            .then((results) => {
-                if (isCurrentModalRequest(scope) && reqId === searchReqId) renderChartResults(results, resultsBox);
-            })
-            .catch((err) => {
-                if (isCurrentModalRequest(scope) && reqId === searchReqId) resultsBox.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
-            });
-    };
-    searchButton.addEventListener('click', run);
-    queryInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } });
-    queryInput.focus();
+function loadHelmCatalogSources(scope) {
+    const select = $('helm-catalog-source');
+    const selected = helmCatalogPreferredSource || select.value || 'artifacthub';
+    return ListHelmRepos()
+        .then((repos) => {
+            if (!isCurrentViewRequest(scope) || helmSection !== 'catalog') return;
+            select.innerHTML = '<option value="artifacthub">Artifact Hub</option>'
+                + (repos ?? []).map((repo) => `<option value="repo:${esc(repo.name)}">Repository · ${esc(repo.name)}</option>`).join('');
+            select.value = [...select.options].some((option) => option.value === selected) ? selected : 'artifacthub';
+            updateHelmCatalogHint();
+            if (helmCatalogPreferredSource) {
+                helmCatalogPreferredSource = '';
+                $('chart-query').value = '';
+                runHelmCatalogSearch();
+            }
+        })
+        .catch((err) => viewError(scope, err));
 }
 
+function updateHelmCatalogHint() {
+    const sourceID = $('helm-catalog-source').value;
+    $('helm-catalog-hint').textContent = sourceID === 'artifacthub'
+        ? 'Artifact Hub search requires internet access.'
+        : 'Browsing the cached repository index. Update repositories if versions look stale.';
+    $('chart-query').placeholder = sourceID === 'artifacthub'
+        ? 'nginx, redis, prometheus…'
+        : 'Filter charts, or leave empty to show all';
+}
+
+function runHelmCatalogSearch() {
+    if (currentView !== 'helm' || helmSection !== 'catalog') return;
+    const sourceID = $('helm-catalog-source').value;
+    const query = $('chart-query').value.trim();
+    if (sourceID === 'artifacthub' && !query) {
+        $('chart-results').innerHTML = '<div class="helm-empty-state"><strong>Enter a chart name</strong><span>Artifact Hub searches by relevance.</span></div>';
+        return;
+    }
+    const requestID = ++helmCatalogRequestID;
+    const connection = requestScopes.connectionToken();
+    const resultsBox = $('chart-results');
+    resultsBox.innerHTML = '<div class="helm-loading">Searching charts…</div>';
+    const request = sourceID === 'artifacthub'
+        ? SearchCharts(query)
+        : BrowseHelmRepo(sourceID.slice('repo:'.length)).then((charts) => {
+            const term = query.toLowerCase();
+            return term ? (charts ?? []).filter((chart) => `${chart.name} ${chart.description || ''}`.toLowerCase().includes(term)) : charts;
+        });
+    request
+        .then((results) => {
+            if (requestID !== helmCatalogRequestID || !requestScopes.isCurrentConnection(connection)
+                || currentView !== 'helm' || helmSection !== 'catalog') return;
+            renderChartResults(results, resultsBox);
+        })
+        .catch((err) => {
+            if (requestID === helmCatalogRequestID && requestScopes.isCurrentConnection(connection)
+                && currentView === 'helm' && helmSection === 'catalog') {
+                resultsBox.innerHTML = `<div class="helm-empty-state helm-empty-error"><strong>Could not load charts</strong><span>${esc(errMsg(err))}</span><button class="btn btn-secondary btn-sm helm-catalog-retry">Try again</button></div>`;
+                resultsBox.querySelector('.helm-catalog-retry')?.addEventListener('click', runHelmCatalogSearch);
+            }
+        });
+}
+
+document.querySelectorAll('.helm-workspace-tab').forEach((tab, index, tabs) => {
+    tab.addEventListener('click', () => setHelmSection(tab.dataset.helmSection));
+    tab.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : (index - 1 + tabs.length) % tabs.length;
+        tabs[next].focus();
+        setHelmSection(tabs[next].dataset.helmSection);
+    });
+});
+
+const openHelmCatalog = () => {
+    setHelmSection('catalog');
+    setTimeout(() => $('chart-query').focus(), 0);
+};
+$('btn-helm-search').addEventListener('click', openHelmCatalog);
+$('helm-empty-browse').addEventListener('click', openHelmCatalog);
+$('helm-release-filter').addEventListener('input', filterHelmReleases);
+$('chart-search-go').addEventListener('click', runHelmCatalogSearch);
+$('chart-query').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); runHelmCatalogSearch(); }
+});
+$('helm-catalog-source').addEventListener('change', () => {
+    updateHelmCatalogHint();
+    runHelmCatalogSearch();
+});
+
 function renderChartResults(results, box) {
-    if (!results || results.length === 0) { box.innerHTML = '<p class="empty-inline">No charts found.</p>'; return; }
+    if (!results || results.length === 0) {
+        box.innerHTML = '<div class="helm-empty-state"><strong>No charts found</strong><span>Try a broader name or another source.</span></div>';
+        return;
+    }
     box.innerHTML = '';
     for (const c of results) {
         const div = document.createElement('div');
         div.className = 'chart-item';
-        const oci = c.repoURL.startsWith('oci://');
+        const oci = String(c.repoURL || '').startsWith('oci://');
         div.innerHTML = `<div class="chart-main">
-                <div class="chart-name">${esc(c.name)} <span class="chart-repo">${esc(c.repo)}</span> <span class="chart-ver mono">${esc(c.version)}</span>${oci ? ' <span class="chip">OCI</span>' : ''}</div>
+                <div class="chart-name">${esc(c.name)} <span class="chart-repo">${esc(c.repo)}</span>${oci ? ' <span class="chip">OCI</span>' : ''}</div>
                 <div class="chart-desc">${esc(c.description || '')}</div>
+                <div class="chart-ver mono">Chart ${esc(c.version)}${c.appVersion ? ` · App ${esc(c.appVersion)}` : ''}${c.stars ? ` · ★ ${c.stars}` : ''}</div>
                 <div class="chart-url">${extLink(c.repoURL)}</div>
             </div>`;
         const btn = document.createElement('button');
@@ -4290,6 +4622,10 @@ function renderChartResults(results, box) {
 function openChartInstallModal(chart) {
     const ns = currentNamespace || 'default';
     const chartName = chart.normName || chart.name;
+    const repoName = chart.sourceID || '';
+    const namespaceOptions = [...$('namespace-select').options]
+        .map((option) => option.value).filter(Boolean)
+        .map((name) => `<option value="${esc(name)}"></option>`).join('');
     let valuesEditor = null;
     let defaultsLoading = false;
     let loadedDefaultsVersion = null;
@@ -4303,18 +4639,24 @@ function openChartInstallModal(chart) {
     };
     const scope = openModal({
         title: `Install ${chart.name}`,
+        eyebrow: 'Chart installation',
+        description: `${chart.repo || 'Chart repository'} · Choose a destination, configure values, then preview the exact release.`,
         ownerKey: modalOwner('chart-install', chart.repoURL, chartName),
         okText: 'Install',
         okDisabled: true,
-        bodyHtml: `<div class="install-form">
-                <label>Release name<input type="text" id="inst-name" class="pf-input" value="${esc(chartName)}"></label>
-                <label>Namespace<input type="text" id="inst-ns" class="pf-input" value="${esc(ns)}"></label>
+        wide: true,
+        bodyHtml: `<div class="helm-install-intro"><span class="helm-install-step">1</span><div><strong>Choose destination and version</strong><p>The final preview is bound to these exact fields and values.</p></div></div>
+            <div class="install-form helm-install-target">
+                <label>Release name<input type="text" id="inst-name" class="pf-input" value="${esc(chartName)}" autocomplete="off"></label>
+                <label>Namespace<input type="text" id="inst-ns" class="pf-input" list="helm-namespace-options" value="${esc(ns)}" autocomplete="off"><datalist id="helm-namespace-options">${namespaceOptions}</datalist></label>
                 <label>Version<select id="inst-ver" class="pf-input"><option value="${esc(chart.version)}">${esc(chart.version)}</option></select></label>
             </div>
+            <p class="helm-namespace-note">If the namespace does not exist, Helm will create it. Check spelling before previewing.</p>
             <div id="inst-links" class="install-links"><span class="modal-hint">Repo: </span>${extLink(chart.repoURL)}</div>
-            <div class="install-tabs">
-                <button class="install-tab active" data-itab="values">Values</button>
-                <button class="install-tab" data-itab="readme">README</button>
+            <div class="helm-install-intro helm-install-intro-values"><span class="helm-install-step">2</span><div><strong>Configure and review</strong><p>Load defaults when needed, then preview what Helm will create.</p></div></div>
+            <div class="install-tabs" role="tablist" aria-label="Chart configuration">
+                <button class="install-tab active" type="button" role="tab" aria-selected="true" data-itab="values">Values</button>
+                <button class="install-tab" type="button" role="tab" aria-selected="false" data-itab="readme">README</button>
             </div>
             <div id="inst-pane-values">
                 <div class="install-actions">
@@ -4344,8 +4686,22 @@ function openChartInstallModal(chart) {
                 || approvedPreview.version !== ver || approvedPreview.values !== vals) {
                 return Promise.reject('Preview this exact release, namespace, version, and values before installing.');
             }
-            return HelmInstall(nsv, name, chart.repoURL, chartName, ver, vals, approvedPreview.digest)
-                .then(() => { selectView('helm'); loadSidebarCounts(); });
+            return HelmInstall(nsv, name, chart.repoURL, repoName, chartName, ver, vals, approvedPreview.digest)
+                .then(() => {
+                    let namespaceOption = [...$('namespace-select').options].find((option) => option.value === nsv);
+                    if (!namespaceOption) {
+                        namespaceOption = document.createElement('option');
+                        namespaceOption.value = nsv;
+                        namespaceOption.textContent = nsv;
+                        $('namespace-select').appendChild(namespaceOption);
+                    }
+                    currentNamespace = nsv;
+                    $('namespace-select').value = nsv;
+                    helmSection = 'releases';
+                    selectView('helm');
+                    loadSidebarCounts();
+                    setTimeout(() => openHelmDetailModal({ kind: 'HelmRelease', namespace: nsv, name }), 0);
+                });
         },
     });
     const modalBody = $('modal-body');
@@ -4362,13 +4718,28 @@ function openChartInstallModal(chart) {
     okButton = $('modal-ok');
     const installTabs = [...modalBody.querySelectorAll('.install-tab')];
 
+    if (repoName && chart.versions?.length) {
+        versionSelect.innerHTML = chart.versions
+            .map((version) => `<option value="${esc(version)}"${version === chart.version ? ' selected' : ''}>${esc(version)}</option>`).join('');
+    }
+
     // Tabs: Values / README.
-    installTabs.forEach((t) => {
-        t.addEventListener('click', () => {
-            installTabs.forEach((x) => x.classList.toggle('active', x === t));
-            const readme = t.dataset.itab === 'readme';
-            valuesPane.hidden = readme;
-            readmeBox.hidden = !readme;
+    const showInstallTab = (t) => {
+        installTabs.forEach((x) => x.classList.toggle('active', x === t));
+        installTabs.forEach((x) => x.setAttribute('aria-selected', String(x === t)));
+        installTabs.forEach((x) => { x.tabIndex = x === t ? 0 : -1; });
+        const readme = t.dataset.itab === 'readme';
+        valuesPane.hidden = readme;
+        readmeBox.hidden = !readme;
+    };
+    installTabs.forEach((t, index) => {
+        t.addEventListener('click', () => showInstallTab(t));
+        t.addEventListener('keydown', (event) => {
+            if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+            event.preventDefault();
+            const next = event.key === 'ArrowRight' ? (index + 1) % installTabs.length : (index - 1 + installTabs.length) % installTabs.length;
+            installTabs[next].focus();
+            showInstallTab(installTabs[next]);
         });
     });
 
@@ -4398,7 +4769,7 @@ function openChartInstallModal(chart) {
         okButton.disabled = true;
         previewButton.disabled = true;
         btn.disabled = true; btn.textContent = 'Loading…';
-        ChartDefaultValues(chart.repoURL, chartName, requestedVersion)
+        ChartDefaultValues(chart.repoURL, repoName, chartName, requestedVersion)
             .then((vals) => {
                 if (!isCurrentModalRequest(scope) || reqId !== defaultsReqId) return;
                 if (versionSelect.value.trim() !== requestedVersion) {
@@ -4447,7 +4818,7 @@ function openChartInstallModal(chart) {
             values: valuesEditor.getValue(),
         };
         HelmInstallPreview(previewInput.namespace, previewInput.name,
-            chart.repoURL, chartName, previewInput.version, previewInput.values)
+            chart.repoURL, repoName, chartName, previewInput.version, previewInput.values)
             .then((diff) => {
                 if (!isCurrentModalRequest(scope) || reqId !== previewReqId) return;
                 if (!diff.chartDigest) throw new Error('Preview did not return a chart digest.');
@@ -4465,8 +4836,10 @@ function openChartInstallModal(chart) {
             });
     });
 
-    // Enrich from Artifact Hub (best-effort): version list, README, home/links.
-    ChartDetails(chart.repo, chartName)
+    // Artifact Hub supplies rich versions/README. A configured repository keeps
+    // install functional from its own authenticated source even when it is not
+    // published on Artifact Hub.
+    if (!repoName) ChartDetails(chart.repo, chartName)
         .then((d) => {
             if (!isCurrentModalRequest(scope)) return;
             if (d.versions && d.versions.length > 0) {
@@ -4485,21 +4858,26 @@ function openChartInstallModal(chart) {
         .catch(() => {
             if (isCurrentModalRequest(scope)) readmeBox.textContent = '(chart details unavailable — not on Artifact Hub or offline)';
         });
+    else readmeBox.textContent = 'README metadata is not available from the cached repository index. Values and install still use the configured repository directly.';
 }
 
 // ============ Helm repositories ============
 
 function loadHelmRepos(scope) {
+    $('helmrepos-loading').hidden = false;
+    $('helmrepos-empty').hidden = true;
     return ListHelmRepos()
         .then((repos) => {
-            if (!isCurrentViewRequest(scope)) return;
+            if (!isCurrentViewRequest(scope) || helmSection !== 'repositories') return;
             const body = $('helmrepos-body');
             body.innerHTML = '';
+            $('helmrepos-loading').hidden = true;
             $('helmrepos-empty').hidden = (repos?.length ?? 0) > 0;
             for (const r of repos ?? []) {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `<td>${esc(r.name)}</td>
                     <td>${extLink(r.url)}</td>
+                    <td>${r.authenticated ? '<span class="chip">Private</span>' : '<span class="dim">Public</span>'}</td>
                     <td class="col-actions">
                         <button class="btn btn-secondary btn-sm repo-browse" data-name="${esc(r.name)}">Browse</button>
                         <button class="btn btn-secondary btn-sm repo-remove" data-name="${esc(r.name)}">Remove</button>
@@ -4507,7 +4885,10 @@ function loadHelmRepos(scope) {
                 body.appendChild(tr);
             }
             body.querySelectorAll('.repo-browse').forEach((btn) =>
-                btn.addEventListener('click', () => openRepoBrowseModal(btn.dataset.name)));
+                btn.addEventListener('click', () => {
+                    helmCatalogPreferredSource = `repo:${btn.dataset.name}`;
+                    setHelmSection('catalog');
+                }));
             body.querySelectorAll('.repo-remove').forEach((btn) =>
                 btn.addEventListener('click', () => {
                     showConfirm(`Remove repo “${btn.dataset.name}”?`, { title: 'Remove repository', icon: '🗑', okText: 'Remove', danger: true }).then((ok) => {
@@ -4516,21 +4897,30 @@ function loadHelmRepos(scope) {
                     });
                 }));
         })
-        .catch((err) => viewError(scope, err));
+        .catch((err) => {
+            if (isCurrentViewRequest(scope) && helmSection === 'repositories') $('helmrepos-loading').hidden = true;
+            viewError(scope, err);
+        });
 }
 
 function openRepoAddModal() {
     openModal({
         title: 'Add Helm repository',
+        eyebrow: 'Helm repositories',
+        description: 'Add a chart source to the user-level Helm configuration on this machine.',
         ownerKey: 'helm-repo-add',
         okText: 'Add',
-        bodyHtml: `<div class="install-form">
-                <label>Name<input type="text" id="repo-name" class="pf-input" placeholder="bitnami"></label>
-                <label>URL<input type="text" id="repo-url" class="pf-input" placeholder="https://charts.bitnami.com/bitnami"></label>
-                <label>Username <span class="modal-hint">(private repos only)</span><input type="text" id="repo-user" class="pf-input" autocomplete="off"></label>
-                <label>Password<input type="password" id="repo-pass" class="pf-input" autocomplete="off"></label>
+        bodyHtml: `<div class="modal-context-card"><div><span class="helm-kicker">Local machine</span><strong>Shared with the Helm CLI</strong><p>This updates your user-level repositories.yaml, not the active cluster.</p></div><span class="chip">Local configuration</span></div>
+            <div class="modal-form-grid">
+                <label>Name<input type="text" id="repo-name" class="pf-input" placeholder="bitnami" autocomplete="off" autofocus><span class="field-note">A short identifier used in Catalog.</span></label>
+                <label>Repository URL<input type="url" id="repo-url" class="pf-input" placeholder="https://charts.bitnami.com/bitnami" autocomplete="url"><span class="field-note">The URL that serves index.yaml.</span></label>
             </div>
-            <p class="modal-hint">The index is downloaded to validate the URL — this needs internet access.</p>`,
+            <div class="modal-section-title"><strong>Authentication</strong><p>Optional. Leave both fields empty for a public repository.</p></div>
+            <div class="modal-form-grid">
+                <label>Username<input type="text" id="repo-user" class="pf-input" autocomplete="username"></label>
+                <label>Password<input type="password" id="repo-pass" class="pf-input" autocomplete="new-password"></label>
+            </div>
+            <p class="modal-inline-note"><span aria-hidden="true">↓</span>The repository index is downloaded once to validate this source, so adding it requires network access.</p>`,
         onOk: () => {
             const name = $('repo-name').value.trim();
             const url = $('repo-url').value.trim();
@@ -4538,38 +4928,6 @@ function openRepoAddModal() {
             return AddHelmRepo(name, url, $('repo-user').value, $('repo-pass').value).then(() => refreshCurrentView());
         },
     });
-}
-
-function openRepoBrowseModal(name) {
-    const scope = openModal({
-        title: `Browse ${name}`,
-        ownerKey: modalOwner('helm-repo-browse', name),
-        okText: 'Close',
-        bodyHtml: `<div class="chart-search-row">
-                <input id="repo-filter" class="pf-input no-enter-submit" style="flex:1" type="text" placeholder="Filter charts…" autocomplete="off">
-            </div>
-            <div id="repo-browse-results" class="chart-results"><p class="empty-inline">Loading…</p></div>`,
-        onOk: () => Promise.resolve(),
-    });
-    const filterInput = $('repo-filter');
-    const resultsBox = $('repo-browse-results');
-    let all = [];
-    const render = () => {
-        if (!isCurrentModalRequest(scope)) return;
-        const q = filterInput.value.trim().toLowerCase();
-        const filtered = q ? all.filter((c) => c.name.toLowerCase().includes(q)) : all;
-        renderChartResults(filtered, resultsBox);
-    };
-    BrowseHelmRepo(name)
-        .then((charts) => {
-            if (!isCurrentModalRequest(scope)) return;
-            all = charts || [];
-            render();
-        })
-        .catch((err) => {
-            if (isCurrentModalRequest(scope)) resultsBox.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
-        });
-    filterInput.addEventListener('input', render);
 }
 
 $('btn-repo-add').addEventListener('click', openRepoAddModal);
@@ -4720,7 +5078,12 @@ function renderAIContextChips() {
 function showAIContext() {
     openModal({
         title: 'What Kubby sends to the AI',
+        eyebrow: 'AI privacy',
+        description: 'Inspect the complete resource context attached to questions in this thread.',
         okText: 'Close',
+        okStyle: 'secondary',
+        cancelText: null,
+        size: 'editor',
         bodyHtml: `<p class="modal-hint" style="margin-top:0">
                 This text is sent to <strong>${esc($('ai-provider-badge').textContent || 'your provider')}</strong>
                 with every question in this thread, together with the questions themselves. Nothing else leaves this machine.
@@ -4904,14 +5267,12 @@ function openSettingsModal() {
     let hasStoredKey = false;
     openModal({
         title: 'Settings',
+        eyebrow: 'Application',
+        description: 'Configure the AI assistant and review build diagnostics stored on this machine.',
         okText: 'Save',
-        bodyHtml: `<div class="about-row" style="margin-bottom:0.4rem"><span class="about-label">AI assistant</span></div>
-            <p class="modal-hint" style="margin-top:0">
-                When you ask a question, Kubby sends that resource's <strong>events, recent logs and manifest</strong>
-                to the provider you pick here — and nothing else. Your key is stored only on this machine, in
-                <code>%AppData%/kubby/ai.json</code>.
-            </p>
-            <div class="settings-ai-form" style="margin-top:0.7rem">
+        bodyHtml: `<div class="modal-context-card"><div><span class="helm-kicker">AI assistant</span><strong>Your evidence, your provider</strong><p>Questions include the selected resource's events, recent logs and manifest. The API key stays in <code>%AppData%/kubby/ai.json</code> on this machine.</p></div><span class="chip">Local key storage</span></div>
+            <div class="modal-section-title"><strong>Provider</strong><p>Choose where Kubby sends questions and resource evidence.</p></div>
+            <div class="settings-ai-form">
                 <label>Provider
                     <select id="ai-provider" class="pf-input">
                         <option value="">— Choose one —</option>
@@ -4934,10 +5295,10 @@ function openSettingsModal() {
             <p class="modal-hint" id="ai-hint"></p>
             <div class="about-box">
                 <div class="about-row">
-                    <span class="about-label">About</span>
+                    <span class="about-label">Build information</span>
                     <span class="about-version mono" id="about-version">…</span>
                 </div>
-                <p class="modal-hint" style="margin:0.35rem 0 0.5rem">
+                <p class="modal-hint settings-diagnostics-note">
                     Reporting a problem? <strong>Copy diagnostics</strong> gathers the version, this machine's
                     platform, the connected cluster's Kubernetes version and capabilities, and the last error
                     shown — no API key, no kubeconfig content, no resource data. Review it before sharing.

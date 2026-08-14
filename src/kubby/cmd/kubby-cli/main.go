@@ -606,7 +606,7 @@ func main() {
 	}
 	root.AddCommand(helmSearchCmd)
 
-	var hiNs, hiRepo, hiChart, hiVersion string
+	var hiNs, hiRepo, hiRepoName, hiChart, hiVersion string
 	helmInstallCmd := &cobra.Command{
 		Use:   "helm-install <release>",
 		Short: "Install a Helm chart from a repo URL",
@@ -616,11 +616,11 @@ func main() {
 			if err != nil {
 				return err
 			}
-			preview, err := k8sclient.HelmInstallPreview(cluster, hiNs, args[0], hiRepo, hiChart, hiVersion, "")
+			preview, err := k8sclient.HelmInstallPreview(cluster, hiNs, args[0], hiRepo, hiRepoName, hiChart, hiVersion, "")
 			if err != nil {
 				return fmt.Errorf("preview install: %w", err)
 			}
-			if err := k8sclient.HelmInstall(cluster, hiNs, args[0], hiRepo, hiChart, hiVersion, "", preview.ChartDigest); err != nil {
+			if err := k8sclient.HelmInstall(cluster, hiNs, args[0], hiRepo, hiRepoName, hiChart, hiVersion, "", preview.ChartDigest); err != nil {
 				return err
 			}
 			fmt.Println("installed")
@@ -629,6 +629,7 @@ func main() {
 	}
 	helmInstallCmd.Flags().StringVarP(&hiNs, "namespace", "n", "default", "namespace")
 	helmInstallCmd.Flags().StringVar(&hiRepo, "repo", "", "chart repo URL")
+	helmInstallCmd.Flags().StringVar(&hiRepoName, "repo-name", "", "configured Helm repository name (uses its saved credentials)")
 	helmInstallCmd.Flags().StringVar(&hiChart, "chart", "", "chart name")
 	helmInstallCmd.Flags().StringVar(&hiVersion, "version", "", "chart version")
 	root.AddCommand(helmInstallCmd)
@@ -676,7 +677,7 @@ func main() {
 		Short: "Fetch a chart's default values.yaml from its repo",
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			vals, err := k8sclient.ChartDefaultValues(args[0], args[1], args[2])
+			vals, err := k8sclient.ChartDefaultValues(args[0], "", args[1], args[2])
 			if err != nil {
 				return err
 			}

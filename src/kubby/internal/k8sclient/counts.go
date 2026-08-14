@@ -126,7 +126,7 @@ func SidebarCounts(ctx context.Context, c *Cluster, namespace string, includeClu
 	// Helm reads and decodes release Secrets through the Helm SDK — by far the
 	// slowest tally, which is exactly why it must not block the others.
 	go1(func() {
-		if x, err := ListHelmReleases(ctx, c.Clientset, namespace); err == nil {
+		if x, err := ListHelmReleases(ctx, c.Meta, namespace); err == nil {
 			add(NavCount{"helm", len(x), countErrors(len(x), func(i int) bool { return x[i].IsError })})
 		}
 	})

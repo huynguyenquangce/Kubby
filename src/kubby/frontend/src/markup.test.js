@@ -22,6 +22,27 @@ test('modal dismiss controls do not pass MouseEvent as a modal scope', () => {
     assert.doesNotMatch(mainJS, /addEventListener\('click', closeModal\)/);
 });
 
+test('all application modals share the structured header, footer, and focus contract', () => {
+    for (const id of ['modal-eyebrow', 'modal-description', 'modal-close', 'modal-foot', 'modal-error']) {
+        assert.match(indexHTML, new RegExp(`id="${id}"|class="[^"]*${id}[^"]*"`));
+    }
+    assert.match(indexHTML, /class="modal-foot-secondary"/);
+    assert.match(indexHTML, /class="modal-foot-actions"/);
+    assert.match(mainJS, /function trapOverlayFocus\(container, event\)/);
+    assert.match(mainJS, /modalReturnFocus/);
+    assert.match(mainJS, /dialogReturnFocus/);
+    assert.match(mainJS, /danger && cancelText !== null \? cancelBtn/);
+});
+
+test('Helm repository modal uses aligned source and optional credential sections', () => {
+    const opener = mainJS.match(/function openRepoAddModal\(\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    assert.match(opener, /eyebrow: 'Helm repositories'/);
+    assert.doesNotMatch(opener, /wide: true/);
+    assert.match(opener, /class="modal-form-grid"/);
+    assert.match(opener, /<strong>Authentication<\/strong>/);
+    assert.match(opener, /Leave both fields empty for a public repository/);
+});
+
 test('port-forward manager exposes global and drawer lifecycle controls', () => {
     for (const id of ['btn-port-forwards', 'pf-manager', 'pf-global-list', 'pf-stop-all', 'pf-keep-running', 'pf-toast']) {
         assert.match(indexHTML, new RegExp(`id="${id}"`));
@@ -76,8 +97,20 @@ test('overview avoids duplicate node usage and exposes a one-call cluster struct
 test('live logs use owned batches and a bounded buffer', () => {
     assert.match(mainJS, /EventsOn\('loglines'/);
     assert.match(mainJS, /new LineRingBuffer\(5000\)/);
+    assert.match(mainJS, /new IncrementalLogView\(\$\('logs-view'\), logLines\.capacity\)/);
     assert.match(mainJS, /batch\.streamId !== activeLogStreamID/);
     assert.doesNotMatch(mainJS, /EventsOn\('logline'/);
+});
+
+test('drawer lazily loads tabs and shares one Pod container request', () => {
+    const opener = mainJS.match(/function openDrawer\(ref\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    assert.match(opener, /resetDrawerLoads\(scope\)/);
+    assert.match(opener, /setDrawerTab\(ref\.tab \?\? 'details'\)/);
+    assert.doesNotMatch(opener, /\bloadDetails\(|\bloadYAML\(|\bprepareLogs\(|\bprepareTerminal\(/);
+
+    const tabSetter = mainJS.match(/function setDrawerTab\(name\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+    assert.match(tabSetter, /ensureDrawerTabLoaded\(name\)/);
+    assert.equal([...mainJS.matchAll(/\bPodContainers\(/g)].length, 1);
 });
 
 test('previously direct cluster writes cross the confirmation boundary', () => {
@@ -93,4 +126,23 @@ test('Helm install requires the digest from an exact successful preview', () => 
     assert.match(mainJS, /approvedPreview\.digest/);
     assert.match(mainJS, /diff\.chartDigest/);
     assert.match(mainJS, /Preview this exact release, namespace, version, and values before installing/);
+});
+
+test('Helm is one workflow-oriented workspace instead of split navigation', () => {
+    assert.equal((indexHTML.match(/data-view="helm"/g) ?? []).length, 1);
+    assert.doesNotMatch(indexHTML, /data-view="helmrepos"/);
+    for (const section of ['releases', 'catalog', 'repositories']) {
+        assert.match(indexHTML, new RegExp(`data-helm-section="${section}"`));
+        assert.match(indexHTML, new RegExp(`data-helm-panel="${section}"`));
+    }
+    assert.match(mainJS, /helmCatalogPreferredSource/);
+    assert.match(mainJS, /openHelmDetailModal\(ref, initialTab = 'resources'\)/);
+});
+
+test('Helm upgrade is disabled until an exact preview owns values and revision', () => {
+    assert.match(mainJS, /Values changed — preview again before upgrading/);
+    assert.match(mainJS, /approvedPreview\.revision, approvedPreview\.valuesDigest/);
+    assert.match(mainJS, /diff\.releaseRevision/);
+    assert.match(mainJS, /diff\.valuesDigest/);
+    assert.doesNotMatch(mainJS, /HelmUpgradeValues\(ref\.namespace, ref\.name, vals\)\.then/);
 });

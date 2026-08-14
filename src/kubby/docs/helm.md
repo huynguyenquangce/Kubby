@@ -18,12 +18,21 @@ action.Configuration.Init(getter, namespace, "secret", logf)
 ```
 
 `"secret"` is the Helm 3 storage driver — releases live as Secrets of type
-`helm.sh/release.v1`. That is also how `ListHelmReleases` finds them without the
-SDK.
+`helm.sh/release.v1`. `ListHelmReleases` reads only partial Secret metadata,
+filters to that type, and keeps the newest numeric revision for each
+namespace/name pair. Never list typed Secrets here: their compressed release
+payload is large and every historical revision would otherwise appear as a
+separate release.
 
 ## What is implemented
 
-**Releases** — list; resources with live health; values / manifest / notes;
+The frontend presents these capabilities as one **Helm workspace** with three
+peer tabs: Releases, Catalog, and Repositories. Repositories are chart sources,
+not cluster resources, so they show the local-machine scope explicitly instead
+of inheriting the namespace filter.
+
+**Releases** — current-revision summary and list; resources with live health;
+values / manifest / notes;
 history with diff-vs-current and rollback; upgrade values with a **dry-run preview
 diff**; run tests; uninstall.
 
@@ -42,6 +51,20 @@ maintainer and home links.
   Install re-resolves then compares the archive against the approved digest
   before Helm can write. Do not make the digest optional: mutable chart repos
   otherwise create a preview/install time-of-check/time-of-use gap.
+- **Upgrade preview pins both inputs.** It returns the current release revision
+  and SHA-256 of the exact values text. Upgrade supplies both back to the backend,
+  which rejects a stale release or changed values. Keep this validation in Go;
+  disabling the frontend button is useful guidance, not a safety boundary.
+- **Configured repositories retain their identity.** Browse results carry a
+  `SourceID` (the repository name). Chart defaults, preview and install pass it
+  back so the backend can load credentials, client certificates and TLS options
+  from the user's Helm configuration. A URL alone is insufficient for a private
+  repository. The UI never receives those credentials.
+- **Manifest identity is the full GVK.** Resource rows retain `apiVersion` and use
+  discovery-derived scope plus a group-qualified `Kind.group` reference when
+  opening the generic resource drawer. Unknown/custom kinds are dynamically read
+  and report `unknown` health rather than being presented as healthy. Live health
+  reads use bounded concurrency.
 - **Legacy Helm OpenPGP verification stays disabled.** Helm v3 still links the
   deprecated `golang.org/x/crypto/openpgp` implementation, for which
   `govulncheck` reports GO-2026-5932 with no fixed version. Kubby never enables
@@ -69,8 +92,10 @@ maintainer and home links.
 
 ```powershell
 go run ./cmd/kubby-cli helm-search <query>
+go run ./cmd/kubby-cli helm-install <release> -n <namespace> --repo <url> --repo-name <configured-name> --chart <chart> --version <version>
 ```
 
-The rest of the Helm surface is exercised through the GUI; a local kind cluster
-with one small chart installed is enough to cover list → values → history →
-rollback.
+The install command performs the same pinned preview/install sequence as the UI.
+Use a disposable local kind cluster for it because it writes resources. The rest
+of the Helm surface is exercised through the GUI; one small chart is enough to
+cover list → resources → values → history → rollback.

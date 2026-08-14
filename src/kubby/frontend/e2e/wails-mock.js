@@ -13,7 +13,36 @@ const DEFAULT_FIXTURES = {
         { view: 'pods', count: 6, errors: 1 },
         { view: 'deployments', count: 2, errors: 1 },
         { view: 'services', count: 2, errors: 0 },
+        { view: 'helm', count: 1, errors: 0 },
     ],
+    ListHelmReleases: [
+        { namespace: 'payments', name: 'checkout', revision: '4', status: 'deployed', updated: '3m', isError: false, isPending: false },
+    ],
+    HelmGet: {
+        name: 'checkout', namespace: 'payments', revision: 4, status: 'deployed', chart: 'checkout-2.4.0', appVersion: '1.8.2',
+        values: 'replicaCount: 2\n', manifest: 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: checkout\n', notes: 'Checkout is ready.',
+    },
+    HelmReleaseResources: [
+        { apiVersion: 'apps/v1', kind: 'Deployment', refKind: 'Deployment', namespace: 'payments', name: 'checkout', status: '2/2 ready', health: 'healthy', ready: true },
+        { apiVersion: 'v1', kind: 'Service', refKind: 'Service', namespace: 'payments', name: 'checkout', status: 'Present', health: 'unknown', ready: false },
+    ],
+    HelmHistory: [
+        { revision: 4, status: 'deployed', chart: 'checkout-2.4.0', updated: '3m', description: 'Upgrade complete' },
+        { revision: 3, status: 'superseded', chart: 'checkout-2.3.0', updated: '2d', description: 'Upgrade complete' },
+    ],
+    ListHelmRepos: [
+        { name: 'team-charts', url: 'https://charts.example.test', authenticated: true },
+    ],
+    SearchCharts: [
+        { name: 'nginx', normalizedName: 'nginx', repo: 'bitnami', repoURL: 'https://charts.bitnami.com/bitnami', sourceID: '', version: '18.2.1', appVersion: '1.27.1', description: 'Web server', stars: 2200 },
+    ],
+    BrowseHelmRepo: [
+        { name: 'checkout', normalizedName: 'checkout', repo: 'team-charts', repoURL: 'https://charts.example.test', sourceID: 'team-charts', version: '2.4.0', versions: ['2.4.0', '2.3.0'], appVersion: '1.8.2', description: 'Checkout service' },
+    ],
+    ChartDetails: { versions: ['18.2.1', '18.1.0'], readme: '# nginx', homeURL: 'https://nginx.org', maintainers: ['Kubby Test'], links: [] },
+    ChartDefaultValues: 'replicaCount: 1\n',
+    HelmInstallPreview: { current: '', proposed: 'apiVersion: v1\nkind: Service\n', chartDigest: 'sha256:test-chart' },
+    HelmUpgradePreview: { current: 'replicaCount: 1\n', proposed: 'replicaCount: 2\n', releaseRevision: 4, valuesDigest: 'sha256:test-values' },
     CustomKinds: { kinds: [], overflow: 0, total: 0 },
     CanI: {
         verbs: {

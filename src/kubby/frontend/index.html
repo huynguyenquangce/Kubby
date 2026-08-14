@@ -195,8 +195,7 @@
                     <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Ecosystem</span></button>
                     <div class="nav-items">
                         <button class="nav-item" data-view="crds"><svg class="ico"><use href="#i-crds"/></svg><span class="nav-label">CRDs</span></button>
-                        <button class="nav-item" data-view="helm"><svg class="ico"><use href="#i-helm"/></svg><span class="nav-label">Helm Releases</span></button>
-                        <button class="nav-item" data-view="helmrepos"><svg class="ico"><use href="#i-helmrepos"/></svg><span class="nav-label">Helm Repos</span></button>
+                        <button class="nav-item" data-view="helm"><svg class="ico"><use href="#i-helm"/></svg><span class="nav-label">Helm</span></button>
                         <button class="nav-item" data-view="resourcequotas"><svg class="ico"><use href="#i-resourcequotas"/></svg><span class="nav-label">ResourceQuotas</span></button>
                         <button class="nav-item" data-view="limitranges"><svg class="ico"><use href="#i-limitranges"/></svg><span class="nav-label">LimitRanges</span></button>
                     </div>
@@ -721,28 +720,60 @@
                     </div>
                 </section>
 
-                <!-- Helm Releases -->
+                <!-- Helm workspace: cluster releases, chart discovery, and local repositories. -->
                 <section id="view-helm" class="view" hidden>
-                    <div class="view-toolbar">
-                        <button id="btn-helm-search" class="btn btn-primary btn-sm">🔍 Search &amp; install charts</button>
-                    </div>
-                    <div class="card">
-                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Revision</th><th>Status</th></tr></thead>
-                            <tbody id="helm-body"></tbody></table>
-                        <p class="empty-inline" id="helm-empty" hidden>No Helm releases found (Helm 3 stores them as Secrets).</p>
-                    </div>
-                </section>
+                    <div class="helm-workspace">
+                        <div class="helm-workspace-tabs" role="tablist" aria-label="Helm workspace">
+                            <button class="helm-workspace-tab active" type="button" role="tab" aria-selected="true" aria-controls="helm-panel-releases" data-helm-section="releases">Releases</button>
+                            <button class="helm-workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="helm-panel-catalog" data-helm-section="catalog">Catalog</button>
+                            <button class="helm-workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="helm-panel-repositories" data-helm-section="repositories">Repositories</button>
+                        </div>
 
-                <!-- Helm Repositories -->
-                <section id="view-helmrepos" class="view" hidden>
-                    <div class="view-toolbar">
-                        <button id="btn-repo-add" class="btn btn-primary btn-sm">+ Add repo</button>
-                        <button id="btn-repo-update" class="btn btn-secondary btn-sm">↻ Update all</button>
-                    </div>
-                    <div class="card">
-                        <table><thead><tr><th>Name</th><th>URL</th><th>Actions</th></tr></thead>
-                            <tbody id="helmrepos-body"></tbody></table>
-                        <p class="empty-inline" id="helmrepos-empty" hidden>No repositories yet. Click “+ Add repo” (e.g. bitnami → https://charts.bitnami.com/bitnami).</p>
+                        <div id="helm-panel-releases" class="helm-workspace-panel" role="tabpanel" data-helm-panel="releases">
+                            <div class="helm-summary" aria-label="Release health summary">
+                                <div class="helm-summary-card"><span>Total releases</span><strong id="helm-total">—</strong></div>
+                                <div class="helm-summary-card helm-summary-ok"><span>Deployed</span><strong id="helm-deployed">—</strong></div>
+                                <div class="helm-summary-card helm-summary-warn"><span>Pending</span><strong id="helm-pending">—</strong></div>
+                                <div class="helm-summary-card helm-summary-bad"><span>Failed</span><strong id="helm-failed">—</strong></div>
+                            </div>
+                            <div class="helm-panel-toolbar">
+                                <label class="helm-inline-search"><svg class="view-search-ico"><use href="#i-search"/></svg><input id="helm-release-filter" type="search" placeholder="Filter releases…" autocomplete="off"><span id="helm-release-count"></span></label>
+                                <button id="btn-helm-search" class="btn btn-primary btn-sm">Browse charts</button>
+                            </div>
+                            <div class="card helm-table-card">
+                                <table class="plain helm-table"><thead><tr><th>Name</th><th>Namespace</th><th>Revision</th><th>Status</th><th>Updated</th><th class="no-sort col-actions">Actions</th></tr></thead>
+                                    <tbody id="helm-body"></tbody></table>
+                                <div class="helm-loading" id="helm-loading">Loading releases…</div>
+                                <div class="helm-empty-state" id="helm-empty" hidden><strong>No releases in this scope</strong><span>Browse the catalog to install a chart, or switch namespaces.</span><button class="btn btn-primary btn-sm" id="helm-empty-browse">Browse charts</button></div>
+                            </div>
+                        </div>
+
+                        <div id="helm-panel-catalog" class="helm-workspace-panel" role="tabpanel" data-helm-panel="catalog" hidden>
+                            <div class="helm-catalog-head">
+                                <div><span class="helm-kicker">Discover</span><h3>Find a chart to install</h3><p>Search Artifact Hub or browse a repository configured on this machine.</p></div>
+                            </div>
+                            <div class="helm-catalog-search">
+                                <label><span>Source</span><select id="helm-catalog-source" class="pf-input"><option value="artifacthub">Artifact Hub</option></select></label>
+                                <label class="helm-catalog-query"><span>Chart</span><input id="chart-query" class="pf-input no-enter-submit" type="search" placeholder="nginx, redis, prometheus…" autocomplete="off"></label>
+                                <button id="chart-search-go" class="btn btn-primary">Search</button>
+                            </div>
+                            <p id="helm-catalog-hint" class="modal-hint">Artifact Hub search requires internet access.</p>
+                            <div id="chart-results" class="chart-results helm-catalog-results"><div class="helm-empty-state"><strong>Start with a chart name</strong><span>Results stay here while you inspect and configure a chart.</span></div></div>
+                        </div>
+
+                        <div id="helm-panel-repositories" class="helm-workspace-panel" role="tabpanel" data-helm-panel="repositories" hidden>
+                            <div class="helm-local-note"><div><span class="helm-kicker">Local machine</span><strong>Shared with the Helm CLI</strong><p>Changes here update your user-level <span class="mono">repositories.yaml</span>, not the active cluster.</p></div><span class="chip">Local configuration</span></div>
+                            <div class="helm-panel-toolbar">
+                                <div></div>
+                                <div class="view-toolbar"><button id="btn-repo-add" class="btn btn-primary btn-sm">+ Add repository</button><button id="btn-repo-update" class="btn btn-secondary btn-sm">↻ Update all</button></div>
+                            </div>
+                            <div class="card helm-table-card">
+                                <table class="plain helm-table"><thead><tr><th>Name</th><th>URL</th><th>Access</th><th class="no-sort col-actions">Actions</th></tr></thead>
+                                    <tbody id="helmrepos-body"></tbody></table>
+                                <div class="helm-loading" id="helmrepos-loading">Loading repositories…</div>
+                                <div class="helm-empty-state" id="helmrepos-empty" hidden><strong>No repositories configured</strong><span>Add a repository to browse its chart catalog locally.</span></div>
+                            </div>
+                        </div>
                     </div>
                 </section>
 
@@ -964,17 +995,24 @@
         <div id="modal-backdrop" class="modal-backdrop" hidden></div>
         <div id="modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <header class="modal-head">
-                <h2 id="modal-title">Modal</h2>
-                <button id="modal-close" class="icon-btn" title="Close" aria-label="Close this dialog">✕</button>
+                <div class="modal-heading">
+                    <span id="modal-eyebrow" class="modal-eyebrow" hidden></span>
+                    <h2 id="modal-title">Modal</h2>
+                    <p id="modal-description" class="modal-description" hidden></p>
+                </div>
+                <button id="modal-close" class="modal-close" type="button" title="Close" aria-label="Close this dialog">✕</button>
             </header>
             <div id="modal-body" class="modal-body"></div>
-            <p id="modal-error" class="error" hidden></p>
+            <div id="modal-error" class="modal-error" role="alert" hidden><span aria-hidden="true">!</span><p></p></div>
             <footer class="modal-foot">
-                <button id="modal-cancel" class="btn btn-secondary btn-sm">Cancel</button>
-                <!-- Optional secondary action, e.g. Import YAML's dry-run Preview.
-                     Shown only when openModal() is given an extra action. -->
-                <button id="modal-extra" class="btn btn-secondary btn-sm" hidden></button>
-                <button id="modal-ok" class="btn btn-primary btn-sm">OK</button>
+                <div class="modal-foot-secondary">
+                    <!-- Optional contextual action, e.g. Import YAML's dry-run Preview. -->
+                    <button id="modal-extra" class="btn btn-secondary" hidden></button>
+                </div>
+                <div class="modal-foot-actions">
+                    <button id="modal-cancel" class="btn btn-secondary">Cancel</button>
+                    <button id="modal-ok" class="btn btn-primary">OK</button>
+                </div>
             </footer>
         </div>
 
@@ -982,13 +1020,13 @@
         <div id="dialog-backdrop" class="dialog-backdrop" hidden></div>
         <div id="dialog" class="dialog" hidden role="alertdialog" aria-modal="true" aria-labelledby="dialog-title">
             <header class="dialog-head">
-                <span id="dialog-icon" class="dialog-icon">💬</span>
-                <h2 id="dialog-title">Notice</h2>
+                <span id="dialog-icon" class="dialog-icon" aria-hidden="true">💬</span>
+                <div><span id="dialog-eyebrow" class="dialog-eyebrow">Notice</span><h2 id="dialog-title">Notice</h2></div>
             </header>
             <div id="dialog-message" class="dialog-message"></div>
             <footer class="dialog-foot">
-                <button id="dialog-cancel" class="btn btn-secondary btn-sm">Cancel</button>
-                <button id="dialog-ok" class="btn btn-primary btn-sm">OK</button>
+                <button id="dialog-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="dialog-ok" class="btn btn-primary">OK</button>
             </footer>
         </div>
     </div>

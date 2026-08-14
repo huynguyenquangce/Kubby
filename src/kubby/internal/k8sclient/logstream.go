@@ -10,7 +10,7 @@ import (
 
 const (
 	logBatchInterval = 40 * time.Millisecond
-	logBatchSize     = 64
+	logBatchSize     = 512
 )
 
 // StreamLogs follows a container's logs, emitting small batches until the
@@ -82,18 +82,23 @@ func emitLogBatches(
 	}
 
 	for {
+		// Once a batch is full, stop consuming until the next tick. EventsEmit
+		// queues work onto the WebView thread and does not provide backpressure;
+		// flushing immediately at every size limit can therefore build an
+		// unbounded UI queue for a very noisy Pod.
+		input := lines
+		if len(batch) >= maxBatch {
+			input = nil
+		}
 		select {
 		case <-ctx.Done():
 			return false
-		case line, ok := <-lines:
+		case line, ok := <-input:
 			if !ok {
 				flush()
 				return true
 			}
 			batch = append(batch, line)
-			if len(batch) >= maxBatch {
-				flush()
-			}
 		case <-ticker.C:
 			flush()
 		}

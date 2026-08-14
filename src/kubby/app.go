@@ -575,7 +575,7 @@ func (a *App) ListHelmReleases(ns string) ([]k8sclient.HelmReleaseInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return k8sclient.ListHelmReleases(a.ctx, cluster.Clientset, ns)
+	return k8sclient.ListHelmReleases(a.ctx, cluster.Meta, ns)
 }
 
 // ---- Helm SDK: release management + search + install ----
@@ -608,19 +608,19 @@ func (a *App) HelmUninstall(namespace, name string) error {
 	}
 	return k8sclient.HelmUninstall(cluster, namespace, name)
 }
-func (a *App) HelmUpgradeValues(namespace, name, valuesYAML string) error {
+func (a *App) HelmUpgradeValues(namespace, name, valuesYAML string, expectedRevision int, expectedValuesDigest string) error {
 	cluster, err := a.requireCluster()
 	if err != nil {
 		return err
 	}
-	return k8sclient.HelmUpgradeValues(cluster, namespace, name, valuesYAML)
+	return k8sclient.HelmUpgradeValues(cluster, namespace, name, valuesYAML, expectedRevision, expectedValuesDigest)
 }
-func (a *App) HelmInstall(namespace, releaseName, repoURL, chartName, version, valuesYAML, expectedDigest string) error {
+func (a *App) HelmInstall(namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML, expectedDigest string) error {
 	cluster, err := a.requireCluster()
 	if err != nil {
 		return err
 	}
-	return k8sclient.HelmInstall(cluster, namespace, releaseName, repoURL, chartName, version, valuesYAML, expectedDigest)
+	return k8sclient.HelmInstall(cluster, namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML, expectedDigest)
 }
 
 // SearchCharts queries Artifact Hub (needs internet). No cluster required.
@@ -630,15 +630,15 @@ func (a *App) SearchCharts(query string) ([]k8sclient.ChartSearchResult, error) 
 func (a *App) ChartDetails(repo, chartName string) (*k8sclient.ChartDetail, error) {
 	return k8sclient.ChartDetails(a.ctx, repo, chartName)
 }
-func (a *App) ChartDefaultValues(repoURL, chartName, version string) (string, error) {
-	return k8sclient.ChartDefaultValues(repoURL, chartName, version)
+func (a *App) ChartDefaultValues(repoURL, repoName, chartName, version string) (string, error) {
+	return k8sclient.ChartDefaultValues(repoURL, repoName, chartName, version)
 }
-func (a *App) HelmInstallPreview(namespace, releaseName, repoURL, chartName, version, valuesYAML string) (*k8sclient.HelmDiff, error) {
+func (a *App) HelmInstallPreview(namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML string) (*k8sclient.HelmDiff, error) {
 	cluster, err := a.requireCluster()
 	if err != nil {
 		return nil, err
 	}
-	return k8sclient.HelmInstallPreview(cluster, namespace, releaseName, repoURL, chartName, version, valuesYAML)
+	return k8sclient.HelmInstallPreview(cluster, namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML)
 }
 func (a *App) HelmUpgradePreview(namespace, name, valuesYAML string) (*k8sclient.HelmDiff, error) {
 	cluster, err := a.requireCluster()

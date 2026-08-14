@@ -43,4 +43,13 @@ test('small overlays stay within the viewport and preserve reduced motion', () =
     assert.match(responsiveCSS, /@media \(max-width: 620px\)[\s\S]*?\.drawer\s*\{\s*width:\s*100vw/);
     assert.match(responsiveCSS, /\.modal\s*\{[\s\S]*?width:\s*calc\(100vw - 1rem\)/);
     assert.match(responsiveCSS, /@media \(prefers-reduced-motion: reduce\)/);
+    assert.match(responsiveCSS, /@media \(max-width: 620px\)[\s\S]*?\.modal-form-grid\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
+    assert.match(responsiveCSS, /@media \(max-width: 420px\)[\s\S]*?\.modal-foot-actions \.btn/);
+});
+
+test('Helm workspace stacks summaries, forms, and action rows at narrow widths', () => {
+    assert.match(responsiveCSS, /@container workspace \(max-width: 960px\)[\s\S]*?\.helm-summary/);
+    assert.match(responsiveCSS, /@container workspace \(max-width: 760px\)[\s\S]*?\.helm-catalog-search/);
+    assert.match(responsiveCSS, /@container workspace \(max-width: 520px\)[\s\S]*?\.helm-workspace-tabs/);
+    assert.match(responsiveCSS, /@container workspace \(max-width: 520px\)[\s\S]*?\.helm-res-row/);
 });

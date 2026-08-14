@@ -30,20 +30,26 @@ must also close it — `closeDrawer()` calls `stopFollow()` and `stopExec()`.
 
 ## Log streaming
 
-`StartLogStream` runs a goroutine emitting `loglines`. `StreamLogs` flushes at 64
-lines or 40 ms, whichever comes first, so a noisy Pod cannot cross the Wails
-bridge and repaint the WebView once per line. **One stream at a time**: each
+`StartLogStream` runs a goroutine emitting `loglines`. `StreamLogs` flushes at
+most 512 lines once per 40 ms, capping enqueue pressure on Wails' asynchronous
+WebView event queue at 25 events/s. Once a batch is full, the reader applies
+backpressure until the next tick instead of emitting another event immediately.
+**One stream at a time**: each
 `StartLogStream` cancels its predecessor, and `App.logCancel` holds the cancel
 func behind `logMu`.
 
 Every batch/error carries the frontend-created stream ID. Cancellation cannot
 retract an event already crossing the bridge, so the frontend accepts it only
 when that ID still owns the open Pod/container. Lines enter a 5,000-line ring
-buffer and rendering is coalesced to one animation frame; do not restore
-`slice(-5000)` or render inside a per-line listener.
+buffer and rendering is coalesced to one animation frame. Normal following
+appends text-node chunks and trims only the oldest chunks; a full `<pre>` rebuild
+is reserved for static loads and filter changes. Do not restore `slice(-5000)`,
+per-line bridge events, or whole-history repainting for every live batch.
 
 The drawer's Logs tab adds a container picker, a client-side line filter, and
-download-to-file. Non-follow reads use `PodLogs(..., tail)`.
+download-to-file. Drawer tabs load on first selection rather than fetching every
+hidden tab on open, and Logs/Terminal share the same owned `PodContainers`
+promise. Non-follow reads use `PodLogs(..., tail)`.
 
 ## Exec (Terminal)
 

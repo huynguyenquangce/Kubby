@@ -25,17 +25,20 @@ cd ..
 | `app_portforward_test.go` | global tunnel registry preserves target metadata, lists deterministically, invalidates pending starts, and synchronizes List/Stop |
 | `app_connection_test.go` | duplicate context names retain stable independent IDs; registry switching is race-safe; pending exec/port-forward cannot survive drawer cancellation or cluster transitions |
 | `frontend/src/request-scope.test.js` | late view/drawer/modal responses cannot overwrite a newer owner; stale Helm/chart values cannot cross modal or version boundaries |
+| `frontend/src/markup.test.js` | one Helm workspace owns Releases/Catalog/Repositories; exact-preview ownership; shared modal hierarchy, focus contract, and aligned repository form |
 | `frontend/src/port-forward-state.test.js` | hydration/upsert, closed-event removal, drawer-close policy, and late Start ownership |
 | `frontend/src/terminal-io.test.js` | raw input ordering, write-error recovery, and valid PTY dimensions |
-| `frontend/src/log-buffer.test.js` | 5,000-line cap and frame-coalesced live-log rendering |
+| `frontend/src/log-buffer.test.js` | 5,000-line cap, frame coalescing, incremental append and oldest-chunk trimming |
 | `frontend/src/line-diff.test.js` | diff reconstruction, pathological fallback, and 10,000-line regression budget |
-| `frontend/src/responsive.test.js` | canonical off-canvas navigation, shrinkable top-bar labels, workspace container breakpoints, and viewport-bounded overlays |
-| `frontend/e2e/ui.spec.js` | paste/connect workflow, every built-in view, responsive/zoom matrix, mobile navigation ownership, Structure filtering, Pod drawer/YAML, and Settings modal dismissal |
+| `frontend/src/responsive.test.js` | canonical off-canvas navigation, shrinkable top-bar labels, workspace container breakpoints, viewport-bounded overlays, and single-column modal forms/actions |
+| `frontend/e2e/ui.spec.js` | paste/connect workflow, every built-in view, responsive/zoom matrix, mobile navigation ownership, Structure filtering, Pod drawer/YAML, mobile Settings layout, and Helm detail/install/repository/destructive-dialog modal behavior |
 | `frontend/e2e/visual.spec.js` | stable Chromium baselines for light/dark Overview and Cluster Structure; failures retain screenshot, video, and trace evidence |
 | `internal/k8sclient/exec_test.go` | initial/coalesced terminal resize plus concurrent, unblocking queue close |
-| `internal/k8sclient/logstream_test.go` | batch size, quiet-stream timer flush, final flush and cancel semantics |
+| `internal/k8sclient/logstream_test.go` | rate-limited full batches, quiet-stream timer flush, final flush and cancel semantics |
 | `internal/k8sclient/overview_test.go` | one Node/Pod list, partial failures, terminating-Pod exclusion, and 10k benchmark |
 | `internal/k8sclient/structure_test.go` | complete entry/internal/unexposed topology, ReplicaSet→Deployment collapse, unhealthy propagation, terminating-Pod exclusion, and one list per kind |
+| `internal/k8sclient/helmreleases_test.go` | metadata-only Helm storage listing, newest-revision deduplication, terminating-release exclusion, and pending status classification |
+| `internal/k8sclient/helm_test.go` | chart-source setup, pinned preview digests, and live Helm resource-health edge cases |
 
 None of them need a cluster. The Playwright suite needs its pinned Chromium and
 Linux system libraries installed as described in `docs/BUILD.md`. Everything else is still verified through
@@ -211,6 +214,18 @@ own scrolling region may scroll horizontally. When the sidebar collapses, the me
 button must expose the same namespace, cluster and dynamically discovered resource
 navigation, then close through selection, backdrop and Escape. This manual native
 check remains required even when the passive Edge layout measurements pass.
+
+Helm visual check: in light and dark mode, visit Releases, Catalog, and
+Repositories at desktop width and at 150–200% zoom. Confirm the workspace tabs
+retain focus/selection, summary cards do not imply pending releases are failures,
+and repository scope says Local machine. Open a release and traverse every detail
+tab; resource health must distinguish healthy, pending, degraded, missing,
+forbidden, and unknown. For Install and Upgrade, edit a field after preview and
+confirm the primary action disables until previewed again. Installing into a new
+namespace must select that namespace and open the new release. Private-repository
+checks require a test repository and must confirm credentials never render in the
+DOM, errors, or screenshots. This is a native WebView check; headless tests and a
+successful Wails build do not prove it.
 
 ## This machine
 

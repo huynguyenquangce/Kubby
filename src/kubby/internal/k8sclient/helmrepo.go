@@ -31,8 +31,9 @@ func writeHelmRepoFile(f *repo.File, path string) error {
 
 // HelmRepo is one configured chart repository.
 type HelmRepo struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
+	Name          string `json:"name"`
+	URL           string `json:"url"`
+	Authenticated bool   `json:"authenticated"`
 }
 
 // loadOrNewRepoFile loads the Helm repositories.yaml, returning a fresh empty
@@ -55,14 +56,15 @@ func ListHelmRepos() ([]HelmRepo, error) {
 	}
 	out := make([]HelmRepo, 0, len(f.Repositories))
 	for _, e := range f.Repositories {
-		out = append(out, HelmRepo{Name: e.Name, URL: e.URL})
+		out = append(out, HelmRepo{Name: e.Name, URL: e.URL, Authenticated: e.Username != "" || e.Password != "" || e.CertFile != ""})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
-// AddHelmRepo adds (or updates) a repo entry and downloads its index to validate
-// the URL is reachable. username/password are optional (private repos).
+// AddHelmRepo adds a repo entry and downloads its index to validate the URL.
+// Reusing a name is an explicit conflict: silently replacing it would also
+// mutate the user's Helm CLI configuration and could discard credentials.
 func AddHelmRepo(name, url, username, password string) error {
 	name = strings.TrimSpace(name)
 	url = strings.TrimSpace(url)
@@ -77,6 +79,9 @@ func AddHelmRepo(name, url, username, password string) error {
 	f, err := loadOrNewRepoFile(settings.RepositoryConfig)
 	if err != nil {
 		return err
+	}
+	if f.Get(name) != nil {
+		return fmt.Errorf("repo %q already exists; remove it first if you intend to replace its URL or credentials", name)
 	}
 
 	entry := &repo.Entry{Name: name, URL: url, Username: username, Password: password}
@@ -175,14 +180,20 @@ func BrowseHelmRepo(name string) ([]ChartSearchResult, error) {
 			continue
 		}
 		v := versions[0] // latest after SortEntries
+		availableVersions := make([]string, 0, len(versions))
+		for _, available := range versions {
+			availableVersions = append(availableVersions, available.Version)
+		}
 		out = append(out, ChartSearchResult{
 			Name:        chartName,
 			NormName:    chartName,
 			Repo:        name,
 			RepoURL:     entry.URL,
+			SourceID:    name,
 			Version:     v.Version,
 			AppVersion:  v.AppVersion,
 			Description: v.Description,
+			Versions:    availableVersions,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

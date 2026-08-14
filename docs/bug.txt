@@ -322,6 +322,17 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   history; late events also had no Pod/container owner. Fix: backend batches of up
   to 64 lines/40 ms, an owned stream ID on batch/error events, a 5,000-line ring
   buffer, and animation-frame render coalescing.
+- [2026-08-14] Pod logs still opened slowly and a sufficiently noisy Follow stream
+  could continue to fall behind after the first batching fix. Three remaining
+  causes compounded: opening a Pod eagerly loaded hidden Details/YAML/Terminal
+  tabs (including two identical Pod container requests); a full 64-line batch
+  emitted immediately, so Wails' asynchronous WebView queue still had no rate
+  bound; and every animation frame still replaced all 5,000 retained lines in the
+  `<pre>`. Fix: drawer tabs now load only on first selection and share one owned
+  container request; the backend emits at most one 512-line batch per 40 ms and
+  applies reader backpressure between ticks; unfiltered Follow appends text-node
+  chunks and removes only the oldest chunks. Static loads and filter changes keep
+  the deliberate full rebuild because they replace the visible result set.
 - [2026-08-11] Large YAML and Helm diffs could freeze or exhaust the WebView.
   Cause: `lineDiff` retained an `(n+1)*(m+1)` Int32 LCS matrix; two 10,000-line
   documents implied roughly 382 MiB before render costs. Fix: a line-oriented
@@ -352,3 +363,26 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   collapses top-bar labels while retaining accessible actions, reuses the canonical
   sidebar as an off-canvas menu, and bounds narrow drawers/modals. Regression tests
   pin the navigation contract, container breakpoints and overlay sizing.
+- [2026-08-14] Helm split one workflow across two sidebar sections and could show
+  misleading or unsafe results. Root causes: release discovery transferred typed
+  Secret payloads and rendered every stored revision as a release; private-repo
+  browse results lost the configured repository identity and therefore its
+  credentials; manifest resources discarded API group/scope and treated unknown
+  kinds as healthy; and upgrade execution was not bound to the exact previewed
+  release revision and values. Fix: one responsive Releases/Catalog/Repositories
+  workspace; metadata-only newest-revision summaries with pending distinct from
+  failed; backend-only configured-source credentials; discovery-qualified resource
+  identity with explicit health states; and digest/revision-bound install and
+  upgrade previews. Install now selects its destination namespace and reopens the
+  resulting release instead of making a successful install appear missing.
+- [2026-08-14] Add Helm repository rendered as an oversized, sparse modal with a
+  visibly dropped Username input, and the same shell gave unrelated application
+  dialogs weak hierarchy and duplicate Cancel/Close actions. Root causes: the repo
+  form reused a wrapping flex row whose label helper text changed one column's
+  height, the dialog unnecessarily requested the 1040 px wide variant, and the
+  generic modal exposed only a title/body/footer without size, description, focus,
+  or action-role contracts. Fix: a shared compact/standard/editor/wide modal system
+  with structured header and footer, responsive grid primitives, fixed inline error
+  treatment, focus trap/restore, and tone-aware stackable dialogs. The repository
+  form is now a standard-width source section plus a separately aligned optional
+  authentication section; destructive confirmation focuses Cancel by default.

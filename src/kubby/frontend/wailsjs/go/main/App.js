@@ -38,8 +38,8 @@ export function CancelPortForwardStart(arg1) {
   return window['go']['main']['App']['CancelPortForwardStart'](arg1);
 }
 
-export function ChartDefaultValues(arg1, arg2, arg3) {
-  return window['go']['main']['App']['ChartDefaultValues'](arg1, arg2, arg3);
+export function ChartDefaultValues(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ChartDefaultValues'](arg1, arg2, arg3, arg4);
 }
 
 export function ChartDetails(arg1, arg2) {
@@ -142,12 +142,12 @@ export function HelmHistory(arg1, arg2) {
   return window['go']['main']['App']['HelmHistory'](arg1, arg2);
 }
 
-export function HelmInstall(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
-  return window['go']['main']['App']['HelmInstall'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+export function HelmInstall(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['HelmInstall'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
-export function HelmInstallPreview(arg1, arg2, arg3, arg4, arg5, arg6) {
-  return window['go']['main']['App']['HelmInstallPreview'](arg1, arg2, arg3, arg4, arg5, arg6);
+export function HelmInstallPreview(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['HelmInstallPreview'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 export function HelmReleaseResources(arg1, arg2) {
@@ -170,8 +170,8 @@ export function HelmUpgradePreview(arg1, arg2, arg3) {
   return window['go']['main']['App']['HelmUpgradePreview'](arg1, arg2, arg3);
 }
 
-export function HelmUpgradeValues(arg1, arg2, arg3) {
-  return window['go']['main']['App']['HelmUpgradeValues'](arg1, arg2, arg3);
+export function HelmUpgradeValues(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['HelmUpgradeValues'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function IngressTree(arg1, arg2) {
