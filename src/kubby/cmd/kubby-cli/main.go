@@ -505,12 +505,13 @@ func main() {
 				command = strings.Join(args[1:], " ")
 			}
 			done := make(chan error, 1)
-			session, err := k8sclient.StartExec(context.Background(), cluster, execNs, args[0], execContainer, execShell, 80, 24,
+			session, resolvedShell, err := k8sclient.StartExec(context.Background(), cluster, execNs, args[0], execContainer, execShell, 80, 24,
 				func(out string) { fmt.Print(out) },
 				func(err error) { done <- err })
 			if err != nil {
 				return err
 			}
+			fmt.Fprintf(os.Stderr, "connected via %s\n", resolvedShell)
 			_ = session.Write(command + "\nexit\n")
 			select {
 			case err := <-done:
@@ -523,7 +524,7 @@ func main() {
 	}
 	execCmd.Flags().StringVarP(&execNs, "namespace", "n", "default", "namespace")
 	execCmd.Flags().StringVarP(&execContainer, "container", "c", "", "container")
-	execCmd.Flags().StringVar(&execShell, "shell", "/bin/sh", "shell")
+	execCmd.Flags().StringVar(&execShell, "shell", "auto", "shell path or auto (Bash first)")
 	root.AddCommand(execCmd)
 
 	cordonCmd := &cobra.Command{

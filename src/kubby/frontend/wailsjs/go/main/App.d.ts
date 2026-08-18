@@ -237,7 +237,7 @@ export function SidebarCounts(arg1:string,arg2:boolean):Promise<Array<k8sclient.
 
 export function Sizing(arg1:string):Promise<k8sclient.SizingReport>;
 
-export function StartExec(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number,arg7:number):Promise<void>;
+export function StartExec(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number,arg7:number):Promise<string>;
 
 export function StartLogStream(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 

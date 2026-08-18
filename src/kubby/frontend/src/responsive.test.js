@@ -36,6 +36,8 @@ test('component breakpoints use the remaining workspace width', () => {
         assert.match(responsiveCSS, new RegExp(`@container workspace \\(max-width: ${width}\\)`));
     }
     assert.match(responsiveCSS, /@container workspace \(max-width: 760px\)[\s\S]*?\.structure-path\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
+    assert.match(responsiveCSS, /@container workspace \(max-width: 760px\)[\s\S]*?\.term-controls\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+    assert.match(responsiveCSS, /@container workspace \(max-width: 520px\)[\s\S]*?\.term-brand > span/);
     assert.match(responsiveCSS, /@container workspace \(max-width: 960px\)[\s\S]*?\.overview-grid/);
 });
 

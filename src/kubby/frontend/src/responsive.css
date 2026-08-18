@@ -271,6 +271,29 @@
 }
 
 @container workspace (max-width: 760px) {
+    .term-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .term-controls {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .term-controls select {
+        width: 100%;
+        max-width: none;
+    }
+
+    .term-frame-head {
+        grid-template-columns: auto minmax(0, 1fr) auto;
+    }
+
+    .term-key-hint {
+        display: none;
+    }
+
     .page-heading {
         align-items: flex-start;
         flex-direction: column;
@@ -341,6 +364,19 @@
 }
 
 @container workspace (max-width: 520px) {
+    .term-brand > span,
+    .term-footer > span:last-child {
+        display: none;
+    }
+
+    #term-session-label {
+        text-align: left;
+    }
+
+    .term-frame-button {
+        padding-inline: 0.4rem;
+    }
+
     .structure-summary {
         grid-template-columns: minmax(0, 1fr);
     }

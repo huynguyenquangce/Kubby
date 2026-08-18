@@ -125,6 +125,14 @@ uses an intentionally dark Nord surface in both app themes so ANSI colours and
 shell contrast remain stable. See [streaming.md](streaming.md) for the PTY and
 resize lifecycle.
 
+Terminal is an auto-attaching **Kubby Shell** workspace rather than a connection
+form. Its first owned container result starts one Bash-first `auto` session;
+changing Container or Shell deliberately reconnects, while a closed/failed
+session waits for Retry instead of looping. Keep the selected Pod/container,
+resolved shell, connection state, and session actions visible in the terminal
+chrome. The explicit shell choices are recovery controls, not a prerequisite for
+the common path.
+
 ### Async ownership
 
 Wails calls cannot be cancelled reliably, so every async response must prove it

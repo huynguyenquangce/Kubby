@@ -41,6 +41,7 @@ type App struct {
 	pfEpoch            uint64
 	execMu             sync.Mutex
 	execSess           *k8sclient.ExecSession // the active exec session, if any
+	execCancel         context.CancelFunc     // also cancels shell discovery before a session exists
 	execEpoch          uint64                 // invalidates callbacks from an older shell
 	recentMu           sync.Mutex
 	recentPath         func() (string, error)
@@ -50,7 +51,7 @@ type App struct {
 }
 
 type portForwardStarter func(context.Context, *k8sclient.Cluster, string, string, string, int, int) (*k8sclient.PortForwardSession, <-chan struct{}, <-chan error, error)
-type execStarter func(context.Context, *k8sclient.Cluster, string, string, string, string, int, int, func(string), func(error)) (*k8sclient.ExecSession, error)
+type execStarter func(context.Context, *k8sclient.Cluster, string, string, string, string, int, int, func(string), func(error)) (*k8sclient.ExecSession, string, error)
 
 type clusterEntry struct {
 	id      string
@@ -1581,25 +1582,31 @@ func (a *App) ListPortForwards() []PortForwardInfo {
 
 // StartExec opens an interactive shell into a container. Output is emitted as
 // "exec-output" events; "exec-closed" fires when the shell exits.
-func (a *App) StartExec(sessionID, namespace, pod, container, shell string, cols, rows int) error {
+func (a *App) StartExec(sessionID, namespace, pod, container, shell string, cols, rows int) (string, error) {
 	if strings.TrimSpace(sessionID) == "" {
-		return fmt.Errorf("exec session ID is required")
+		return "", fmt.Errorf("exec session ID is required")
 	}
 	a.transitionMu.Lock()
 	cluster, err := a.requireCluster()
 	if err != nil {
 		a.transitionMu.Unlock()
-		return err
+		return "", err
 	}
 	// Reserve a generation before opening the stream. Stop/switch can invalidate
 	// the pending session without allowing its output into a newer drawer.
 	a.execMu.Lock()
 	previous := a.execSess
+	previousCancel := a.execCancel
+	execCtx, execCancel := context.WithCancel(a.ctx)
 	a.execSess = nil
+	a.execCancel = execCancel
 	a.execEpoch++
 	epoch := a.execEpoch
 	a.execMu.Unlock()
 	a.transitionMu.Unlock()
+	if previousCancel != nil {
+		previousCancel()
+	}
 	if previous != nil {
 		previous.Close()
 	}
@@ -1608,7 +1615,7 @@ func (a *App) StartExec(sessionID, namespace, pod, container, shell string, cols
 	if starter == nil {
 		starter = k8sclient.StartExec
 	}
-	session, err := starter(a.ctx, cluster, namespace, pod, container, shell, cols, rows,
+	session, resolvedShell, err := starter(execCtx, cluster, namespace, pod, container, shell, cols, rows,
 		func(out string) {
 			a.execMu.Lock()
 			current := a.execEpoch == epoch
@@ -1623,9 +1630,14 @@ func (a *App) StartExec(sessionID, namespace, pod, container, shell string, cols
 				a.execMu.Unlock()
 				return
 			}
+			cancel := a.execCancel
 			a.execSess = nil
+			a.execCancel = nil
 			a.execEpoch++
 			a.execMu.Unlock()
+			if cancel != nil {
+				cancel()
+			}
 			msg := ""
 			if err != nil {
 				msg = err.Error()
@@ -1633,17 +1645,25 @@ func (a *App) StartExec(sessionID, namespace, pod, container, shell string, cols
 			wailsruntime.EventsEmit(a.ctx, "exec-closed", ExecClosedEvent{SessionID: sessionID, Message: msg})
 		})
 	if err != nil {
-		return err
+		a.execMu.Lock()
+		if a.execEpoch == epoch {
+			a.execCancel = nil
+			a.execEpoch++
+		}
+		a.execMu.Unlock()
+		execCancel()
+		return "", err
 	}
 	a.execMu.Lock()
 	if a.execEpoch != epoch {
 		a.execMu.Unlock()
+		execCancel()
 		session.Close()
-		return fmt.Errorf("exec session was cancelled while connecting")
+		return "", fmt.Errorf("exec session was cancelled while connecting")
 	}
 	a.execSess = session
 	a.execMu.Unlock()
-	return nil
+	return resolvedShell, nil
 }
 
 // ExecWrite forwards keystrokes to the active exec session's stdin.
@@ -1671,9 +1691,14 @@ func (a *App) ExecResize(cols, rows int) {
 func (a *App) StopExec() {
 	a.execMu.Lock()
 	session := a.execSess
+	cancel := a.execCancel
 	a.execSess = nil
+	a.execCancel = nil
 	a.execEpoch++
 	a.execMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if session != nil {
 		session.Close()
 	}

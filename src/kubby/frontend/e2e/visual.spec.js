@@ -27,3 +27,20 @@ test('Cluster structure visual baseline', async ({ page }) => {
         mask: [page.locator('#pf-manager')],
     });
 });
+
+test('Pod Terminal visual baseline', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await connectDashboard(page, { theme: 'dark' });
+    await page.locator('.nav-item[data-view="pods"]').click();
+    await page.locator('#pods-body tr', { hasText: 'api-6df7fdd9f8-4zj8g' }).click();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await expect(page.locator('#term-status')).toHaveText('Attached · /bin/bash');
+    const sessionId = await page.evaluate(() => window.__wailsMock.calls
+        .filter((call) => call.method === 'StartExec').at(-1)?.args[0]);
+    await page.evaluate((id) => window.__wailsMock.emit('exec-output', {
+        sessionId: id,
+        data: '\u001b[36mkubby\u001b[0m@api:/workspace$ printf "ready\\n"\r\nready\r\nkubby@api:/workspace$ ',
+    }), sessionId);
+    await page.locator('.term-toolbar-copy').click();
+    await expect(page.locator('#drawer')).toHaveScreenshot('pod-terminal.png');
+});

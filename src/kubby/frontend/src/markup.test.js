@@ -84,13 +84,18 @@ test('port-forward manager exposes global and drawer lifecycle controls', () => 
 });
 
 test('terminal uses a PTY emulator instead of a line-mode command input', () => {
-    for (const id of ['term-surface', 'term-container', 'term-shell', 'btn-term-start', 'btn-term-stop']) {
-        assert.match(indexHTML, new RegExp(`id="${id}"`));
+    const terminal = indexHTML.match(/<!-- Terminal panel \(Pod\) -->[\s\S]*?<!-- Port Forward panel/)?.[0] ?? '';
+    for (const id of ['term-surface', 'term-container', 'term-shell', 'btn-term-start', 'btn-term-stop', 'btn-term-clear']) {
+        assert.match(terminal, new RegExp(`id="${id}"`));
     }
-    assert.doesNotMatch(indexHTML, /id="term-input"/);
+    assert.doesNotMatch(terminal, /id="term-input"/);
+    assert.match(terminal, /<option value="auto">Auto · Bash first<\/option>/);
+    assert.doesNotMatch(terminal, />Connect<\/button>/);
     assert.match(mainJS, /from '@xterm\/xterm'/);
     assert.match(mainJS, /from '@xterm\/addon-fit'/);
     assert.match(mainJS, /ExecResize/);
+    assert.match(mainJS, /requestAnimationFrame\(\(\) => startTerminal\(scope\)\)/);
+    assert.match(mainJS, /\.then\(\(resolvedShell\) =>/);
 });
 
 test('overview uses bundled typography and dashboard-specific table contracts', () => {
@@ -103,6 +108,11 @@ test('overview uses bundled typography and dashboard-specific table contracts', 
     const tables = [...overview.matchAll(/<table([^>]*)>/g)];
     assert.ok(tables.length >= 2);
     for (const table of tables) assert.match(table[1], /class="[^"]*plain[^"]*"/);
+});
+
+test('overview empty-state icon sizing does not constrain its message', () => {
+    assert.match(optionBCSS, /\.overview-empty > span:first-child\s*\{/);
+    assert.doesNotMatch(optionBCSS, /\.overview-empty > span\s*\{/);
 });
 
 test('overview loads through one snapshot binding', () => {

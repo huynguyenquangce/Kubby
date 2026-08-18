@@ -525,7 +525,7 @@ input:focus { outline: none; border-color: #8fb0ff; box-shadow: 0 0 0 3px var(--
 .overview-count { color: var(--muted); font-variant-numeric: tabular-nums; }
 .overview-event-message { color: var(--muted); }
 .overview-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 132px; margin: 0; padding: 1.5rem; color: var(--muted); text-align: center; }
-.overview-empty > span { display: grid; place-items: center; width: 30px; height: 30px; margin-bottom: 0.5rem; border-radius: 9px; background: var(--ok-bg); color: var(--ok); font-weight: 750; }
+.overview-empty > span:first-child { display: grid; place-items: center; width: 30px; height: 30px; margin-bottom: 0.5rem; border-radius: 9px; background: var(--ok-bg); color: var(--ok); font-weight: 750; }
 .overview-empty-unavailable > span:first-child { background: var(--bg); color: var(--muted); }
 .overview-empty strong { color: var(--ink); font-size: 0.76rem; }
 .overview-empty small { margin-top: 0.14rem; font-size: 0.65rem; }

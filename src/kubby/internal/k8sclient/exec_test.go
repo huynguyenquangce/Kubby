@@ -1,12 +1,62 @@
 package k8sclient
 
 import (
+	"errors"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"k8s.io/client-go/tools/remotecommand"
 )
+
+func TestSelectExecShellPrefersBashThenFallsBack(t *testing.T) {
+	var tried []string
+	got, err := selectExecShell("auto", func(shell string) error {
+		tried = append(tried, shell)
+		if shell == "/bin/ash" {
+			return nil
+		}
+		return errors.New("missing")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/bin/ash" {
+		t.Fatalf("selected shell = %q, want /bin/ash", got)
+	}
+	want := []string{"/bin/bash", "/usr/bin/bash", "/bin/ash"}
+	if !reflect.DeepEqual(tried, want) {
+		t.Fatalf("probe order = %#v, want %#v", tried, want)
+	}
+}
+
+func TestSelectExecShellKeepsExplicitChoiceWithoutProbe(t *testing.T) {
+	probes := 0
+	got, err := selectExecShell(" /custom/zsh ", func(string) error {
+		probes++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/custom/zsh" || probes != 0 {
+		t.Fatalf("explicit selection = %q with %d probes, want /custom/zsh with none", got, probes)
+	}
+}
+
+func TestSelectExecShellExplainsDistrolessContainer(t *testing.T) {
+	_, err := selectExecShell("", func(string) error { return errors.New("not found") })
+	if err == nil {
+		t.Fatal("missing shells returned nil error")
+	}
+	for _, shell := range automaticShellCandidates {
+		if !strings.Contains(err.Error(), shell) {
+			t.Fatalf("error %q does not name attempted shell %q", err, shell)
+		}
+	}
+}
 
 func TestTerminalSizeQueueStartsWithInitialSizeAndCoalescesResize(t *testing.T) {
 	queue := newTerminalSizeQueue(120, 36)

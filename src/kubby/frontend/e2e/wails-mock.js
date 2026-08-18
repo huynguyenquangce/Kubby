@@ -3,6 +3,7 @@ const DEFAULT_FIXTURES = {
     ContextsFromContent: { contexts: ['kind-kubby-dev'], currentContext: 'kind-kubby-dev' },
     ConnectedClusters: [{ id: 'cluster-1', name: 'kind-kubby-dev', active: true }],
     ListPortForwards: [],
+    StartExec: '/bin/bash',
     ListNamespaces: [
         { name: 'default', status: 'Active' },
         { name: 'payments', status: 'Active' },
@@ -182,6 +183,9 @@ export async function installWailsMock(page, overrides = {}) {
                     const response = Object.prototype.hasOwnProperty.call(responses, method)
                         ? responses[method]
                         : [];
+                    if (response && typeof response === 'object' && response.__error) {
+                        return Promise.reject(new Error(String(response.__error)));
+                    }
                     return Promise.resolve(clone(response));
                 };
             },
@@ -229,7 +233,7 @@ export async function connectDashboard(page, options = {}) {
     await page.locator('#context-row').waitFor({ state: 'visible' });
     await page.locator('#btn-connect').click();
     await page.locator('#dashboard').waitFor({ state: 'visible' });
-    await page.locator('#cluster-health-title').filter({ hasText: '1 pod needs attention' }).waitFor();
+    await page.locator('#cluster-health-title').filter({ hasText: options.healthTitle ?? '1 pod needs attention' }).waitFor();
 }
 
 export function collectPageErrors(page) {

@@ -452,3 +452,17 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   that preserves danger/accent variants, a keyboard-navigable searchable namespace
   combobox backed by the canonical select state, and a top-mounted CodeMirror search
   panel with themed matches and next/previous controls.
+- [2026-08-19] The healthy Overview compressed “Nothing needs attention” into a
+  30 px column and gave the Attention panel an unnecessary scrollbar. Root cause:
+  the empty-state icon selector sized every direct `span`, including the wrapper
+  around both message lines. Fix: constrain the 30×30 treatment to the first-child
+  icon and pin the healthy empty-state layout at a narrow desktop viewport.
+- [2026-08-19] Pod Terminal still opened as a generic connection form and defaulted
+  blindly to `/bin/sh`, forcing an extra Connect click and making Bash-capable
+  containers feel as limited as minimal images. Root causes: the frontend treated
+  container/shell selection as a prerequisite instead of session metadata, while
+  the backend neither discovered a shell nor returned the one actually opened.
+  Fix: an auto-attaching Kubby Shell workspace, one Bash-first backend discovery
+  call with explicit fallbacks, truthful resolved-shell status, automatic owned
+  reconnect on selector changes, cancellable pending discovery, and Retry without
+  an error loop for distroless containers.

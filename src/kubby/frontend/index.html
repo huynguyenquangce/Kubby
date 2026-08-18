@@ -889,36 +889,42 @@
                 <section class="term-workspace">
                     <header class="term-toolbar">
                         <div class="term-toolbar-copy">
-                            <span class="term-kicker">Remote shell</span>
-                            <strong>Interactive terminal</strong>
+                            <span class="term-kicker">Kubby Shell</span>
+                            <strong>Container workspace</strong>
+                            <span>Auto-attaches with Bash-first discovery.</span>
                         </div>
                         <div class="term-controls">
                             <label>Container<select id="term-container"></select></label>
                             <label>Shell<select id="term-shell">
-                                <option value="/bin/sh">/bin/sh</option>
+                                <option value="auto">Auto · Bash first</option>
                                 <option value="/bin/bash">/bin/bash</option>
+                                <option value="/usr/bin/bash">/usr/bin/bash</option>
                                 <option value="/bin/ash">/bin/ash</option>
+                                <option value="/bin/sh">/bin/sh</option>
                             </select></label>
-                            <button id="btn-term-start" class="btn btn-primary btn-sm">Connect</button>
-                            <button id="btn-term-stop" class="btn btn-secondary btn-sm" hidden>Disconnect</button>
                         </div>
                     </header>
                     <div class="term-frame">
                         <div class="term-frame-head">
-                            <span class="term-window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                            <span class="term-brand"><b aria-hidden="true">K›</b><span>KUBBY / EXEC</span></span>
                             <span id="term-session-label">Not connected</span>
-                            <span class="term-key-hint"><kbd>Tab</kbd> sent to shell · <kbd>Ctrl C</kbd> interrupt</span>
+                            <span class="term-frame-actions">
+                                <span class="term-key-hint"><kbd>Tab</kbd> complete · <kbd>Ctrl C</kbd> interrupt</span>
+                                <button id="btn-term-clear" class="term-frame-button" type="button">Clear</button>
+                                <button id="btn-term-start" class="term-frame-button term-frame-button-accent" type="button">Retry</button>
+                                <button id="btn-term-stop" class="term-frame-button" type="button" hidden>Disconnect</button>
+                            </span>
                         </div>
                         <div id="term-surface" class="term-surface" aria-label="Interactive container terminal"></div>
                         <div id="term-placeholder" class="term-placeholder">
-                            <span class="term-placeholder-glyph" aria-hidden="true">›_</span>
-                            <strong>Ready for a remote shell</strong>
-                            <span>Choose a container and shell, then connect.</span>
+                            <span class="term-placeholder-glyph" aria-hidden="true">K›</span>
+                            <strong id="term-placeholder-title">Preparing Kubby Shell</strong>
+                            <span id="term-placeholder-copy">Finding the container and best available shell…</span>
                         </div>
                     </div>
                     <footer class="term-footer">
-                        <span id="term-status" class="term-status"><i></i>Disconnected</span>
-                        <span>Input is sent directly to the container PTY.</span>
+                        <span id="term-status" class="term-status" role="status" aria-live="polite"><i></i>Disconnected</span>
+                        <span>Remote PTY · UTF-8 · 5,000-line scrollback</span>
                     </footer>
                 </section>
             </div>

@@ -188,16 +188,17 @@ func TestLateExecStartCannotSurviveClusterSwitch(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var emit func(string)
-	a.execStarter = func(_ context.Context, _ *k8sclient.Cluster, _, _, _, _ string, _, _ int, output func(string), _ func(error)) (*k8sclient.ExecSession, error) {
+	a.execStarter = func(_ context.Context, _ *k8sclient.Cluster, _, _, _, _ string, _, _ int, output func(string), _ func(error)) (*k8sclient.ExecSession, string, error) {
 		emit = output
 		close(started)
 		<-release
-		return &k8sclient.ExecSession{}, nil
+		return &k8sclient.ExecSession{}, "/bin/bash", nil
 	}
 
 	result := make(chan error, 1)
 	go func() {
-		result <- a.StartExec("exec-a", "default", "api", "", "/bin/sh", 80, 24)
+		_, err := a.StartExec("exec-a", "default", "api", "", "/bin/sh", 80, 24)
+		result <- err
 	}()
 	<-started
 	if err := a.SwitchCluster(connections[1].ID); err != nil {
@@ -214,5 +215,59 @@ func TestLateExecStartCannotSurviveClusterSwitch(t *testing.T) {
 	defer a.execMu.Unlock()
 	if a.execSess != nil {
 		t.Fatal("late exec session was installed after cluster switch")
+	}
+}
+
+func TestStartExecReturnsResolvedShell(t *testing.T) {
+	a := NewApp()
+	a.storeVerifiedCluster("a", &k8sclient.Cluster{})
+	a.execStarter = func(_ context.Context, _ *k8sclient.Cluster, _, _, _, shell string, _, _ int, _ func(string), _ func(error)) (*k8sclient.ExecSession, string, error) {
+		if shell != "auto" {
+			t.Fatalf("requested shell = %q, want auto", shell)
+		}
+		return &k8sclient.ExecSession{}, "/bin/bash", nil
+	}
+
+	resolved, err := a.StartExec("exec-auto", "default", "api", "app", "auto", 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != "/bin/bash" {
+		t.Fatalf("resolved shell = %q, want /bin/bash", resolved)
+	}
+	a.StopExec()
+}
+
+func TestPendingExecShellDiscoveryIsCancelledOnClusterSwitch(t *testing.T) {
+	a := NewApp()
+	a.storeVerifiedCluster("a", &k8sclient.Cluster{})
+	a.storeVerifiedCluster("b", &k8sclient.Cluster{})
+	connections := a.ConnectedClusters()
+	if err := a.SwitchCluster(connections[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	a.execStarter = func(ctx context.Context, _ *k8sclient.Cluster, _, _, _, _ string, _, _ int, _ func(string), _ func(error)) (*k8sclient.ExecSession, string, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, "", ctx.Err()
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := a.StartExec("exec-probe", "default", "api", "app", "auto", 80, 24)
+		result <- err
+	}()
+	<-started
+	if err := a.SwitchCluster(connections[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "canceled") {
+			t.Fatalf("pending discovery returned %v, want cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cluster switch did not cancel pending shell discovery")
 	}
 }

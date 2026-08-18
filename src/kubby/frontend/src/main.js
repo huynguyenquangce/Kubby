@@ -2768,7 +2768,7 @@ function ensureTerminal() {
         lineHeight: 1.18,
         scrollback: 5000,
         theme: {
-            background: '#20242d', foreground: '#d8dee9', cursor: '#88c0d0', cursorAccent: '#20242d',
+            background: '#151b26', foreground: '#d8dee9', cursor: '#8fbcff', cursorAccent: '#151b26',
             selectionBackground: '#4c566a99', black: '#3b4252', red: '#bf616a', green: '#a3be8c',
             yellow: '#ebcb8b', blue: '#81a1c1', magenta: '#b48ead', cyan: '#88c0d0', white: '#e5e9f0',
             brightBlack: '#4c566a', brightRed: '#d06f79', brightGreen: '#b1d196', brightYellow: '#f0d399',
@@ -2808,6 +2808,11 @@ function setTerminalStatus(state, text) {
     status.innerHTML = `<i></i>${esc(text)}`;
 }
 
+function setTerminalPlaceholder(title, copy) {
+    $('term-placeholder-title').textContent = title;
+    $('term-placeholder-copy').textContent = copy;
+}
+
 function resetTerminalUI({ clear = false, preserveOutput = false } = {}) {
     execConnected = false;
     execAcceptOutput = false;
@@ -2816,10 +2821,12 @@ function resetTerminalUI({ clear = false, preserveOutput = false } = {}) {
     execWriter = () => Promise.resolve();
     $('btn-term-start').hidden = false;
     $('btn-term-start').disabled = false;
+    $('btn-term-start').textContent = 'Retry';
     $('btn-term-stop').hidden = true;
     $('term-container').disabled = false;
     $('term-shell').disabled = false;
     $('term-session-label').textContent = 'Not connected';
+    $('term-surface').setAttribute('aria-label', 'Interactive container terminal');
     setTerminalStatus('', 'Disconnected');
     if (clear) {
         execHasOutput = false;
@@ -2840,6 +2847,7 @@ EventsOn('exec-closed', (event) => {
     execHasOutput = true;
     ensureTerminal().write(`\r\n\x1b[90m[${suffix}]\x1b[0m\r\n`);
     resetTerminalUI({ preserveOutput: true });
+    setTerminalStatus('', 'Session ended');
 });
 
 function prepareTerminal(scope = activeDrawerScope) {
@@ -2848,6 +2856,10 @@ function prepareTerminal(scope = activeDrawerScope) {
     const select = $('term-container');
     select.innerHTML = '';
     resetTerminalUI({ clear: true });
+    $('btn-term-start').disabled = true;
+    $('btn-term-start').textContent = 'Attaching…';
+    setTerminalStatus('connecting', 'Discovering container…');
+    setTerminalPlaceholder('Preparing Kubby Shell', 'Finding the container and best available shell…');
     drawerPodContainers(scope)
         .then((containers) => {
             if (!isCurrentDrawerRequest(scope)) return;
@@ -2857,19 +2869,28 @@ function prepareTerminal(scope = activeDrawerScope) {
                 opt.textContent = c;
                 select.appendChild(opt);
             }
+            if (!select.options.length) {
+                resetTerminalUI();
+                setTerminalStatus('error', 'This Pod has no regular containers.');
+                setTerminalPlaceholder('No container available', 'Kubby Shell can attach only to a regular running container.');
+                return;
+            }
+            requestAnimationFrame(() => startTerminal(scope));
         })
         .catch((err) => {
             if (!isCurrentDrawerRequest(scope)) return;
+            resetTerminalUI();
             setTerminalStatus('error', errMsg(err));
+            setTerminalPlaceholder('Containers unavailable', 'Retry after the Pod becomes available or check your access.');
         });
 }
 
-$('btn-term-start').addEventListener('click', () => {
-    const ref = drawerRef;
-    const scope = activeDrawerScope;
-    if (!ref || !ref.isPod) return;
+function startTerminal(scope = activeDrawerScope) {
+    if (!scope || !isCurrentDrawerRequest(scope) || !scope.ref.isPod) return;
+    const ref = scope.ref;
     const container = $('term-container').value;
     const shell = $('term-shell').value;
+    if (!container) return;
     const terminal = ensureTerminal();
     const size = fitTerminal() ?? { cols: 80, rows: 24 };
     const inputEpoch = ++execInputEpoch;
@@ -2881,13 +2902,17 @@ $('btn-term-start').addEventListener('click', () => {
     terminal.reset();
     $('term-placeholder').hidden = true;
     $('btn-term-start').disabled = true;
+    $('btn-term-start').textContent = 'Attaching…';
+    $('btn-term-stop').hidden = true;
     $('term-container').disabled = true;
     $('term-shell').disabled = true;
-    $('term-session-label').textContent = `${ref.name} · ${container || 'default container'}`;
-    setTerminalStatus('connecting', 'Connecting…');
+    $('term-session-label').textContent = `${ref.namespace || 'default'} / ${ref.name} / ${container}`;
+    $('term-surface').setAttribute('aria-label', `Terminal for ${ref.name}, container ${container}`);
+    setTerminalStatus('connecting', shell === 'auto' ? 'Finding shell and attaching…' : `Attaching via ${shell}…`);
     StartExec(sessionID, ref.namespace, ref.name, container, shell, size.cols, size.rows)
-        .then(() => {
+        .then((resolvedShell) => {
             if (!isCurrentDrawerRequest(scope) || inputEpoch !== execInputEpoch) { StopExec(); return; }
+            const activeShell = typeof resolvedShell === 'string' && resolvedShell ? resolvedShell : shell;
             execConnected = true;
             execWriter = createSerialWriter(
                 (data) => inputEpoch === execInputEpoch ? ExecWrite(data) : Promise.resolve(),
@@ -2895,10 +2920,12 @@ $('btn-term-start').addEventListener('click', () => {
                     if (inputEpoch === execInputEpoch) setTerminalStatus('error', `Input failed: ${errMsg(err)}`);
                 },
             );
-            setTerminalStatus('connected', `Connected via ${shell}`);
-            $('btn-term-start').hidden = true;
+            setTerminalStatus('connected', `Attached · ${activeShell}`);
+            $('btn-term-start').textContent = 'Reconnect';
             $('btn-term-start').disabled = false;
             $('btn-term-stop').hidden = false;
+            $('term-container').disabled = false;
+            $('term-shell').disabled = false;
             ExecResize(terminal.cols, terminal.rows);
             terminal.focus();
         })
@@ -2906,15 +2933,22 @@ $('btn-term-start').addEventListener('click', () => {
             if (!isCurrentDrawerRequest(scope) || inputEpoch !== execInputEpoch) return;
             resetTerminalUI({ preserveOutput: true });
             setTerminalStatus('error', errMsg(err));
+            setTerminalPlaceholder('Shell unavailable', 'This may be a distroless image. Choose an explicit shell path or retry after the container is ready.');
         });
-});
+}
 
+$('btn-term-start').addEventListener('click', () => startTerminal());
 $('btn-term-stop').addEventListener('click', stopExec);
+$('btn-term-clear').addEventListener('click', () => execTerminal?.clear());
+$('term-container').addEventListener('change', () => startTerminal());
+$('term-shell').addEventListener('change', () => startTerminal());
 
 function stopExec() {
     const hadSession = execConnected || execAcceptOutput;
     resetTerminalUI({ preserveOutput: hadSession });
     if (hadSession) StopExec();
+    setTerminalStatus('', 'Disconnected by user');
+    setTerminalPlaceholder('Session disconnected', 'Select Retry whenever you want to attach again.');
 }
 
 // ---- Port forward ----

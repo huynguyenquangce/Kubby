@@ -1909,29 +1909,42 @@ tbody tr.selected:hover { background: #e0ebff; }
     display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem;
     margin-bottom: 0.75rem; padding: 0 0.1rem;
 }
-.term-toolbar-copy { display: flex; flex-direction: column; gap: 0.12rem; flex: 0 0 auto; }
-.term-toolbar-copy strong { font-size: 0.94rem; }
+.term-toolbar-copy { display: flex; flex-direction: column; gap: 0.12rem; flex: 0 1 auto; min-width: 0; }
+.term-toolbar-copy strong { color: var(--ink); font-size: 0.94rem; }
+.term-toolbar-copy > span:last-child { margin-top: 0.08rem; color: var(--muted); font-size: 0.68rem; }
 .term-kicker, .pf-section-kicker { color: var(--blue); font-size: 0.65rem; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
 .term-controls { display: flex; align-items: flex-end; justify-content: flex-end; gap: 0.5rem; min-width: 0; }
 .term-controls label { display: flex; flex-direction: column; gap: 0.24rem; color: var(--muted); font-size: 0.7rem; font-weight: 600; }
-.term-controls select { min-width: 118px; max-width: 180px; height: 32px; padding: 0.25rem 1.7rem 0.25rem 0.5rem; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--ink); font-size: 0.78rem; }
-.term-frame { position: relative; display: flex; flex: 1; min-height: 360px; overflow: hidden; border: 1px solid #3b4252; border-radius: 11px; background: #20242d; box-shadow: 0 10px 24px rgba(20, 24, 32, 0.18); }
-.term-frame-head { position: absolute; z-index: 2; inset: 0 0 auto; height: 36px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 0.75rem; border-bottom: 1px solid #3b4252; background: #292f3a; color: #9ca6b8; font-size: 0.68rem; }
-.term-window-dots { display: flex; gap: 5px; }
-.term-window-dots i { width: 8px; height: 8px; border-radius: 50%; background: #4c566a; }
-.term-window-dots i:first-child { background: #bf616a; }
-.term-window-dots i:nth-child(2) { background: #ebcb8b; }
-.term-window-dots i:nth-child(3) { background: #a3be8c; }
-#term-session-label { justify-self: center; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d8dee9; }
-.term-key-hint { justify-self: end; white-space: nowrap; }
+.term-controls select { min-width: 132px; max-width: 190px; height: 32px; padding: 0.25rem 1.7rem 0.25rem 0.5rem; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--ink); font-size: 0.78rem; }
+.term-frame {
+    position: relative; display: flex; flex: 1; min-height: 360px; overflow: hidden;
+    border: 1px solid #3b4860; border-left: 3px solid #5e81ff; border-radius: 12px;
+    background: #151b26; box-shadow: 0 14px 34px rgba(15, 23, 42, 0.24);
+}
+.term-frame-head {
+    position: absolute; z-index: 2; inset: 0 0 auto; height: 42px; display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.8rem;
+    padding: 0 0.72rem; border-bottom: 1px solid #344158;
+    background: linear-gradient(90deg, #1b2534, #202a3a); color: #9eabc0; font-size: 0.66rem;
+}
+.term-brand { display: inline-flex; align-items: center; gap: 0.45rem; color: #b8c5d9; font-size: 0.59rem; font-weight: 750; letter-spacing: 0.1em; white-space: nowrap; }
+.term-brand b { display: grid; place-items: center; width: 23px; height: 23px; border: 1px solid #50658a; border-radius: 6px; background: #26354a; color: #8fbcff; font-family: ui-monospace, monospace; font-size: 0.68rem; letter-spacing: -0.08em; }
+#term-session-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d8e1ef; font-family: ui-monospace, monospace; text-align: center; }
+.term-frame-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.38rem; min-width: 0; }
+.term-key-hint { margin-right: 0.2rem; white-space: nowrap; }
 .term-key-hint kbd { padding: 1px 4px; border-color: #4c566a; background: #343b49; color: #cdd5e2; box-shadow: none; font-size: 0.62rem; }
-.term-surface { position: absolute; inset: 36px 0 0; padding: 0.65rem 0.4rem 0.5rem 0.75rem; }
+.term-frame-button { height: 25px; padding: 0 0.48rem; border: 1px solid #43516a; border-radius: 6px; background: #263247; color: #cbd6e6; font: inherit; cursor: pointer; }
+.term-frame-button:hover { border-color: #62769a; background: #2d3b53; }
+.term-frame-button:focus-visible { outline: 2px solid #88c0d0; outline-offset: 1px; }
+.term-frame-button:disabled { opacity: 0.55; cursor: wait; }
+.term-frame-button-accent { border-color: #5478bd; background: #294779; color: #e7f0ff; }
+.term-surface { position: absolute; inset: 42px 0 0; padding: 0.7rem 0.45rem 0.55rem 0.8rem; }
 .term-surface .xterm { height: 100%; }
 .term-surface .xterm-viewport { scrollbar-color: #4c566a transparent; }
-.term-placeholder { position: absolute; z-index: 1; inset: 36px 0 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #8d98aa; pointer-events: none; }
-.term-placeholder-glyph { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 0.75rem; border: 1px solid #465064; border-radius: 12px; color: #88c0d0; background: #292f3a; font-family: ui-monospace, monospace; font-size: 1rem; font-weight: 700; }
+.term-placeholder { position: absolute; z-index: 1; inset: 42px 0 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 1.25rem; color: #8d98aa; text-align: center; pointer-events: none; }
+.term-placeholder-glyph { display: grid; place-items: center; width: 50px; height: 50px; margin-bottom: 0.75rem; border: 1px solid #50658a; border-radius: 13px; color: #8fbcff; background: linear-gradient(145deg, #26354a, #1d2939); box-shadow: 0 0 0 7px rgba(94, 129, 255, 0.07); font-family: ui-monospace, monospace; font-size: 0.95rem; font-weight: 750; letter-spacing: -0.08em; }
 .term-placeholder strong { color: #d8dee9; font-size: 0.86rem; }
-.term-placeholder > span:last-child { margin-top: 0.2rem; font-size: 0.73rem; }
+.term-placeholder > span:last-child { max-width: 360px; margin-top: 0.25rem; font-size: 0.72rem; line-height: 1.45; }
 .term-footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.55rem 0.15rem 0; color: var(--muted); font-size: 0.7rem; }
 .term-status { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--muted); }
 .term-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 3px color-mix(in srgb, var(--muted) 16%, transparent); }

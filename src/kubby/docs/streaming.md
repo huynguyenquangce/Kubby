@@ -66,6 +66,17 @@ tab or print `^[[A`. Hidden paths also require their leading dot (`.a<Tab>`), ju
 as they do in a native terminal. Do not label that transport working as an xterm
 failure.
 
+Opening the Terminal tab auto-attaches after its owned container lookup finishes.
+The default shell choice is `auto`: the backend probes `/bin/bash`,
+`/usr/bin/bash`, `/bin/ash`, then `/bin/sh` and opens the PTY with the first one
+that executes successfully. This probing and PTY creation stay behind the single
+`StartExec` bound call, which returns the resolved shell for truthful UI status.
+Users can still select an explicit shell when diagnosing an unusual image; an
+explicit choice is not silently replaced. A container or shell change reconnects
+once under the same drawer ownership. A normal shell exit or a failed discovery
+does not enter a retry loop — the user gets the preserved output and a Retry
+control. Distroless containers may legitimately have no supported shell.
+
 One session at a time. Frontend writes are serialized because Wails calls are
 promises and input order must not depend on bridge completion order. The App layer
 also owns an exec generation: Stop, drawer close, connection change, or a new Start
@@ -118,7 +129,8 @@ The port-forward check that actually proves it: forward something with an HTTP
 endpoint (`coredns:9153` works on a bare cluster) and `curl` it while the tunnel is
 held.
 
-The GUI check that actually proves exec interactivity: connect to a shell, type
-part of an existing path and press Tab, use Up to recall the command, then run a
+The GUI check that actually proves exec interactivity: open a Pod's Terminal tab
+and confirm it attaches without a Connect click, type part of an existing path
+and press Tab, use Up to recall the command, then run a
 cursor-addressing program such as `top` and resize the drawer/window. A headless
 bundle check cannot prove those WebView/PTY behaviours.

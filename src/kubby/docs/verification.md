@@ -26,7 +26,7 @@ cd ..
 | `internal/k8sclient/resources_status_test.go` | init/terminating Pod status, terminal Job conditions, and UID-qualified ownership |
 | `internal/k8sclient/netflow_test.go` | EndpointSlice readiness remains authoritative over Pod condition guesses |
 | `app_portforward_test.go` | global tunnel registry preserves target metadata, lists deterministically, invalidates pending starts, and synchronizes List/Stop |
-| `app_connection_test.go` | duplicate context names retain stable independent IDs; registry switching is race-safe; pending exec/port-forward/Helm work cannot survive cluster transitions; stale write ownership is rejected |
+| `app_connection_test.go` | duplicate context names retain stable independent IDs; registry switching is race-safe; pending exec shell discovery/port-forward/Helm work cannot survive cluster transitions; stale write ownership is rejected |
 | `recent_test.go` | concurrent recent updates remain valid, capped and private |
 | `frontend/src/request-scope.test.js` | late view/drawer/modal responses cannot overwrite a newer owner; stale Helm/chart values cannot cross modal or version boundaries |
 | `frontend/src/markup.test.js` | one Helm workspace owns Releases/Catalog/Repositories; exact-preview ownership; shared modal hierarchy, focus contract, and aligned repository form |
@@ -35,9 +35,9 @@ cd ..
 | `frontend/src/log-buffer.test.js` | 5,000-line cap, frame coalescing, incremental append and oldest-chunk trimming |
 | `frontend/src/line-diff.test.js` | diff reconstruction, pathological fallback, and 10,000-line regression budget |
 | `frontend/src/responsive.test.js` | canonical off-canvas navigation, shrinkable top-bar labels, workspace container breakpoints, viewport-bounded overlays, and single-column modal forms/actions |
-| `frontend/e2e/ui.spec.js` | paste/connect workflow, every built-in view, responsive/zoom matrix, mobile navigation ownership, Structure filtering, Pod drawer/YAML, mobile Settings layout, and Helm detail/install/repository/destructive-dialog modal behavior |
-| `frontend/e2e/visual.spec.js` | stable Chromium baselines for light/dark Overview and Cluster Structure; failures retain screenshot, video, and trace evidence |
-| `internal/k8sclient/exec_test.go` | initial/coalesced terminal resize plus concurrent, unblocking queue close |
+| `frontend/e2e/ui.spec.js` | paste/connect workflow, every built-in view, responsive/zoom matrix, mobile navigation ownership, Structure filtering, Pod drawer/YAML, Terminal auto-attach/reconnect/error behavior, mobile Settings layout, and Helm detail/install/repository/destructive-dialog modal behavior |
+| `frontend/e2e/visual.spec.js` | stable Chromium baselines for light/dark Overview, Cluster Structure, and the Pod Terminal; failures retain screenshot, video, and trace evidence |
+| `internal/k8sclient/exec_test.go` | Bash-first shell selection/fallback/error reporting, initial/coalesced terminal resize, and concurrent unblocking queue close |
 | `internal/k8sclient/logstream_test.go` | rate-limited full batches, quiet-stream timer flush, final flush and cancel semantics |
 | `internal/k8sclient/overview_test.go` | one Node/Pod list, partial failures, terminating-Pod exclusion, and 10k benchmark |
 | `internal/k8sclient/structure_test.go` | complete entry/internal/unexposed topology, ReplicaSet→Deployment collapse, unhealthy propagation, terminating-Pod exclusion, and one list per kind |
@@ -184,8 +184,10 @@ Multi-cluster identity manual check: add two kubeconfigs whose selected context 
 named `default`. The dropdown must show `default` and `default (2)`; switching each
 must reach its own API server, and disconnecting one must leave the other usable.
 
-Interactive terminal manual check: open a Pod's Terminal tab and connect, type a
-partial path or command and press **Tab**, use **Up** for history, send **Ctrl+C**,
+Interactive terminal manual check: open a Pod's Terminal tab and verify it attaches
+without a Connect click, prefers Bash when the image provides it, and reports the
+fallback shell truthfully otherwise. Type a partial path or command and press
+**Tab**, use **Up** for history, send **Ctrl+C**,
 then run `top` (or another cursor-addressing program) and resize the window. Input,
 ANSI output, cursor placement, and the remote program's dimensions must all remain
 correct. This cannot be claimed from the Node tests or a headless Wails build.

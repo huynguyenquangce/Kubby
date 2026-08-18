@@ -2,7 +2,9 @@ package k8sclient
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -119,31 +121,71 @@ func (w emitWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// StartExec opens an interactive shell into a container and streams its output
-// via the emit callback. It tries the given shell (e.g. "/bin/sh"). The session
-// runs until the shell exits or Close() is called.
-func StartExec(ctx context.Context, c *Cluster, namespace, pod, container, shell string, cols, rows int, emit func(string), onClose func(error)) (*ExecSession, error) {
-	if shell == "" {
-		shell = "/bin/sh"
-	}
+var automaticShellCandidates = []string{
+	"/bin/bash",
+	"/usr/bin/bash",
+	"/bin/ash",
+	"/bin/sh",
+}
 
+func selectExecShell(requested string, probe func(string) error) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested != "" && !strings.EqualFold(requested, "auto") {
+		return requested, nil
+	}
+	var lastErr error
+	for _, candidate := range automaticShellCandidates {
+		if err := probe(candidate); err == nil {
+			return candidate, nil
+		} else {
+			lastErr = err
+		}
+	}
+	return "", fmt.Errorf("no supported shell found (tried %s): %w", strings.Join(automaticShellCandidates, ", "), lastErr)
+}
+
+func podExecExecutor(c *Cluster, namespace, pod, container string, command []string, tty bool) (remotecommand.Executor, error) {
 	req := c.Clientset.CoreV1().RESTClient().Post().
 		Resource("pods").Namespace(namespace).Name(pod).
 		SubResource("exec")
-
 	opts := &corev1.PodExecOptions{
 		Container: container,
-		Command:   []string{shell},
-		Stdin:     true,
+		Command:   command,
+		Stdin:     tty,
 		Stdout:    true,
-		Stderr:    false, // a TTY carries stderr on the stdout stream
-		TTY:       true,
+		Stderr:    !tty,
+		TTY:       tty,
 	}
 	req.VersionedParams(opts, scheme.ParameterCodec)
+	return remotecommand.NewSPDYExecutor(c.Rest, "POST", req.URL())
+}
 
-	exec, err := remotecommand.NewSPDYExecutor(c.Rest, "POST", req.URL())
+func probeExecShell(ctx context.Context, c *Cluster, namespace, pod, container, shell string) error {
+	executor, err := podExecExecutor(c, namespace, pod, container, []string{shell, "-c", "exit 0"}, false)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	return executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+}
+
+// StartExec opens an interactive shell into a container and streams its output
+// via the emit callback. "auto" probes Bash first, then smaller shell fallbacks;
+// an explicit shell is used unchanged. The session runs until the shell exits or
+// Close() is called. The resolved shell is returned for truthful UI status.
+func StartExec(ctx context.Context, c *Cluster, namespace, pod, container, shell string, cols, rows int, emit func(string), onClose func(error)) (*ExecSession, string, error) {
+	resolvedShell, err := selectExecShell(shell, func(candidate string) error {
+		return probeExecShell(ctx, c, namespace, pod, container, candidate)
+	})
+	if err != nil {
+		return nil, "", err
+	}
+
+	exec, err := podExecExecutor(c, namespace, pod, container, []string{resolvedShell}, true)
+	if err != nil {
+		return nil, "", err
 	}
 
 	stdinR, stdinW := io.Pipe()
@@ -165,5 +207,5 @@ func StartExec(ctx context.Context, c *Cluster, namespace, pod, container, shell
 		}
 	}()
 
-	return session, nil
+	return session, resolvedShell, nil
 }

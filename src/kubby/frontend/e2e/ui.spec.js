@@ -54,6 +54,39 @@ test('FR-2/FR-13: pasted kubeconfig enters a populated Overview', async ({ page 
     expect(calls).toEqual(expect.arrayContaining(['ContextsFromContent', 'ConnectWithContent', 'OverviewSnapshot']));
 });
 
+test('FR-13: healthy Overview keeps the Attention message readable without overflow', async ({ page }) => {
+    await page.setViewportSize({ width: 960, height: 540 });
+    await connectDashboard(page, {
+        healthTitle: 'Cluster healthy',
+        overrides: {
+            OverviewSnapshot: {
+                stats: { nodes: 0, namespaces: 0, pods: 6, deployments: 0, podsAvailable: true },
+                failingPods: [],
+                nodeMetrics: [],
+                nodeStatus: [],
+                topPods: [],
+                events: [],
+                warnings: [],
+            },
+        },
+    });
+
+    const empty = page.locator('#overview-errors-empty');
+    await expect(empty).toBeVisible();
+    await expect(empty).toContainText('Nothing needs attention');
+    const layout = await empty.evaluate((element) => {
+        const message = element.children[1];
+        const wrapper = element.parentElement;
+        return {
+            messageWidth: message.getBoundingClientRect().width,
+            wrapperClientHeight: wrapper.clientHeight,
+            wrapperScrollHeight: wrapper.scrollHeight,
+        };
+    });
+    expect(layout.messageWidth).toBeGreaterThan(150);
+    expect(layout.wrapperScrollHeight).toBeLessThanOrEqual(layout.wrapperClientHeight + 1);
+});
+
 test('FR-6: dashboard namespace picker filters and changes scope from the keyboard', async ({ page }) => {
     const pageErrors = collectPageErrors(page);
     await connectDashboard(page);
@@ -147,6 +180,68 @@ test('FR-7/FR-14/FR-38: Pod drawer owns the selected resource and stays in the v
     await page.locator('#drawer-close').click();
     await expect(page.locator('#drawer')).toBeHidden();
     expect(pageErrors).toEqual([]);
+});
+
+test('FR-21/FR-38: Pod Terminal auto-attaches Bash-first and keeps session controls owned', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 720, height: 720 });
+    await connectDashboard(page);
+    await page.locator('#btn-mobile-nav').click();
+    await page.locator('.nav-item[data-view="pods"]').click();
+    await page.locator('#pods-body tr', { hasText: 'api-6df7fdd9f8-4zj8g' }).click();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+
+    await expect(page.locator('#term-status')).toHaveText('Attached · /bin/bash');
+    await expect(page.locator('#term-container')).toHaveValue('api');
+    await expect(page.locator('#term-shell')).toHaveValue('auto');
+    await expect(page.locator('#btn-term-start')).toHaveText('Reconnect');
+    await expect(page.locator('#btn-term-stop')).toBeVisible();
+
+    const firstSession = await page.evaluate(() => {
+        const calls = window.__wailsMock.calls.filter((call) => call.method === 'StartExec');
+        return calls.at(-1)?.args[0];
+    });
+    expect(firstSession).toBeTruthy();
+    await page.evaluate((sessionId) => {
+        window.__wailsMock.emit('exec-output', { sessionId, data: '\u001b[36mkubby-test\u001b[0m$ ' });
+    }, firstSession);
+    await expect(page.locator('#term-surface .xterm-rows')).toContainText('kubby-test$');
+
+    await page.keyboard.type('pwd');
+    await expect.poll(() => page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'ExecWrite').length)).toBeGreaterThan(0);
+
+    await page.locator('#term-shell').selectOption('/bin/sh');
+    await expect.poll(() => page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'StartExec').length)).toBe(2);
+    const shellRequests = await page.evaluate(() => window.__wailsMock.calls
+        .filter((call) => call.method === 'StartExec')
+        .map((call) => call.args[4]));
+    expect(shellRequests).toEqual(['auto', '/bin/sh']);
+
+    const bounds = await page.locator('.term-frame').evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, width: innerWidth };
+    });
+    expect(bounds.left).toBeGreaterThanOrEqual(-1);
+    expect(bounds.right).toBeLessThanOrEqual(bounds.width + 1);
+    await page.locator('#btn-term-stop').click();
+    await expect(page.locator('#term-status')).toHaveText('Disconnected by user');
+    expect(pageErrors).toEqual([]);
+});
+
+test('FR-21: shell discovery failure stops after one attempt and offers Retry', async ({ page }) => {
+    await connectDashboard(page, {
+        overrides: { StartExec: { __error: 'no supported shell found; this image may be distroless' } },
+    });
+    await page.locator('.nav-item[data-view="pods"]').click();
+    await page.locator('#pods-body tr', { hasText: 'api-6df7fdd9f8-4zj8g' }).click();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+
+    await expect(page.locator('#term-status')).toContainText('no supported shell found');
+    await expect(page.locator('#term-placeholder-title')).toHaveText('Shell unavailable');
+    await expect(page.locator('#btn-term-start')).toHaveText('Retry');
+    await page.waitForTimeout(150);
+    const starts = await page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'StartExec').length);
+    expect(starts).toBe(1);
 });
 
 test('FR-16: Ctrl+F searches inside YAML and Escape keeps the drawer open', async ({ page }) => {
