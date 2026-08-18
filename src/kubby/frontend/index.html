@@ -132,9 +132,33 @@
                 <span class="brand-name">Kubby</span>
             </div>
 
-            <div class="ns-picker">
-                <label>Namespace</label>
-                <select id="namespace-select"></select>
+            <div id="namespace-picker" class="ns-picker">
+                <span id="namespace-picker-label" class="ns-picker-label">Namespace</span>
+                <div class="namespace-combobox">
+                    <button id="namespace-toggle" class="namespace-toggle" type="button"
+                            aria-haspopup="listbox" aria-expanded="false"
+                            aria-labelledby="namespace-picker-label namespace-current">
+                        <svg class="namespace-search-ico" aria-hidden="true"><use href="#i-search"/></svg>
+                        <span id="namespace-current">All namespaces</span>
+                        <svg class="namespace-caret" aria-hidden="true"><use href="#i-caret"/></svg>
+                    </button>
+                    <div id="namespace-popover" class="namespace-popover" hidden>
+                        <div class="namespace-search-row">
+                            <svg class="namespace-search-ico" aria-hidden="true"><use href="#i-search"/></svg>
+                            <input id="namespace-search" type="search" role="combobox"
+                                   placeholder="Find namespace…" aria-label="Find namespace"
+                                   autocomplete="off" spellcheck="false" aria-autocomplete="list"
+                                   aria-haspopup="listbox" aria-expanded="false"
+                                   aria-controls="namespace-options">
+                        </div>
+                        <div id="namespace-options" class="namespace-options" role="listbox"
+                             aria-label="Namespaces"></div>
+                        <p id="namespace-empty" class="namespace-empty" role="status" hidden>No namespaces found</p>
+                    </div>
+                    <!-- Existing frontend flows use this select as the canonical namespace state.
+                         The searchable combobox above is its accessible visual controller. -->
+                    <select id="namespace-select" aria-hidden="true" tabindex="-1" hidden></select>
+                </div>
             </div>
 
             <nav class="nav">

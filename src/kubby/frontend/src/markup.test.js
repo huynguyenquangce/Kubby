@@ -4,6 +4,37 @@ import test from 'node:test';
 
 const indexHTML = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const mainJS = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+const editorJS = readFileSync(new URL('./editor.js', import.meta.url), 'utf8');
+const optionBCSS = readFileSync(new URL('./option-b.css', import.meta.url), 'utf8');
+
+test('namespace scope is searchable without splitting canonical select state', () => {
+    for (const id of ['namespace-toggle', 'namespace-search', 'namespace-options', 'namespace-select']) {
+        assert.match(indexHTML, new RegExp(`id="${id}"`));
+    }
+    assert.match(indexHTML, /id="namespace-search"[^>]*role="combobox"/);
+    assert.match(indexHTML, /id="namespace-select"[^>]*aria-hidden="true"[^>]*hidden/);
+    assert.match(mainJS, /function selectNamespace\(value\)/);
+    assert.match(mainJS, /select\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\)/);
+    assert.match(mainJS, /setActiveNamespaceOption\(namespaceActiveIndex \+ 1\)/);
+    assert.match(mainJS, /setActiveNamespaceOption\(namespaceActiveIndex - 1\)/);
+});
+
+test('YAML editor owns Ctrl or Cmd+F with a themed top search panel', () => {
+    assert.match(editorJS, /search\(\{ top: true \}\)/);
+    assert.match(editorJS, /\.\.\.searchKeymap/);
+    assert.match(editorJS, /'\.cm-panel\.cm-search'/);
+    assert.match(editorJS, /'\.cm-searchMatch\.cm-searchMatch-selected'/);
+});
+
+test('dark surfaces preserve semantic action and status variants', () => {
+    for (const token of ['surface-raised', 'surface-soft', 'surface-sunken']) {
+        assert.match(optionBCSS, new RegExp(`--${token}:`));
+    }
+    assert.match(optionBCSS, /:root\[data-theme="dark"\] \.btn\.btn-danger/);
+    assert.match(optionBCSS, /:root\[data-theme="dark"\] \.btn\.btn-ai/);
+    assert.match(optionBCSS, /:root\[data-theme="dark"\] \.chip\.chip-accent/);
+    assert.match(optionBCSS, /tbody tr:nth-child\(even\):not\(\.error-row\)/);
+});
 
 test('AI settings uses the bounded icon-button SVG class', () => {
     const button = indexHTML.match(/<button id="btn-ai-settings"[\s\S]*?<\/button>/)?.[0] ?? '';

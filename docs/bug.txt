@@ -443,3 +443,12 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   evidence, compact CPU-ranked consumers, scan-friendly node rows, responsive
   stacking, and inspected light/dark Playwright baselines. Deliberately disabled
   scheduling remains visible without falsely alarming a Ready control-plane node.
+- [2026-08-18] Dark mode flattened navigation, workspace, cards and inputs into
+  nearly identical navy surfaces; the namespace selector required scanning a long
+  native dropdown; and Ctrl+F in YAML fell through to the WebView's page search.
+  Root causes: the dark palette had too little surface separation, the namespace
+  control exposed no query field, and CodeMirror installed only match highlighting
+  rather than its search panel. Fix: a higher-contrast layered dark surface system
+  that preserves danger/accent variants, a keyboard-navigable searchable namespace
+  combobox backed by the canonical select state, and a top-mounted CodeMirror search
+  panel with themed matches and next/previous controls.

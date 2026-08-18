@@ -536,6 +536,7 @@ function revealNavSection(view) {
 // does, so their badges are left as they are instead of being refetched.
 let navCountsReqId = 0;
 let navCountsRefreshedAt = 0;
+let namespaceActiveIndex = 0;
 
 function loadSidebarCounts({ includeCluster = true } = {}) {
     const reqId = ++navCountsReqId;
@@ -558,8 +559,139 @@ function loadSidebarCounts({ includeCluster = true } = {}) {
         .catch(() => {});
 }
 
+function visibleNamespaceOptions() {
+    return [...$('namespace-options').querySelectorAll('.namespace-option')];
+}
+
+function setActiveNamespaceOption(index) {
+    const options = visibleNamespaceOptions();
+    if (options.length === 0) {
+        namespaceActiveIndex = 0;
+        $('namespace-search').removeAttribute('aria-activedescendant');
+        return;
+    }
+    namespaceActiveIndex = Math.max(0, Math.min(index, options.length - 1));
+    options.forEach((option, i) => option.classList.toggle('active', i === namespaceActiveIndex));
+    const active = options[namespaceActiveIndex];
+    $('namespace-search').setAttribute('aria-activedescendant', active.id);
+    active.scrollIntoView({ block: 'nearest' });
+}
+
+function selectNamespace(value) {
+    const select = $('namespace-select');
+    if (![...select.options].some((option) => option.value === value)) return;
+    if (select.value === value) {
+        syncNamespacePicker();
+        closeNamespacePicker({ restoreFocus: true });
+        return;
+    }
+    select.value = value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function renderNamespacePicker(query = '') {
+    const filter = query.trim().toLocaleLowerCase();
+    const selected = $('namespace-select').value;
+    const matches = [...$('namespace-select').options].filter((option) => {
+        const label = option.value === '' ? 'All namespaces' : option.textContent;
+        return !filter || label.toLocaleLowerCase().includes(filter);
+    });
+    const list = $('namespace-options');
+    list.innerHTML = '';
+    matches.forEach((option, index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.id = `namespace-option-${index}`;
+        button.className = 'namespace-option';
+        button.dataset.value = option.value;
+        button.setAttribute('role', 'option');
+        button.tabIndex = -1;
+        button.setAttribute('aria-selected', String(option.value === selected));
+        const label = option.value === '' ? 'All namespaces' : option.textContent;
+        const hint = option.value === '' ? 'Cluster-wide scope' : 'Namespace';
+        button.innerHTML = `<span><strong>${esc(label)}</strong><small>${hint}</small></span><span class="namespace-option-check" aria-hidden="true">✓</span>`;
+        button.addEventListener('click', () => selectNamespace(option.value));
+        list.appendChild(button);
+    });
+    $('namespace-empty').hidden = matches.length !== 0;
+    const selectedIndex = matches.findIndex((option) => option.value === selected);
+    setActiveNamespaceOption(selectedIndex >= 0 ? selectedIndex : 0);
+}
+
+function syncNamespacePicker() {
+    const selected = $('namespace-select').selectedOptions[0];
+    const label = selected?.value ? selected.textContent : 'All namespaces';
+    $('namespace-current').textContent = label;
+    $('namespace-toggle').title = `Namespace: ${label}`;
+    renderNamespacePicker($('namespace-search').value);
+}
+
+function closeNamespacePicker({ restoreFocus = false } = {}) {
+    if ($('namespace-popover').hidden) return;
+    $('namespace-popover').hidden = true;
+    $('namespace-toggle').setAttribute('aria-expanded', 'false');
+    $('namespace-search').setAttribute('aria-expanded', 'false');
+    $('namespace-search').removeAttribute('aria-activedescendant');
+    if (restoreFocus) $('namespace-toggle').focus();
+}
+
+function openNamespacePicker() {
+    $('namespace-popover').hidden = false;
+    $('namespace-toggle').setAttribute('aria-expanded', 'true');
+    $('namespace-search').setAttribute('aria-expanded', 'true');
+    $('namespace-search').value = '';
+    renderNamespacePicker();
+    requestAnimationFrame(() => {
+        $('namespace-search').focus();
+        $('namespace-search').select();
+    });
+}
+
+$('namespace-toggle').addEventListener('click', () => {
+    if ($('namespace-popover').hidden) openNamespacePicker();
+    else closeNamespacePicker();
+});
+$('namespace-toggle').addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        openNamespacePicker();
+    }
+});
+$('namespace-search').addEventListener('input', (event) => renderNamespacePicker(event.target.value));
+$('namespace-search').addEventListener('keydown', (event) => {
+    const options = visibleNamespaceOptions();
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setActiveNamespaceOption(namespaceActiveIndex + 1);
+    } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setActiveNamespaceOption(namespaceActiveIndex - 1);
+    } else if (event.key === 'Home') {
+        event.preventDefault();
+        setActiveNamespaceOption(0);
+    } else if (event.key === 'End') {
+        event.preventDefault();
+        setActiveNamespaceOption(options.length - 1);
+    } else if (event.key === 'Enter' && options[namespaceActiveIndex]) {
+        event.preventDefault();
+        options[namespaceActiveIndex].click();
+    } else if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeNamespacePicker({ restoreFocus: true });
+    }
+});
+document.addEventListener('pointerdown', (event) => {
+    if (!event.target.closest('#namespace-picker')) closeNamespacePicker();
+});
+$('namespace-picker').addEventListener('focusout', (event) => {
+    if (!event.relatedTarget || !$('namespace-picker').contains(event.relatedTarget)) closeNamespacePicker();
+});
+
 $('namespace-select').addEventListener('change', (e) => {
     currentNamespace = e.target.value;
+    syncNamespacePicker();
+    closeNamespacePicker();
     updateNsScope();
     loadSidebarCounts({ includeCluster: false });
     refreshCurrentView();
@@ -975,6 +1107,7 @@ function loadNamespaceOptions(connection = requestScopes.connectionToken()) {
         .then((namespaces) => {
             if (!requestScopes.isCurrentConnection(connection)) return;
             const select = $('namespace-select');
+            const wanted = currentNamespace;
             select.innerHTML = '<option value="">All namespaces</option>';
             for (const ns of namespaces ?? []) {
                 const opt = document.createElement('option');
@@ -982,6 +1115,9 @@ function loadNamespaceOptions(connection = requestScopes.connectionToken()) {
                 opt.textContent = ns.name;
                 select.appendChild(opt);
             }
+            if ([...select.options].some((option) => option.value === wanted)) select.value = wanted;
+            else currentNamespace = '';
+            syncNamespacePicker();
         })
         .catch((err) => { if (requestScopes.isCurrentConnection(connection)) showDashError(err); });
 }
@@ -1858,6 +1994,7 @@ function setNamespaceScope(ns) {
     if ([...sel.options].some((o) => o.value === ns)) {
         sel.value = ns;
         currentNamespace = ns;
+        syncNamespacePicker();
         updateNsScope();
         loadSidebarCounts({ includeCluster: false });
     }
@@ -4153,13 +4290,7 @@ function buildPaletteCommands() {
     }
     for (const opt of $('namespace-select').options) {
         const label = opt.value === '' ? 'All namespaces' : opt.value;
-        cmds.push({ kind: 'Namespace', label, run: () => {
-            $('namespace-select').value = opt.value;
-            currentNamespace = opt.value;
-            updateNsScope();
-            loadSidebarCounts({ includeCluster: false });
-            refreshCurrentView();
-        } });
+        cmds.push({ kind: 'Namespace', label, run: () => selectNamespace(opt.value) });
     }
     for (const opt of $('cluster-select').options) {
         cmds.push({ kind: 'Cluster', label: `Switch to ${opt.value}`, run: () => {
@@ -4886,6 +5017,7 @@ function openChartInstallModal(chart) {
                     }
                     currentNamespace = nsv;
                     $('namespace-select').value = nsv;
+                    syncNamespacePicker();
                     helmSection = 'releases';
                     selectView('helm');
                     loadSidebarCounts();

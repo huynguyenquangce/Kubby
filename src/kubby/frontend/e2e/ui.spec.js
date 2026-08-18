@@ -54,6 +54,29 @@ test('FR-2/FR-13: pasted kubeconfig enters a populated Overview', async ({ page 
     expect(calls).toEqual(expect.arrayContaining(['ContextsFromContent', 'ConnectWithContent', 'OverviewSnapshot']));
 });
 
+test('FR-6: dashboard namespace picker filters and changes scope from the keyboard', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await connectDashboard(page);
+
+    await page.locator('#namespace-toggle').click();
+    await expect(page.locator('#namespace-toggle')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('#namespace-search')).toBeFocused();
+    await expect(page.locator('#namespace-options .namespace-option')).toHaveCount(3);
+
+    await page.locator('#namespace-search').fill('pay');
+    await expect(page.locator('#namespace-options .namespace-option')).toHaveCount(1);
+    await expect(page.locator('#namespace-options')).toContainText('payments');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#namespace-current')).toHaveText('payments');
+    await expect(page.locator('#namespace-popover')).toBeHidden();
+
+    await page.locator('#namespace-toggle').press('ArrowDown');
+    await page.locator('#namespace-search').fill('def');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#namespace-current')).toHaveText('default');
+    expect(pageErrors).toEqual([]);
+});
+
 for (const [label, width, height] of zoomMatrix) {
     test(`FR-38: shell stays usable at ${label}`, async ({ page }) => {
         const pageErrors = collectPageErrors(page);
@@ -123,6 +146,33 @@ test('FR-7/FR-14/FR-38: Pod drawer owns the selected resource and stays in the v
     expect(drawerBounds.right).toBeLessThanOrEqual(drawerBounds.viewport + 1);
     await page.locator('#drawer-close').click();
     await expect(page.locator('#drawer')).toBeHidden();
+    expect(pageErrors).toEqual([]);
+});
+
+test('FR-16: Ctrl+F searches inside YAML and Escape keeps the drawer open', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await connectDashboard(page);
+    await page.locator('.nav-item[data-view="pods"]').click();
+    await page.locator('#pods-body tr', { hasText: 'api-6df7fdd9f8-4zj8g' }).click();
+    await page.getByRole('button', { name: 'YAML', exact: true }).click();
+
+    await page.locator('#dpanel-yaml .cm-content').click();
+    await page.keyboard.press('Control+f');
+    const searchPanel = page.locator('#dpanel-yaml .cm-panel.cm-search');
+    await expect(searchPanel).toBeVisible();
+    await expect(searchPanel.locator('input[name="search"]')).toBeFocused();
+    await searchPanel.locator('input[name="search"]').pressSequentially('namespace');
+    await expect(page.locator('#dpanel-yaml .cm-searchMatch')).toHaveCount(1);
+
+    const panelIsAboveContent = await page.locator('#dpanel-yaml .cm-editor').evaluate((editor) => {
+        const panel = editor.querySelector('.cm-panel.cm-search')?.getBoundingClientRect();
+        const scroller = editor.querySelector('.cm-scroller')?.getBoundingClientRect();
+        return Boolean(panel && scroller && panel.bottom <= scroller.top + 1);
+    });
+    expect(panelIsAboveContent).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(searchPanel).toBeHidden();
+    await expect(page.locator('#drawer')).toBeVisible();
     expect(pageErrors).toEqual([]);
 });
 

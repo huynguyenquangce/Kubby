@@ -21,7 +21,7 @@ import {
     foldGutter, foldKeymap, indentOnInput, indentUnit, bracketMatching,
     syntaxHighlighting, HighlightStyle,
 } from '@codemirror/language';
-import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { lintGutter, setDiagnostics } from '@codemirror/lint';
 import { yaml } from '@codemirror/lang-yaml';
@@ -74,6 +74,66 @@ const baseTheme = EditorView.theme({
         color: 'var(--muted)',
         border: '1px solid var(--cm-gutter-line)',
     },
+    '.cm-panels': {
+        backgroundColor: 'var(--cm-gutter-bg)',
+        color: 'var(--cm-ink)',
+        borderBottom: '1px solid var(--cm-gutter-line)',
+    },
+    '.cm-panel.cm-search': {
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '0.4rem',
+        padding: '0.55rem 2.5rem 0.55rem 0.65rem',
+        fontFamily: '"Inter Variable", Inter, ui-sans-serif, sans-serif',
+        fontSize: '0.76rem',
+    },
+    '.cm-panel.cm-search label': { display: 'inline-flex', alignItems: 'center', gap: '0.25rem' },
+    '.cm-panel.cm-search .cm-textfield': {
+        minWidth: '12rem',
+        minHeight: '30px',
+        padding: '0.35rem 0.55rem',
+        border: '1px solid var(--cm-gutter-line)',
+        borderRadius: '6px',
+        outline: 'none',
+        backgroundColor: 'var(--cm-bg)',
+        color: 'var(--cm-ink)',
+        fontFamily: 'ui-monospace, "Cascadia Code", Consolas, monospace',
+    },
+    '.cm-panel.cm-search .cm-textfield:focus': {
+        borderColor: 'var(--blue)',
+        boxShadow: '0 0 0 3px var(--accent-soft)',
+    },
+    '.cm-panel.cm-search .cm-button': {
+        minHeight: '30px',
+        padding: '0.3rem 0.55rem',
+        border: '1px solid var(--cm-gutter-line)',
+        borderRadius: '6px',
+        backgroundImage: 'none',
+        backgroundColor: 'var(--cm-bg)',
+        color: 'var(--cm-ink)',
+        font: '600 0.72rem/1 "Inter Variable", Inter, ui-sans-serif, sans-serif',
+        cursor: 'pointer',
+    },
+    '.cm-panel.cm-search .cm-button:hover': { borderColor: 'var(--blue)', color: 'var(--blue)' },
+    '.cm-panel.cm-search button[name="close"]': {
+        top: '0.55rem',
+        right: '0.65rem',
+        width: '30px',
+        height: '30px',
+        borderRadius: '6px',
+        color: 'var(--muted)',
+        fontSize: '1.1rem',
+    },
+    '.cm-searchMatch': {
+        backgroundColor: 'color-mix(in srgb, var(--warn) 34%, transparent)',
+        outline: '1px solid color-mix(in srgb, var(--warn) 70%, transparent)',
+        borderRadius: '2px',
+    },
+    '.cm-searchMatch.cm-searchMatch-selected': {
+        backgroundColor: 'color-mix(in srgb, var(--blue) 42%, transparent)',
+        outline: '1px solid var(--blue)',
+    },
 });
 
 // createYamlEditor mounts an editor into `host`, which is expected to carry its
@@ -96,6 +156,9 @@ export function createYamlEditor(host, { value = '', placeholder = '', onChange 
         rectangularSelection(),
         crosshairCursor(),
         highlightActiveLine(),
+        // Put Ctrl/Cmd+F inside the editor at the top, where it does not cover
+        // the last YAML lines or fall through to the WebView's page search.
+        search({ top: true }),
         highlightSelectionMatches(),
         lintGutter(), // where markDocumentErrors puts its markers
         syntaxHighlighting(yamlHighlight),

@@ -261,6 +261,9 @@ Anything else added to the global `keydown` handler must consider both.
   themes, so the existing theme toggle needs no extra wiring.
 - **No autocompletion.** Without an OpenAPI schema to complete against it would only
   suggest words already in the buffer.
+- **Ctrl/Cmd+F belongs to CodeMirror**, not the containing WebView. The search panel
+  is mounted at the top of the editor so it stays visible without covering the YAML
+  being inspected, and Escape closes it before the shared drawer/modal handler runs.
 
 `markDocumentErrors` places gutter markers after a failed apply; `documentStarts`
 must stay in step with the backend's document numbering (see
@@ -337,6 +340,10 @@ dialog shell so light/dark and accessibility behavior cannot diverge by feature.
   (`showAlert` / `showError` / `showConfirm`) that layers above the modal.
 - **Ctrl+K** command palette: static commands (go to view, switch namespace/cluster,
   actions) plus debounced live resource search.
+- The sidebar namespace control is a searchable combobox backed by the existing
+  hidden `<select>`. Keep the select as the canonical state because cluster switch,
+  Helm install, command-palette navigation, scope labels, and refresh ownership all
+  already converge on its `change` event.
 - **Live mode** refreshes every 5 s, and pauses while a selection, drawer, modal or
   palette is open — so it never yanks something out from under the user.
 - **Port forwards are global sessions.** Their creation form stays in a Pod/Service
