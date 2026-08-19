@@ -504,3 +504,8 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   README all declare MIT. Root cause: the nested README retained an early planning
   placeholder when the licensing decision was finalized elsewhere. Fix: identify
   MIT directly and link to the authoritative repository `LICENSE` file.
+- [2026-08-20] The same nested product README still described the old duplicate
+  per-node CPU/memory meters after the Overview redesign made Cluster pulse the
+  sole capacity owner. Root cause: the user-facing feature summary was not updated
+  with the implementation, specification, and earlier defect record. Fix: describe
+  the aggregate pulse and the operational node evidence the released UI now shows.

@@ -54,7 +54,11 @@ Pick a **Context**, then **Connect**. The first connection may take 15–30 s if
 
 **Right-sizing** (Cluster → Right-sizing). Whether what you reserved bears any relation to what you use: requests and limits against live usage per container, totals per namespace with quota headroom, and the cluster's spare capacity. It says things in words — *OOMKilled*, *memory at 97% of its limit*, *no memory limit at all*, *using 1% of its 2-core request* — and separates the one-line-per-cluster conclusions ("18 of 22 containers declare no memory limit; a LimitRange would fix that in one place") from the per-container ones, so a real problem is not buried under a policy problem. Works without metrics-server, and tells you when it is missing rather than showing zeroes.
 
-**Overview dashboard.** Per-node CPU/memory meters in a responsive grid — cluster totals in the card header, percentages coloured by pressure (amber from 70%, red from 90%), node names clickable — plus top pods by CPU, cluster-wide recent events, and the current failing pods (usage needs metrics-server).
+**Overview dashboard.** One Cluster pulse owns aggregate CPU/memory capacity
+(usage needs metrics-server), while the infrastructure rows show each node's
+readiness, scheduling state, pressure conditions, pod count, and kubelet version.
+Node names are clickable; top pods by CPU, cluster-wide recent events, and current
+failing pods keep the next debugging step close by.
 
 **Detail drawer** (click any row):
 - **Details** — metadata, labels, annotations, kind-specific fields, **Events**, and a **relations tree** (Deployment→ReplicaSet→Pod, Service→Pod, Ingress→Service→Pod) whose nodes are clickable. A Node shows the **pods scheduled on it**; a Namespace shows a **per-kind summary** you can click into.
