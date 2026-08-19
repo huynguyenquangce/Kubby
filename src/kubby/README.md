@@ -164,4 +164,4 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full map and data flow; the rec
 
 ## License
 
-Not yet chosen (MIT or Apache-2.0) — see [`../../docs/SPECIFICATION.md`](../../docs/SPECIFICATION.md) §11.
+Released under the [MIT License](../../LICENSE).

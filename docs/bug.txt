@@ -499,3 +499,8 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   call with explicit fallbacks, truthful resolved-shell status, automatic owned
   reconnect on selector changes, cancellable pending discovery, and Retry without
   an error loop for distroless containers.
+- [2026-08-20] The product README under `src/kubby/` still said the project license
+  had not been chosen even though the repository license, specification, and root
+  README all declare MIT. Root cause: the nested README retained an early planning
+  placeholder when the licensing decision was finalized elsewhere. Fix: identify
+  MIT directly and link to the authoritative repository `LICENSE` file.
