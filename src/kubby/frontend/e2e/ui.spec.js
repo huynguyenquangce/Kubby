@@ -281,7 +281,7 @@ test('FR-31/FR-38: Settings modal closes with Escape and remains viewport-bounde
     await expect(page.locator('#modal')).toHaveAttribute('aria-labelledby', 'modal-title');
     await expect(page.locator('#modal-title')).toHaveText('Settings');
     await expect(page.locator('#modal-eyebrow')).toHaveText('Application');
-    await expect(page.locator('#about-version')).toContainText('0.1.0-test');
+    await expect(page.locator('#about-version')).toContainText('0.2.0-test');
     await expect(page.locator('#ai-provider')).toBeFocused();
     const providerBox = await page.locator('#ai-provider').boundingBox();
     const modelBox = await page.locator('#ai-model').boundingBox();

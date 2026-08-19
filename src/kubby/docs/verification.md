@@ -16,7 +16,10 @@ cd ..
 
 | File | Pins |
 |---|---|
-| `diagnostics_test.go` | the diagnostics report shape, and that it cannot carry the AI API key |
+| `diagnostics_test.go` | the diagnostics report shape, and credential redaction for its free-form last error |
+| `ai_test.go` | write-only provider keys, hosted endpoint transport rules, loopback-only Ollama, redirect refusal, and exact reviewed evidence in the resource prompt |
+| `internal/k8sclient/ai_test.go` | Secret/env/free-text credential redaction before AI preview or transmission |
+| `internal/k8sclient/client_safety_test.go` | the selected kubeconfig context rejects executable, file-backed, and proxy credential paths before transport creation |
 | `internal/k8sclient/apply_test.go` | missing-`---` detection, document splitting, diff-noise stripping, the pending-namespace explanation |
 | `internal/k8sclient/access_test.go` | **unknown permission == allowed**, explicit deny respected, pod subresources probed separately |
 | `internal/k8sclient/rightsizing_test.go` | unset never rendered as zero, threshold floors, severity order, quota parsing, advice grammar, and partial-metrics suppression |
@@ -55,7 +58,7 @@ Every bug report starts with "which build". `internal/buildinfo` is the single
 answer for both binaries:
 
 ```powershell
-go run ./cmd/kubby-cli --version        # Kubby 0.1.0-dev go1.26.5 windows/amd64
+go run ./cmd/kubby-cli --version        # Kubby 0.2.0-dev go1.26.6 windows/amd64
 go run ./cmd/kubby-cli diagnostics      # + the connected cluster's capabilities
 ```
 
@@ -73,11 +76,14 @@ probing in `internal/k8sclient/diagnostics.go`).
   numeric `productVersion` must match the release version passed through ldflags;
   nothing enforces that equality automatically.
 
-> **The report must never carry a secret.** It reads AI provider and model from
-> `GetAIStatus()`, which does not return the key. It includes the API-server
-> endpoint and context name because they are usually essential to a diagnosis, and
-> is headed "review before sharing" so that stays the user's call. A test asserts
-> the key is absent. Keep it that way when you add a field.
+> **Treat diagnostics as user-reviewed data.** It reads AI provider and model
+> from `GetAIStatus()`, which does not return the configured key, and the
+> credential redactor covers that key plus common token/password patterns. It
+> includes the API-server endpoint, context name, and a best-effort-redacted
+> free-form last error because they are useful for diagnosis. That error may
+> still contain resource or server-derived details under an unfamiliar shape,
+> so the report is headed "review before sharing". Keep the redaction tests and
+> this warning current whenever a field is added.
 
 Every probe in `Diagnose` is best-effort: a forbidden or missing capability is
 *information*, not a failure. The report is produced even from a half-working
@@ -86,7 +92,8 @@ connection — which is exactly when it is wanted.
 ## `kubby-cli` is the harness
 
 It shares `internal/k8sclient` with the app, so a CLI check exercises the same code
-the GUI does. Every backend feature here was verified this way.
+the GUI does. Use the matching command whenever one exists; some multi-resource
+write workflows still rely on focused tests plus the documented native check.
 
 ```powershell
 # reads
@@ -124,8 +131,9 @@ go run ./cmd/kubby-cli exec <pod> -n <ns> -- "ls -la /"
 Defaults to `$KUBECONFIG` or `~/.kube/config`; override with
 `--kubeconfig <path> --context <name>`.
 
-**Adding a feature means adding its CLI command.** A backend feature with no CLI
-entry point cannot be checked without a human driving the GUI.
+**A backend capability that needs real-cluster verification should add its CLI
+command.** Until it does, record the test/manual evidence explicitly rather than
+claiming it was exercised through `kubby-cli`.
 
 ## Build and environment
 
@@ -293,7 +301,7 @@ The highest-value missing piece is **actual tests**. The code has a lot of pure
 logic that needs no cluster:
 
 Still untested: `openAIBaseURL`, `splitKindGroup`, `titleFor`, `isFullyReady`,
-`readyCondition`, `destinationService` (Istio host parsing), `podStatus`.
+`readyCondition`, `destinationService` (Istio host parsing).
 (`checkMissingSeparator` and `splitYAMLDocuments` are now covered.)
 
 Frontend request ownership is covered by the built-in Node test runner. Still

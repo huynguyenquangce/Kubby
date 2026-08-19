@@ -28,8 +28,8 @@ Evidence is capped: `diagLogTail` 60 lines, `diagLogChars` 3000, `diagYAMLChars`
 
 ## Conversation model
 
-`AskAboutResource(kind, ns, name, history)` puts the **evidence in the system
-prompt** and the conversation in `messages`.
+`AskAboutResource(kind, ns, name, evidence, history)` puts the reviewed
+**evidence in the system prompt** and the conversation in `messages`.
 
 That split matters: every follow-up is grounded in the same snapshot the thread
 started with, while the frontend only has to replay the visible thread. Nothing is
@@ -65,9 +65,11 @@ truncated snapshot.
   `hasApiKey` boolean. The key is write-only from the WebView and leaving its
   field blank preserves the existing key for the same provider.
 - Hosted endpoints that receive an API key must use HTTPS. Plain HTTP is
-  accepted only for loopback development endpoints.
-- The evidence goes only to the provider the user chose. Ollama is local: nothing
-  leaves the machine.
+  accepted only for loopback development endpoints. AI POST redirects are never
+  followed, so a provider cannot move a key or evidence outside the configured
+  origin after validation.
+- Ollama is local: its configured and runtime endpoint must be `localhost` or a
+  loopback IP. The same check runs before saving and before dispatch.
 - Unconfigured shows a **setup card, not an error**.
 
 Before evidence reaches either the preview or a provider, `DiagnosticContext`

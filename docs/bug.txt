@@ -6,6 +6,39 @@ Bug log — add one line per issue. Resolved items move to the bottom.
 
 ## Fixed
 
+- [2026-08-19] Connecting to an untrusted kubeconfig could execute its credential
+  helper or read an arbitrary local token/client-key path before the user saw any
+  additional warning. Cause: client-go treats exec/auth-provider and file-backed
+  authentication fields as active credential loaders, while Kubby passed the
+  selected config directly into discovery. Fix: validate the selected context
+  before transport creation and reject executable, file-backed, and proxy
+  mechanisms until a dedicated high-risk approval UI exists. A successfully
+  connected pasted kubeconfig is also cleared from the frontend state/editor so
+  its credential lifetime does not extend through the dashboard session.
+
+- [2026-08-19] Ollama could be configured with a remote endpoint while every UI
+  surface still said it ran locally, and the AI evidence viewer did not display
+  the same snapshot later sent by Ask. Cause: provider locality was inferred only
+  from the provider name, and preview/send independently recollected live cluster
+  evidence. Fix: accept Ollama only on loopback, validate again at dispatch, and
+  bind one redacted evidence snapshot to the drawer thread for both inspection and
+  every provider request. Redirect targets are revalidated so a loopback Ollama
+  endpoint cannot forward the evidence off-machine, and AI POST redirects are
+  never followed for any provider so keys/evidence cannot cross the chosen origin.
+
+- [2026-08-19] Copy diagnostics could include a credential echoed in the last
+  frontend error even though the report promised to contain no API key. Cause:
+  provider/model fields used a key-free view, but the free-form last error bypassed
+  the shared credential redactor. Fix: redact common credential shapes and the
+  configured API key before including that error, with deterministic sentinel tests.
+
+- [2026-08-19] The release build floor still selected Go 1.26.5 after four
+  reachable standard-library advisories had been fixed in Go 1.26.6. Cause: the
+  module toolchain directive and build documentation pinned the previous patch
+  release. Fix: raise the enforced toolchain, build guide, diagnostics examples,
+  and public version badge to Go 1.26.6, then require the release gates and binary
+  to use that exact patched toolchain.
+
 - [2026-08-12] The shared modal and confirmation dialog had no accessible name,
   so assistive technology announced only a generic dialog even though a visible
   title was present. Cause: both elements declared their ARIA dialog role but did

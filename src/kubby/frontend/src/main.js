@@ -320,7 +320,13 @@ $('btn-connect').addEventListener('click', () => {
         : ConnectWithContent(source.content, ctx);
 
     connect
-        .then(() => enterDashboard(ctx))
+		.then(() => {
+			if (source.mode === 'content') {
+				source.content = '';
+				pasteEditor.setValue('');
+			}
+			return enterDashboard(ctx);
+		})
         .catch(showWelcomeError)
 		.finally(() => {
             $('connecting-overlay').hidden = true;
@@ -5346,8 +5352,8 @@ $('btn-theme').addEventListener('click', () => {
 // ============ FR-7: AI assistant (drawer tab) ============
 //
 // The assistant is a conversation about the resource that is currently open, not
-// a one-shot popup. Everything it knows is collected live when you ask, shown as
-// chips in the header, and inspectable in full before you send anything.
+// a one-shot popup. One redacted snapshot is collected for the thread, shown as
+// chips in the header, inspectable in full, and reused byte-for-byte on every send.
 
 let aiThread = [];    // [{ role, content }] — the visible conversation
 let aiThreadKey = ''; // kind/ns/name the thread belongs to
@@ -5402,7 +5408,7 @@ function resetAIPanel(ref) {
     aiBusy = false;
     $('ai-input').value = '';
     $('ai-input').style.height = '';
-    $('btn-ai-send').disabled = false;
+    $('btn-ai-send').disabled = true;
     $('ai-context-chips').innerHTML = '';
     renderAIThread();
 }
@@ -5421,10 +5427,13 @@ function prepareAIPanel() {
 			.then((c) => {
 				if (!isCurrentDrawerRequest(scope) || aiThreadKey !== key) return;
 				aiContext = c;
+				$('btn-ai-send').disabled = false;
 				renderAIContextChips();
 			})
 			.catch(() => {
-				if (isCurrentDrawerRequest(scope) && aiThreadKey === key) $('ai-context-chips').innerHTML = '';
+				if (!isCurrentDrawerRequest(scope) || aiThreadKey !== key) return;
+				$('btn-ai-send').disabled = true;
+				$('ai-context-chips').innerHTML = '<span class="ai-chip ai-chip-error">Evidence unavailable — reopen this tab to retry</span>';
 			});
     }
 }
@@ -5542,7 +5551,7 @@ function wireAISetupCard() {
 
 function sendAIQuestion(text) {
     const q = String(text || '').trim();
-    if (!q || aiBusy || !drawerRef) return;
+    if (!q || aiBusy || !drawerRef || !aiContext?.text) return;
 	const ref = drawerRef;
 	const key = aiKeyFor(ref);
 	const scope = activeDrawerScope;
@@ -5554,7 +5563,7 @@ function sendAIQuestion(text) {
     $('btn-ai-send').disabled = true;
     renderAIThread();
 
-	AskAboutResource(ref.kind, ref.namespace, ref.name, aiThread)
+	AskAboutResource(ref.kind, ref.namespace, ref.name, aiContext.text, aiThread)
 		.then((answer) => {
 			if (!isCurrentDrawerRequest(scope) || aiThreadKey !== key) return;
             aiThread.push({ role: 'assistant', content: answer });
@@ -5567,7 +5576,7 @@ function sendAIQuestion(text) {
             // The button is re-enabled even if the user moved on, otherwise the
             // composer would stay dead on the resource they switched to.
 			if (!isCurrentDrawerRequest(scope) || aiThreadKey !== key) return;
-			$('btn-ai-send').disabled = false;
+			$('btn-ai-send').disabled = !aiContext?.text;
             aiBusy = false;
             renderAIThread();
         });
@@ -5669,8 +5678,8 @@ function openSettingsModal() {
                 </div>
                 <p class="modal-hint settings-diagnostics-note">
                     Reporting a problem? <strong>Copy diagnostics</strong> gathers the version, this machine's
-                    platform, the connected cluster's Kubernetes version and capabilities, and the last error
-                    shown — no API key, no kubeconfig content, no resource data. Review it before sharing.
+                    platform, the connected cluster's Kubernetes version and capabilities, and a credential-redacted
+                    last error. The error may contain server or resource details; review it before sharing.
                 </p>
                 <button type="button" class="btn btn-secondary btn-sm" id="btn-copy-diagnostics">Copy diagnostics</button>
                 <span class="about-copied" id="diag-copied" hidden>Copied</span>

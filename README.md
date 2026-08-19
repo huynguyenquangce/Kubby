@@ -10,7 +10,7 @@ Kubby connects directly to the Kubernetes API from your desktop—no in-cluster
 agent, no server to maintain, and no requirement to memorize every `kubectl`
 command.
 
-[![Go 1.26.5+](https://img.shields.io/badge/Go-1.26.5%2B-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
+[![Go 1.26.6+](https://img.shields.io/badge/Go-1.26.6%2B-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
 [![Wails v2.13](https://img.shields.io/badge/Wails-v2.13-DF0000?style=flat-square&logo=wails&logoColor=white)](https://wails.io/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Agent--less-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
 ![Platforms](https://img.shields.io/badge/Builds-Windows%20%7C%20Linux-4C566A?style=flat-square)

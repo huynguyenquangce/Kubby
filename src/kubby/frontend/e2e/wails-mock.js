@@ -161,7 +161,7 @@ const DEFAULT_FIXTURES = {
     PodLogs: '2026-08-12T03:20:01Z server listening on :8080\n',
     GetAIConfig: { provider: '', endpoint: '', model: '', language: 'auto', hasApiKey: false },
     GetAIStatus: { configured: false, provider: '', model: '' },
-    AppVersion: 'Kubby 0.1.0-test linux/amd64',
+    AppVersion: 'Kubby 0.2.0-test linux/amd64',
     NetworkFlows: { ingresses: [], services: [], routedCount: 0, endpointCount: 0, brokenCount: 0 },
     Sizing: {
         totals: { pods: 0, containers: 0, cpuRequest: 0, cpuUsage: 0, memRequest: 0, memUsage: 0 },

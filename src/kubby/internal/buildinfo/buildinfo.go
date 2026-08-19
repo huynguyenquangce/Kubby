@@ -19,7 +19,7 @@ import (
 //
 // Keep the `-dev` suffix on the checked-in value so an unreleased build is never
 // mistaken for a release.
-var Version = "0.1.0-dev"
+var Version = "0.2.0-dev"
 
 // Commit and Date are optional overrides for the same reason. When the source is
 // a git checkout, Go fills the equivalent information into the build info
@@ -62,7 +62,7 @@ func Get() Info {
 }
 
 // String renders the identity on one line, e.g.
-// "Kubby 0.1.0-dev (a1b2c3d-dirty, 2026-07-29) go1.25.0 windows/amd64".
+// "Kubby 0.2.0-dev (a1b2c3d-dirty, 2026-08-19) go1.26.6 windows/amd64".
 func (i Info) String() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Kubby %s", i.Version)

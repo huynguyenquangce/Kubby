@@ -13,7 +13,7 @@ export function ApplyPreview(arg1:string):Promise<k8sclient.ApplyDiff>;
 
 export function ApplyYAMLOwned(arg1:string,arg2:string):Promise<string>;
 
-export function AskAboutResource(arg1:string,arg2:string,arg3:string,arg4:Array<main.AIMessage>):Promise<string>;
+export function AskAboutResource(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Array<main.AIMessage>):Promise<string>;
 
 export function BrowseHelmRepo(arg1:string):Promise<Array<k8sclient.ChartSearchResult>>;
 

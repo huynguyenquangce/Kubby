@@ -1087,12 +1087,13 @@ func (a *App) GetAIStatus() AIStatus {
 	if model == "" {
 		model = defaultModel(cfg.Provider)
 	}
+	_, localEndpointErr := localOllamaBaseURL(cfg.Endpoint)
 	return AIStatus{
 		Configured: cfg.Provider != "",
 		Provider:   cfg.Provider,
 		Label:      providerLabel(cfg.Provider),
 		Model:      model,
-		Local:      cfg.Provider == "ollama",
+		Local:      cfg.Provider == "ollama" && localEndpointErr == nil,
 	}
 }
 
@@ -1110,9 +1111,8 @@ func (a *App) AIResourceContext(kind, namespace, name string) (*k8sclient.AICont
 // events/logs/YAML go into the system prompt rather than the thread, so every
 // follow-up is grounded in the same snapshot and the frontend only has to replay
 // the visible conversation.
-func (a *App) AskAboutResource(kind, namespace, name string, history []AIMessage) (string, error) {
-	cluster, err := a.requireCluster()
-	if err != nil {
+func (a *App) AskAboutResource(kind, namespace, name, evidence string, history []AIMessage) (string, error) {
+	if _, err := a.requireCluster(); err != nil {
 		return "", err
 	}
 	cfg := loadAIConfig()
@@ -1122,16 +1122,25 @@ func (a *App) AskAboutResource(kind, namespace, name string, history []AIMessage
 	if len(history) == 0 {
 		return "", fmt.Errorf("no question to ask")
 	}
-	diag, err := k8sclient.DiagnosticContext(a.ctx, cluster, kind, namespace, name)
-	if err != nil {
-		return "", err
+	if strings.TrimSpace(evidence) == "" {
+		return "", fmt.Errorf("resource evidence is not ready — wait for the attachment summary and try again")
+	}
+	const maxAIEvidence = 32 << 10
+	if len(evidence) > maxAIEvidence {
+		return "", fmt.Errorf("resource evidence exceeded the 32 KiB safety limit")
 	}
 
 	where := kind + " " + name
 	if namespace != "" {
 		where += " in namespace " + namespace
 	}
-	system := strings.Join([]string{
+	system := aiResourceSystemPrompt(where, evidence, cfg.Language)
+
+	return callAI(a.ctx, cfg, system, history)
+}
+
+func aiResourceSystemPrompt(where, evidence, language string) string {
+	return strings.Join([]string{
 		"You are a senior Kubernetes/DevOps engineer helping someone inspect a live cluster",
 		"from a desktop UI. The user is looking at " + where + ".",
 		"",
@@ -1140,13 +1149,11 @@ func (a *App) AskAboutResource(kind, namespace, name string, history []AIMessage
 		"never invent field values, log lines or events.",
 		"",
 		"Be concise and practical: short paragraphs or bullets, concrete kubectl commands in",
-		"backticks, and the single most likely cause first. Use markdown. " + languageRule(cfg.Language),
+		"backticks, and the single most likely cause first. Use markdown. " + languageRule(language),
 		"",
-		"--- EVIDENCE (live, collected just now) ---",
-		diag.Text,
+		"--- EVIDENCE (snapshot reviewed in the resource drawer) ---",
+		evidence,
 	}, "\n")
-
-	return callAI(a.ctx, cfg, system, history)
 }
 
 // languageRule turns the Settings preference into a prompt instruction.

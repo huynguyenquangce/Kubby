@@ -99,9 +99,9 @@ src/kubby/
 ├── app.go                      # App layer: every method bound for the frontend. Registry of *k8sclient.Cluster (multi-cluster) + active pointer + logCancel + pfSessions + execSess.
 ├── main.go                     # Wails bootstrap (embeds frontend/dist, registers App).
 ├── recent.go                   # Recent-connections store (%AppData%/kubby/recent.json — paths + context only).
-├── ai.go                       # (package main) AI provider config + multi-turn chat clients. Stores %AppData%/kubby/ai.json (0600).
+├── ai.go                       # (package main) AI provider config + multi-turn chat clients. Requests 0600; Windows relies on the profile ACL.
 ├── diagnostics.go              # AppVersion + Diagnostics (the copy-pasteable bug report) + CopyToClipboard  → verification.md
-├── diagnostics_test.go         # report shape + "never leaks the API key"                                   → verification.md
+├── diagnostics_test.go         # report shape + configured-key/common credential redaction                 → verification.md
 ├── wails.json                  # Wails config — the `info` block fills the exe's version metadata.
 │
 ├── internal/buildinfo/         # Version identity shared by both binaries (ldflags + Go VCS stamps)          → verification.md

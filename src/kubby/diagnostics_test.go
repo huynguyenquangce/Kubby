@@ -48,16 +48,13 @@ func TestUpdateYAMLRejectsChangedActiveCluster(t *testing.T) {
 }
 
 func TestDiagnosticsNeverIncludesTheAPIKey(t *testing.T) {
-	// GetAIStatus is the only AI source the report reads, and it is documented as
-	// never returning the key. Assert it here too: this report is the one place a
-	// leak would be pasted into a public issue.
-	cfg := loadAIConfig()
-	if strings.TrimSpace(cfg.APIKey) == "" {
-		t.Skip("no API key configured on this machine — nothing to leak")
-	}
-	report := (&App{}).Diagnostics("")
-	if strings.Contains(report, cfg.APIKey) {
-		t.Fatal("the diagnostics report contains the AI API key")
+	const key = "unique-configured-api-key"
+	lastError := "provider rejected unique-configured-api-key; Authorization: Bearer unique.jwt.token; password=unique-password"
+	got := redactDiagnosticsError(lastError, key)
+	for _, secret := range []string{key, "unique.jwt.token", "unique-password"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("diagnostic error still contains %q: %s", secret, got)
+		}
 	}
 }
 

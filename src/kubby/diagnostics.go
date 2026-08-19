@@ -30,9 +30,10 @@ func (a *App) AppVersion() string {
 func (a *App) Diagnostics(lastError string) string {
 	var b strings.Builder
 	info := buildinfo.Get()
+	lastError = redactDiagnosticsError(lastError, loadAIConfig().APIKey)
 
 	b.WriteString("Kubby diagnostics — review before sharing.\n")
-	b.WriteString("Contains no API key, no kubeconfig content and no resource data.\n\n")
+	b.WriteString("Does not collect API keys or kubeconfig content directly. The redacted last error may contain server or resource details.\n\n")
 
 	b.WriteString("## App\n")
 	row(&b, "version", info.Version)
@@ -85,6 +86,14 @@ func (a *App) Diagnostics(lastError string) string {
 		}
 	}
 	return b.String()
+}
+
+func redactDiagnosticsError(lastError, configuredAPIKey string) string {
+	redacted := k8sclient.RedactSensitiveText(lastError)
+	if key := strings.TrimSpace(configuredAPIKey); key != "" {
+		redacted = strings.ReplaceAll(redacted, key, "[REDACTED]")
+	}
+	return redacted
 }
 
 // CopyToClipboard puts text on the system clipboard via the Wails runtime, which

@@ -99,6 +99,13 @@ RBAC probes and API errors describe what it may access afterwards.
 
 `recent.go` persists to `%AppData%/kubby/recent.json`.
 
+Kubeconfigs are not passive data. Before creating a transport, `New` and
+`NewFromContent` validate only the selected context and reject exec/auth-provider
+plugins, token/certificate/key file references, and kubeconfig-defined proxies.
+Those fields can launch a process or read local files under the desktop user's
+identity. Supporting them requires an explicit high-risk approval UI; do not
+weaken this check merely to make a cloud-provider config connect silently.
+
 The file is updated under one App mutex with a private temporary file, `Sync`,
 and atomic rename. This prevents overlapping welcome-screen connects/forgets from
 losing updates or exposing a partially-written JSON document.

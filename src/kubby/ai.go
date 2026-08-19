@@ -117,6 +117,9 @@ func mergeAIConfig(current, next AIConfig) (AIConfig, error) {
 	}
 	if next.Provider == "ollama" {
 		next.APIKey = ""
+		if _, err := localOllamaBaseURL(next.Endpoint); err != nil {
+			return AIConfig{}, err
+		}
 		return next, nil
 	}
 	if strings.TrimSpace(next.APIKey) == "" {
@@ -143,6 +146,7 @@ func callAI(ctx context.Context, cfg AIConfig, system string, msgs []AIMessage) 
 		timeout = 10 * time.Minute
 	}
 	client := &http.Client{Timeout: timeout}
+	client.CheckRedirect = aiRedirectPolicy(cfg.Provider)
 	switch cfg.Provider {
 	case "anthropic":
 		return callAnthropic(ctx, client, cfg, system, msgs)
@@ -152,6 +156,20 @@ func callAI(ctx context.Context, cfg AIConfig, system string, msgs []AIMessage) 
 		return callOpenAI(ctx, client, cfg, system, msgs)
 	default:
 		return "", fmt.Errorf("no AI provider configured — open Settings (⚙) to pick one")
+	}
+}
+
+func aiRedirectPolicy(provider string) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, _ []*http.Request) error {
+		if provider == "ollama" {
+			if _, err := localOllamaBaseURL(req.URL.String()); err != nil {
+				return err
+			}
+		}
+		// Provider redirects are not part of the configured trust boundary. In
+		// particular, following one could forward x-api-key or the reviewed
+		// evidence to a different origin or downgrade HTTPS to HTTP.
+		return http.ErrUseLastResponse
 	}
 }
 
@@ -337,14 +355,31 @@ func callOpenAI(ctx context.Context, client *http.Client, cfg AIConfig, system s
 // defaults to 2048 tokens.
 const ollamaNumCtx = 8192
 
+func localOllamaBaseURL(endpoint string) (string, error) {
+	raw := strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	if raw == "" {
+		raw = "http://localhost:11434"
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", fmt.Errorf("invalid Ollama endpoint %q — expected a loopback http:// or https:// URL", endpoint)
+	}
+	host := strings.ToLower(u.Hostname())
+	ip := net.ParseIP(host)
+	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return "", fmt.Errorf("Ollama is the local provider; its endpoint must use localhost or a loopback IP")
+	}
+	return raw, nil
+}
+
 func callOllama(ctx context.Context, client *http.Client, cfg AIConfig, system string, msgs []AIMessage) (string, error) {
 	model := cfg.Model
 	if model == "" {
 		model = defaultModel("ollama")
 	}
-	base := strings.TrimRight(cfg.Endpoint, "/")
-	if base == "" {
-		base = "http://localhost:11434"
+	base, err := localOllamaBaseURL(cfg.Endpoint)
+	if err != nil {
+		return "", err
 	}
 	body := map[string]any{
 		"model":    model,

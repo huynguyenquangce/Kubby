@@ -179,6 +179,14 @@ test('pasted kubeconfig uses the shared YAML editor handle', () => {
 	assert.doesNotMatch(indexHTML, /<textarea[^>]*id="paste-area"/);
 	assert.match(mainJS, /const pasteEditor = createYamlEditor\(\$\('paste-area'\)/);
 	assert.match(mainJS, /pasteEditor\.getValue\(\)/);
+	assert.match(mainJS, /source\.content = ''/);
+	assert.match(mainJS, /pasteEditor\.setValue\(''\)/);
+});
+
+test('AI sends the same reviewed evidence snapshot for the whole thread', () => {
+	assert.match(mainJS, /AskAboutResource\(ref\.kind, ref\.namespace, ref\.name, aiContext\.text, aiThread\)/);
+	assert.match(mainJS, /if \(!q \|\| aiBusy \|\| !drawerRef \|\| !aiContext\?\.text\) return/);
+	assert.doesNotMatch(mainJS, /AskAboutResource\(ref\.kind, ref\.namespace, ref\.name, aiThread\)/);
 });
 
 test('cluster writes cross confirmation and connection-ownership boundaries', () => {

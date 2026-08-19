@@ -1,6 +1,7 @@
 package k8sclient
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -57,21 +58,79 @@ type Cluster struct {
 // An empty context means "use the current-context defined in the kubeconfig".
 func New(kubeconfigPath, context string) (*Cluster, error) {
 	loadingRules := &clientcmdapi.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath}
+	rawConfig, err := loadingRules.Load()
+	if err != nil {
+		return nil, err
+	}
+	if err := validateKubeconfigSafety(rawConfig, context); err != nil {
+		return nil, err
+	}
 	overrides := &clientcmdapi.ConfigOverrides{}
 	if context != "" {
 		overrides.CurrentContext = context
 	}
-	restConfig, err := clientcmdapi.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
+	restConfig, err := clientcmdapi.NewDefaultClientConfig(*rawConfig, overrides).ClientConfig()
 	if err != nil {
 		return nil, err
 	}
 	return clusterFromRest(restConfig)
 }
 
+// validateKubeconfigSafety runs before client-go creates transports or performs
+// discovery. Kubeconfigs are active credential-loading configuration: exec and
+// auth-provider plugins can launch processes, while file-backed credentials can
+// read arbitrary local paths. Kubby has no separate high-risk approval UI yet,
+// so the preview release accepts only credentials embedded in the selected
+// kubeconfig and rejects those active/local-file mechanisms by default.
+func validateKubeconfigSafety(cfg *api.Config, requestedContext string) error {
+	contextName := requestedContext
+	if contextName == "" {
+		contextName = cfg.CurrentContext
+	}
+	ctx := cfg.Contexts[contextName]
+	if ctx == nil {
+		return fmt.Errorf("kubeconfig context %q was not found", contextName)
+	}
+	auth := &api.AuthInfo{}
+	if ctx.AuthInfo != "" {
+		auth = cfg.AuthInfos[ctx.AuthInfo]
+	}
+	if auth == nil {
+		return fmt.Errorf("kubeconfig user %q was not found", ctx.AuthInfo)
+	}
+	unsafeCredential := ""
+	switch {
+	case auth.Exec != nil:
+		unsafeCredential = "an exec credential plugin"
+	case auth.AuthProvider != nil:
+		unsafeCredential = "an auth-provider plugin"
+	case auth.TokenFile != "":
+		unsafeCredential = "a token file"
+	case auth.ClientCertificate != "":
+		unsafeCredential = "a client-certificate file"
+	case auth.ClientKey != "":
+		unsafeCredential = "a client-key file"
+	}
+	if unsafeCredential != "" {
+		return fmt.Errorf("kubeconfig user %q uses %s; Kubby blocks executable and file-backed credentials until it can ask for explicit high-risk approval", ctx.AuthInfo, unsafeCredential)
+	}
+	cluster := cfg.Clusters[ctx.Cluster]
+	if cluster == nil {
+		return fmt.Errorf("kubeconfig cluster %q was not found", ctx.Cluster)
+	}
+	if cluster.ProxyURL != "" {
+		return fmt.Errorf("kubeconfig cluster %q uses a proxy URL; Kubby blocks kubeconfig-defined proxies until it can ask for explicit high-risk approval", ctx.Cluster)
+	}
+	return nil
+}
+
 // NewFromContent builds a Cluster from raw kubeconfig bytes (pasted by the user).
 func NewFromContent(content []byte, context string) (*Cluster, error) {
 	rawConfig, err := clientcmdapi.Load(content)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateKubeconfigSafety(rawConfig, context); err != nil {
 		return nil, err
 	}
 	overrides := &clientcmdapi.ConfigOverrides{}

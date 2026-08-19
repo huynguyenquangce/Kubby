@@ -96,6 +96,12 @@ func redactSensitiveText(text string) string {
 	})
 }
 
+// RedactSensitiveText removes common credential shapes from free-form text that
+// may be copied into diagnostics or sent outside the process.
+func RedactSensitiveText(text string) string {
+	return redactSensitiveText(text)
+}
+
 func redactDiagnosticYAML(text string) string {
 	var doc map[string]interface{}
 	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {

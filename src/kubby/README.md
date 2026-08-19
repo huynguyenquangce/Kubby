@@ -76,7 +76,7 @@ Pick a **Context**, then **Connect**. The first connection may take 15–30 s if
 - A namespaced object with no `metadata.namespace` goes to `default`, like `kubectl`.
 - You get a per-document report of what happened — `created` / `updated`, the kind, the namespace and the apiVersion — and every document is attempted even if one fails, so a half-valid bundle applies its valid half and names the rest.
 
-**Reporting a problem.** **⚙ Settings → About** shows the exact build you are running, and **Copy diagnostics** puts a report on your clipboard: version, platform, the connected cluster's Kubernetes version and capabilities (nodes, API groups, CRD kinds, whether metrics-server is there), the AI provider in use, and the last error shown. It contains **no API key, no kubeconfig content and no resource data**, and is headed "review before sharing" so the call stays yours. The same information from the CLI: `kubby-cli --version` and `kubby-cli diagnostics`.
+**Reporting a problem.** **⚙ Settings → About** shows the exact build you are running, and **Copy diagnostics** puts a report on your clipboard: version, platform, the connected cluster's Kubernetes version and capabilities (nodes, API groups, CRD kinds, whether metrics-server is there), the AI provider in use, and the last error shown. Kubby never reads the configured API key or kubeconfig content into that report and redacts common credential patterns, but a free-form server error can still contain resource-derived details. The report is headed **review before sharing**; inspect it before posting. The same information from the CLI: `kubby-cli --version` and `kubby-cli diagnostics`.
 
 **Navigate fast.** Multi-cluster dropdown (+ Add cluster, disconnect), **Command palette (Ctrl+K)** for views/namespaces/clusters/actions and **global resource search** (type a name, jump straight to it), **Live** auto-refresh, **dark mode** (Nord theme), and recent-connection reconnect on Welcome.
 
@@ -115,7 +115,7 @@ Open any resource and pick the **Ask AI** tab. It is a conversation about *that*
 
 **Answer language** is a setting too: match the question (default), always English, or always Vietnamese.
 
-The config — including the key — is stored only on this machine at `%AppData%/kubby/ai.json` (mode 0600), and the resource evidence goes only to the provider you chose. Answers can still be wrong: verify before acting on one.
+The config — including the key — is stored only on this machine at `%AppData%/kubby/ai.json`. Kubby requests mode `0600` where the OS supports Unix permission bits; on Windows, confidentiality depends on the inherited ACL of your user profile. Ollama endpoints must resolve to loopback and AI requests never follow redirects; other resource evidence goes only to the provider you chose. Answers can still be wrong: verify before acting on one.
 
 ## `kubby-cli` (developer aid)
 
