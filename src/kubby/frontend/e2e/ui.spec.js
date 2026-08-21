@@ -35,6 +35,15 @@ async function expectViewportBounded(page) {
     expect(overflow).toEqual([]);
 }
 
+async function openNavView(page, target) {
+    const navItem = page.locator(`.nav-item[data-view="${target}"]`);
+    const section = navItem.locator('xpath=ancestor::div[contains(@class,"nav-section")]');
+    if (await section.evaluate((element) => element.classList.contains('collapsed'))) {
+        await section.locator('.nav-group').click();
+    }
+    await navItem.click();
+}
+
 test('FR-2/FR-13: pasted kubeconfig enters a populated Overview', async ({ page }) => {
     const pageErrors = collectPageErrors(page);
     await connectDashboard(page);
@@ -46,6 +55,17 @@ test('FR-2/FR-13: pasted kubeconfig enters a populated Overview', async ({ page 
     await expect(page.locator('#infrastructure-state')).toHaveText('Ready');
     await expect(page.locator('.overview-node-row').filter({ hasText: 'kubby-control-plane' })).not.toHaveClass(/overview-node-row-bad/);
     await expect(page.locator('#overview-errors-body')).toContainText('checkout-7b8d9f-2kw7p');
+    const clippedIssueCells = await page.locator('#overview-errors-body tr').evaluate((row) => [...row.cells]
+        .map((cell, index) => ({ index, clientWidth: cell.clientWidth, scrollWidth: cell.scrollWidth }))
+        // The Pod name deliberately ellipsizes and carries the full value in its title.
+        .filter((cell) => cell.index !== 1)
+        .filter((cell) => cell.scrollWidth > cell.clientWidth + 1));
+    expect(clippedIssueCells).toEqual([]);
+    const clippedIssueHeaders = await page.locator('.overview-issues-table thead tr').evaluate((row) => [...row.cells]
+        .map((cell, index) => ({ index, clientWidth: cell.clientWidth, scrollWidth: cell.scrollWidth }))
+        .filter((cell) => cell.index !== 1)
+        .filter((cell) => cell.scrollWidth > cell.clientWidth + 1));
+    expect(clippedIssueHeaders).toEqual([]);
     await expect(page.locator('#overview-toppods-body')).toContainText('api-6df7fdd9f8-4zj8g');
     await expect(page.locator('#overview-events-body')).toContainText('BackOff');
     expect(pageErrors).toEqual([]);
@@ -85,6 +105,28 @@ test('FR-13: healthy Overview keeps the Attention message readable without overf
     });
     expect(layout.messageWidth).toBeGreaterThan(150);
     expect(layout.wrapperScrollHeight).toBeLessThanOrEqual(layout.wrapperClientHeight + 1);
+});
+
+test('FR-40: Attention opens evidence-first Incident Studio and safe hand-offs', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1100, height: 760 });
+    await connectDashboard(page);
+
+    await page.locator('#overview-errors-body .issue-diagnose').click();
+    await expect(page.locator('#drawer')).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Investigate', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('#incident-summary')).toHaveText('checkout was OOMKilled');
+    await expect(page.locator('#incident-findings')).toContainText('reason: OOMKilled');
+    await expect(page.locator('#incident-related')).toContainText('Deployment · checkout');
+    await expect(page.locator('#incident-timeline')).toContainText('exit code 137');
+    await expect(page.locator('#incident-limits-section')).toBeVisible();
+
+    await page.locator('#btn-incident-export').click();
+    await expect.poll(() => page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'SaveIncidentReport').length)).toBe(1);
+
+    await page.getByRole('button', { name: /Inspect current and previous logs/ }).click();
+    await expect(page.getByRole('tab', { name: 'Logs', exact: true })).toHaveAttribute('aria-selected', 'true');
+    expect(pageErrors).toEqual([]);
 });
 
 test('FR-6: dashboard namespace picker filters and changes scope from the keyboard', async ({ page }) => {
@@ -142,7 +184,8 @@ test('FR-37: cluster structure supports filtering and resource inspection', asyn
     await connectDashboard(page);
     await page.locator('#btn-cluster-structure').click();
 
-    await expect(page.locator('#page-title')).toHaveText('Cluster structure');
+    await expect(page.locator('#page-title')).toHaveText('Topology');
+    await expect(page.locator('[data-topology-view="structure"]')).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('#structure-entries .structure-path')).toHaveCount(1);
     await expect(page.locator('#structure-internal .structure-path')).toHaveCount(1);
     await page.locator('#structure-filter').fill('checkout');
@@ -168,7 +211,7 @@ test('FR-7/FR-14/FR-38: Pod drawer owns the selected resource and stays in the v
     await expect(page.locator('#drawer-name')).toHaveText('api-6df7fdd9f8-4zj8g');
     await expect(page.locator('#drawer-ns')).toContainText('payments');
     await expect(page.locator('#drawer-tab-logs')).toBeVisible();
-    await page.getByRole('button', { name: 'YAML', exact: true }).click();
+    await page.getByRole('tab', { name: 'YAML', exact: true }).click();
     await expect(page.locator('#dpanel-yaml .cm-editor')).toContainText('api-6df7fdd9f8-4zj8g');
 
     const drawerBounds = await page.locator('#drawer').evaluate((element) => {
@@ -189,7 +232,7 @@ test('FR-21/FR-38: Pod Terminal auto-attaches Bash-first and keeps session contr
     await page.locator('#btn-mobile-nav').click();
     await page.locator('.nav-item[data-view="pods"]').click();
     await page.locator('#pods-body tr', { hasText: 'api-6df7fdd9f8-4zj8g' }).click();
-    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
 
     await expect(page.locator('#term-status')).toHaveText('Attached · /bin/bash');
     await expect(page.locator('#term-container')).toHaveValue('api');
@@ -234,7 +277,7 @@ test('FR-21: shell discovery failure stops after one attempt and offers Retry', 
     });
     await page.locator('.nav-item[data-view="pods"]').click();
     await page.locator('#pods-body tr', { hasText: 'api-6df7fdd9f8-4zj8g' }).click();
-    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
 
     await expect(page.locator('#term-status')).toContainText('no supported shell found');
     await expect(page.locator('#term-placeholder-title')).toHaveText('Shell unavailable');
@@ -249,7 +292,7 @@ test('FR-16: Ctrl+F searches inside YAML and Escape keeps the drawer open', asyn
     await connectDashboard(page);
     await page.locator('.nav-item[data-view="pods"]').click();
     await page.locator('#pods-body tr', { hasText: 'api-6df7fdd9f8-4zj8g' }).click();
-    await page.getByRole('button', { name: 'YAML', exact: true }).click();
+    await page.getByRole('tab', { name: 'YAML', exact: true }).click();
 
     await page.locator('#dpanel-yaml .cm-content').click();
     await page.keyboard.press('Control+f');
@@ -307,7 +350,7 @@ test('FR-5: every built-in navigation target renders without a browser exception
     const targets = await page.locator('.nav-item[data-view]').evaluateAll((items) => items.map((item) => item.dataset.view));
 
     for (const target of targets) {
-        await page.locator(`.nav-item[data-view="${target}"]`).click();
+        await openNavView(page, target);
         await expect(page.locator(`#view-${target}`)).toBeVisible();
         await expect(page.locator('#dash-error')).toBeHidden();
     }
@@ -318,7 +361,7 @@ test('FR-23/24/25: Helm workspace keeps release, catalog, and repository context
     const pageErrors = collectPageErrors(page);
     await page.setViewportSize({ width: 1180, height: 780 });
     await connectDashboard(page);
-    await page.locator('.nav-item[data-view="helm"]').click();
+    await openNavView(page, 'helm');
 
     await expect(page.locator('#helm-total')).toHaveText('1');
     await expect(page.locator('#helm-deployed')).toHaveText('1');

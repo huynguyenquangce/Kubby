@@ -6,6 +6,7 @@ const indexHTML = readFileSync(new URL('../index.html', import.meta.url), 'utf8'
 const mainJS = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 const editorJS = readFileSync(new URL('./editor.js', import.meta.url), 'utf8');
 const optionBCSS = readFileSync(new URL('./option-b.css', import.meta.url), 'utf8');
+const incidentCSS = readFileSync(new URL('./incident.css', import.meta.url), 'utf8');
 
 test('namespace scope is searchable without splitting canonical select state', () => {
     for (const id of ['namespace-toggle', 'namespace-search', 'namespace-options', 'namespace-select']) {
@@ -110,6 +111,38 @@ test('overview uses bundled typography and dashboard-specific table contracts', 
     for (const table of tables) assert.match(table[1], /class="[^"]*plain[^"]*"/);
 });
 
+test('the shell has one navigation owner and a mode switcher for topology', () => {
+    assert.match(indexHTML, /<aside id="sidebar" class="sidebar">/);
+    assert.doesNotMatch(indexHTML, /class="app-rail"|data-rail/);
+    assert.doesNotMatch(mainJS, /data-rail/);
+    assert.match(indexHTML, /id="topology-switcher"[^>]*role="tablist"/);
+    for (const view of ['structure', 'traffic']) {
+        const tab = indexHTML.match(new RegExp(`<button[^>]*data-topology-view="${view}"[^>]*>`))?.[0] ?? '';
+        assert.match(tab, /role="tab"/);
+        assert.match(tab, /aria-selected="false"/);
+    }
+});
+
+test('resource surfaces expose keyboard and assistive-technology contracts', () => {
+    assert.match(indexHTML, /id="drawer"[^>]*role="dialog"[^>]*aria-modal="true"/);
+    assert.match(indexHTML, /class="drawer-tabs" role="tablist"/);
+    assert.match(indexHTML, /id="palette"[^>]*role="dialog"[^>]*aria-modal="true"/);
+    assert.match(indexHTML, /id="palette-list"[^>]*role="listbox"/);
+    assert.match(mainJS, /tr\.tabIndex = 0/);
+    assert.match(mainJS, /sort-button/);
+    assert.match(mainJS, /aria-sort/);
+    assert.match(mainJS, /document\.querySelector\('\.main'\)\.inert = true/);
+    assert.match(mainJS, /target\?\.isConnected[\s\S]*?target\.focus\(\)/);
+});
+
+test('refresh preserves same-scope content and announces freshness', () => {
+    assert.match(indexHTML, /id="view-status"[^>]*role="status"[^>]*aria-live="polite"/);
+    assert.match(mainJS, /const refreshing = owner === renderedViewOwner/);
+    assert.match(mainJS, /if \(!refreshing\) clearRenderedView\(scope\.view\)/);
+    assert.match(mainJS, /setViewStatus\(refreshing \? 'refreshing' : 'loading', refreshing \? 'Refreshing…' : 'Loading…'\)/);
+    assert.match(mainJS, /setViewStatus\('current', 'Updated just now'\)/);
+});
+
 test('overview empty-state icon sizing does not constrain its message', () => {
     assert.match(optionBCSS, /\.overview-empty > span:first-child\s*\{/);
     assert.doesNotMatch(optionBCSS, /\.overview-empty > span\s*\{/);
@@ -172,6 +205,19 @@ test('drawer lazily loads tabs and shares one Pod container request', () => {
     const tabSetter = mainJS.match(/function setDrawerTab\(name\) \{[\s\S]*?\n\}/)?.[0] ?? '';
     assert.match(tabSetter, /ensureDrawerTabLoaded\(name\)/);
     assert.equal([...mainJS.matchAll(/\bPodContainers\(/g)].length, 1);
+});
+
+test('Incident Studio is evidence-first, one-call, owned, and responsive', () => {
+    for (const id of ['drawer-tab-investigate', 'dpanel-investigate', 'incident-findings', 'incident-timeline', 'btn-incident-watch', 'btn-incident-export']) {
+        assert.match(indexHTML, new RegExp(`id="${id}"`));
+    }
+    assert.match(mainJS, /InvestigateResource\(ref\.kind, ref\.namespace, ref\.name\)/);
+    assert.match(mainJS, /stopIncidentWatch\(\)/);
+    assert.match(mainJS, /requestScopes\.drawerOwnerKey\(scope\)/);
+    assert.match(mainJS, /SaveIncidentReport\(JSON\.stringify\(incidentReport\)\)/);
+    assert.match(incidentCSS, /\.incident-two-column/);
+    assert.match(incidentCSS, /@media \(max-width: 840px\)/);
+    assert.match(incidentCSS, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
 test('pasted kubeconfig uses the shared YAML editor handle', () => {

@@ -33,7 +33,7 @@ test('Pod Terminal visual baseline', async ({ page }) => {
     await connectDashboard(page, { theme: 'dark' });
     await page.locator('.nav-item[data-view="pods"]').click();
     await page.locator('#pods-body tr', { hasText: 'api-6df7fdd9f8-4zj8g' }).click();
-    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
     await expect(page.locator('#term-status')).toHaveText('Attached · /bin/bash');
     const sessionId = await page.evaluate(() => window.__wailsMock.calls
         .filter((call) => call.method === 'StartExec').at(-1)?.args[0]);
@@ -43,4 +43,12 @@ test('Pod Terminal visual baseline', async ({ page }) => {
     }), sessionId);
     await page.locator('.term-toolbar-copy').click();
     await expect(page.locator('#drawer')).toHaveScreenshot('pod-terminal.png');
+});
+
+test('Incident Studio visual baseline', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await connectDashboard(page, { theme: 'light' });
+    await page.locator('#overview-errors-body .issue-diagnose').click();
+    await expect(page.locator('#incident-summary')).toHaveText('checkout was OOMKilled');
+    await expect(page.locator('#drawer')).toHaveScreenshot('incident-studio.png');
 });

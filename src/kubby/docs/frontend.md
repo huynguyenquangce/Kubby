@@ -66,9 +66,10 @@ machine, changing density and alignment. Keep technical identifiers and measurem
 on the existing monospace stack; do not turn the whole UI into monospace.
 
 Overview is an operational cockpit, not a resource table or a marketing hero. Its
-hierarchy is: a compact semantic health banner with ready/total facts; comparable
-CPU, memory, infrastructure, and workload cards; then Attention, Top consumers,
-Node status, and Events. Health is expressed as evidence-backed counts rather than
+hierarchy is: a compact semantic health banner with ready/total facts; the actionable
+Attention queue with resource-owned Inspect/Ask AI actions; then comparable CPU,
+memory, infrastructure and workload cards, Top consumers, Node status, and Events.
+Health is expressed as evidence-backed counts rather than
 an invented percentage score. Aggregate CPU/memory has one owner; Node status shows
 readiness, scheduling, pressure, and pod count instead of repeating utilization.
 Scheduling disabled remains visible but does not make an otherwise Ready,
@@ -77,8 +78,9 @@ rather than decorative rings. Every Overview table still carries `class="plain"`
 uses a fixed layout, and owns horizontal overflow so an event message cannot widen
 the page. At narrow workspace widths the cards stack without hiding any state.
 
-The contextual **Cluster structure** button opens a separate debug canvas, not a
-resource table. `ClusterStructure()` supplies Entry point → Service → Workload → Pod
+The contextual **Open topology** button opens the **Dependencies** canvas in the
+shared Topology workspace, not a resource table. `ClusterStructure()` supplies
+Entry point → Service → Workload → Pod
 paths in one payload plus internal Services and unexposed workloads. Search and the
 unhealthy-only toggle filter whole paths; selecting a node fills the local inspector,
 while full detail and logs continue through the shared drawer.
@@ -87,15 +89,17 @@ while full detail and logs continue through the shared drawer.
 
 `responsive.css` is loaded after the base and visual-theme styles and owns all new
 responsive overrides. The desktop shell still uses viewport media queries because
-the rail/sidebar themselves consume the viewport. Internal views use the named
+the sidebar itself consumes the viewport. Internal views use the named
 `workspace` container on `.main`: a component must react to the width it actually
 receives after shell columns, not to the wider outer window. Using a viewport query
 for Structure previously left a 220–330 px blind spot where its four lanes still
 expected desktop space behind a visible sidebar.
 
-At 820 px and below, the canonical sidebar becomes an off-canvas navigation drawer.
-Do not build a second mobile navigation tree: it would drift from dynamic custom
-resources, counts, namespace selection and cluster controls. The menu toggle owns
+The sidebar is the only navigation owner on desktop; do not add a second icon rail
+that duplicates its categories, active state, theme, or Settings. At 820 px and below,
+that canonical sidebar becomes an off-canvas navigation drawer. Do not build a second
+mobile navigation tree: it would drift from dynamic custom resources, counts,
+namespace selection and cluster controls. The menu toggle owns
 `aria-expanded`, backdrop/Escape close it, and selecting any view closes it.
 
 Responsive acceptance means no document- or shell-level horizontal overflow from
@@ -109,14 +113,28 @@ the breakpoint boundaries.
 `openDrawer(ref)` where `ref = { kind, namespace, name, isPod?, tab? }`.
 
 Tabs: Details, YAML, Events, Logs (pods), Terminal (pods), Port Forward
-(pods/services), Ask AI. Tab visibility is driven off the ref, so a kind that
+(pods/services), Investigate, Ask AI. Tab visibility is driven off the ref, so a kind that
 cannot do something never shows its tab.
+
+**Investigate comes before Ask AI on purpose.** It loads one deterministic
+`IncidentReport`, renders ranked findings/evidence, related resources and a
+timestamped timeline, then hands remediation to the existing confirmed
+logs/YAML/rollout/topology flows. Its 60-second recovery watch owns the exact
+drawer resource and stops on close or navigation. Export passes the bounded
+report back to Go; the WebView never assembles a richer bundle from raw YAML or
+logs. See [incident-studio.md](incident-studio.md).
 
 The header displays `ref.kind.split('.')[0]` — a custom resource's ref carries the
 group-qualified kind, and the user should see `VirtualService`, not the whole
 reference.
 
-`closeDrawer()` must stop anything the drawer started (log follow, exec).
+The drawer is modal to the obscured workspace: it owns focus while open, restores
+the invoking control on close, and exposes its panels as one ARIA tablist. Keep that
+contract aligned with the generic modal rather than treating the slide-over shape as
+permission to leave background controls keyboard-active.
+
+`closeDrawer()` must stop anything the drawer started (log follow, exec,
+Incident Studio recovery watch).
 
 The Terminal tab is an xterm.js surface, not an input below a `<pre>`. It must be
 opened/fitted only after its drawer panel is visible (xterm measures its parent),
@@ -284,9 +302,13 @@ loading the YAML editor and terminal is tracked as a post-preview optimization.
 
 ## Theme
 
-The palette is a **Nord** token set defined once in the `:root` and
-`:root[data-theme="dark"]` blocks at the top of `app.css`. Components read tokens,
-so re-theming means editing those two blocks only.
+`app.css` owns functional component geometry and fallback states. The last visual
+layer, `option-b.css`, is the canonical Calm Cloud design system: its `:root` and
+`:root[data-theme="dark"]` blocks own product colour tokens, typography and surface
+hierarchy; `responsive.css` then owns layout adaptation only. Components read those
+tokens. Do not introduce a third theme layer or add product colours directly to new
+component markup. Operational body/table text stays at least 12 px at the 16 px root,
+and semantic text colours must retain WCAG AA contrast in both themes.
 
 > **Specificity trap.** `:root[data-theme="dark"] .chip` is (0,2,0) and beats a
 > bare `.chip-accent` at (0,1,0). A variant class that must survive dark mode needs

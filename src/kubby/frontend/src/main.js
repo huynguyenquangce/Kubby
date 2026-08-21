@@ -2,6 +2,7 @@ import './style.css';
 import './app.css';
 import './option-b.css';
 import './responsive.css';
+import './incident.css';
 import '@fontsource-variable/inter/wght.css';
 import '@xterm/xterm/css/xterm.css';
 
@@ -118,6 +119,8 @@ import {
     ServiceTree,
     IngressTree,
     OverviewSnapshot,
+    InvestigateResource,
+    SaveIncidentReport,
     PodContainers,
     PodLogs,
     StartLogStream,
@@ -136,14 +139,14 @@ import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime';
 
 const PAGE_TITLES = {
     overview: 'Overview',
-    structure: 'Cluster structure',
+    structure: 'Topology',
     nodes: 'Nodes',
     namespaces: 'Namespaces',
     sizing: 'Right-sizing',
     pods: 'Pods',
     deployments: 'Deployments',
     services: 'Services',
-    traffic: 'Traffic flow',
+    traffic: 'Topology',
     configmaps: 'ConfigMaps',
     secrets: 'Secrets',
     statefulsets: 'StatefulSets',
@@ -167,14 +170,14 @@ const PAGE_TITLES = {
 
 const PAGE_SUBTITLES = {
     overview: 'Live health and capacity across the connected cluster.',
-    structure: 'Debug how entry points, services, workloads, and pods connect across the cluster.',
+    structure: 'Trace dependencies from entry points through services and workloads to pods.',
     nodes: 'Inspect cluster machines, readiness, versions, and scheduled workloads.',
     namespaces: 'Browse logical scopes and the resources running inside them.',
     sizing: 'Compare requested resources with live usage and find waste or risk.',
     pods: 'Monitor workload health, resource usage, logs, terminals, and events.',
     deployments: 'Review rollout health and safely scale, restart, pause, or roll back.',
     services: 'Inspect stable network endpoints and the workloads behind them.',
-    traffic: 'Trace ingress and service paths through to their backing pods.',
+    traffic: 'Follow ingress and service routes to the pods that actually receive traffic.',
     configmaps: 'Browse application configuration stored in the cluster.',
     secrets: 'Inspect secret metadata and reveal values only when explicitly requested.',
     statefulsets: 'Monitor ordered, stateful workloads and rolling restarts.',
@@ -237,6 +240,7 @@ let welcomeConnectPending = false;
 let currentView = 'overview';
 let currentNamespace = '';
 let helmSection = 'releases';
+let renderedViewOwner = '';
 const requestScopes = createRequestScopes();
 const pasteEditor = createYamlEditor($('paste-area'), {
 	placeholder: 'apiVersion: v1\nkind: Config\nclusters:\n- ...',
@@ -247,12 +251,15 @@ function isCurrentViewRequest(scope) {
 }
 
 function viewError(scope, err) {
-    if (isCurrentViewRequest(scope)) showDashError(err);
+    if (!isCurrentViewRequest(scope)) return;
+    setViewStatus('error', 'Could not refresh this view');
+    showDashError(err);
 }
 
 function connectionOwnershipChanged() {
 	if (!$('modal').hidden) closeModal();
 	if (!$('dialog').hidden) closeDialog(false);
+	if (!$('palette').hidden) closePalette({ restoreFocus: false });
 	requestScopes.connectionChanged();
 	clearCustomSections();
 }
@@ -303,6 +310,7 @@ function fillContexts(res) {
         select.appendChild(opt);
     }
     $('context-row').hidden = false;
+    setWelcomeStep(2);
 }
 
 $('btn-connect').addEventListener('click', () => {
@@ -313,6 +321,7 @@ $('btn-connect').addEventListener('click', () => {
 	btn.disabled = true;
 	btn.textContent = 'Connecting…';
 	setWelcomeConnectPending(true);
+    setWelcomeStep(3);
     $('connecting-overlay').hidden = false;
 
     const connect = source.mode === 'path'
@@ -333,8 +342,16 @@ $('btn-connect').addEventListener('click', () => {
             btn.disabled = false;
 			btn.textContent = 'Connect';
 			setWelcomeConnectPending(false);
+			if (!$('welcome').hidden) setWelcomeStep(2);
 		});
 });
+
+function setWelcomeStep(step) {
+    document.querySelectorAll('.welcome-steps li').forEach((item, index) => {
+        item.classList.toggle('active', index + 1 === step);
+        item.classList.toggle('completed', index + 1 < step);
+    });
+}
 
 function setWelcomeConnectPending(pending) {
 	welcomeConnectPending = pending;
@@ -452,11 +469,6 @@ document.querySelectorAll('.nav-item').forEach((btn) => {
     btn.appendChild(span);
 });
 
-document.querySelectorAll('[data-rail-view]').forEach((btn) => {
-    btn.addEventListener('click', () => selectView(btn.dataset.railView));
-});
-document.querySelector('[data-rail-action="theme"]')?.addEventListener('click', () => $('btn-theme').click());
-document.querySelector('[data-rail-action="settings"]')?.addEventListener('click', () => $('btn-settings').click());
 $('btn-command-palette').addEventListener('click', openPalette);
 
 // Below the desktop-shell breakpoint the existing sidebar becomes an off-canvas
@@ -501,8 +513,12 @@ function persistNavCollapsed() {
 }
 
 function restoreNavCollapsed() {
-    let collapsed = [];
-    try { collapsed = JSON.parse(localStorage.getItem(NAV_COLLAPSE_KEY) || '[]'); } catch { /* ignore */ }
+    const defaults = ['network', 'config', 'storage', 'access', 'ecosystem', 'custom'];
+    let collapsed = defaults;
+    try {
+        const saved = localStorage.getItem(NAV_COLLAPSE_KEY);
+        if (saved !== null) collapsed = JSON.parse(saved);
+    } catch { /* keep the calm first-run defaults */ }
     for (const sec of document.querySelectorAll('.nav-section')) {
         const on = collapsed.includes(sec.dataset.section);
         sec.classList.toggle('collapsed', on);
@@ -523,7 +539,8 @@ restoreNavCollapsed();
 // Make sure the group holding a given view is expanded (used when jumping via
 // the command palette or programmatic selectView into a collapsed group).
 function revealNavSection(view) {
-    const item = document.querySelector(`.nav-item[data-view="${view}"]`);
+    const navView = view === 'structure' ? 'traffic' : view;
+    const item = document.querySelector(`.nav-item[data-view="${navView}"]`);
     const section = item?.closest('.nav-section');
     if (section && section.classList.contains('collapsed')) {
         section.classList.remove('collapsed');
@@ -704,7 +721,18 @@ $('namespace-select').addEventListener('change', (e) => {
 });
 
 $('btn-refresh').addEventListener('click', () => { loadSidebarCounts(); refreshCurrentView(); });
-$('btn-cluster-structure').addEventListener('click', () => selectView(currentView === 'structure' ? 'overview' : 'structure'));
+$('btn-cluster-structure').addEventListener('click', () => selectView('structure'));
+$('topology-dependencies').addEventListener('click', () => selectView('structure'));
+$('topology-traffic').addEventListener('click', () => selectView('traffic'));
+document.querySelectorAll('#topology-switcher [role="tab"]').forEach((tab) => {
+    tab.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const target = event.key === 'ArrowLeft' || event.key === 'Home' ? 'structure' : 'traffic';
+        selectView(target);
+        requestAnimationFrame(() => $(target === 'structure' ? 'topology-dependencies' : 'topology-traffic').focus());
+    });
+});
 $('structure-filter').addEventListener('input', applyStructureFilter);
 $('structure-only-unhealthy').addEventListener('change', applyStructureFilter);
 
@@ -805,19 +833,27 @@ function selectView(view) {
     currentView = view;
     revealNavSection(view);
     const sectionId = viewSectionId(view);
-    document.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
-    updateRailActive(view);
+    const navView = view === 'structure' ? 'traffic' : view;
+    document.querySelectorAll('.nav-item').forEach((b) => {
+        const active = b.dataset.view === navView;
+        b.classList.toggle('active', active);
+        if (active) b.setAttribute('aria-current', 'page');
+        else b.removeAttribute('aria-current');
+    });
     document.querySelectorAll('.view').forEach((v) => (v.hidden = v.id !== sectionId));
     $('page-title').textContent = PAGE_TITLES[view] ?? view;
     $('page-subtitle').textContent = PAGE_SUBTITLES[view]
         ?? (String(view).startsWith('custom:') ? 'Browse this custom API and inspect its live resources.' : 'Browse and manage live cluster resources.');
-    const navItem = document.querySelector(`.nav-item[data-view="${view}"]`);
-    $('page-eyebrow').textContent = view === 'structure'
-        ? 'Cluster'
-        : (navItem?.closest('.nav-section')?.querySelector('.nav-group span')?.textContent ?? 'Workspace');
+    const navItem = document.querySelector(`.nav-item[data-view="${navView}"]`);
+    $('page-eyebrow').textContent = navItem?.closest('.nav-section')?.querySelector('.nav-group span')?.textContent ?? 'Workspace';
     const structureButton = $('btn-cluster-structure');
-    structureButton.hidden = view !== 'overview' && view !== 'structure';
-    structureButton.querySelector('span:last-child').textContent = view === 'structure' ? 'Back to overview' : 'Cluster structure';
+    structureButton.hidden = view !== 'overview';
+    const topology = view === 'structure' || view === 'traffic';
+    $('topology-switcher').hidden = !topology;
+    $('topology-dependencies').setAttribute('aria-selected', String(view === 'structure'));
+    $('topology-traffic').setAttribute('aria-selected', String(view === 'traffic'));
+    $('topology-dependencies').tabIndex = view === 'structure' ? 0 : -1;
+    $('topology-traffic').tabIndex = view === 'traffic' ? 0 : -1;
     const createKind = VIEW_KIND[view];
     $('btn-create').hidden = !createKind;
     // Warm the permission probe for this view's kind — the row menus opened from
@@ -842,15 +878,6 @@ function selectView(view) {
     refreshCurrentView();
 }
 
-function updateRailActive(view) {
-    const section = document.querySelector(`.nav-item[data-view="${view}"]`)?.closest('.nav-section')?.dataset.section;
-    const railView = ({ cluster: 'overview', workloads: 'pods', network: 'traffic', config: 'configmaps', storage: 'pvs', access: 'roles', ecosystem: 'helm', custom: 'helm' })[section]
-        ?? 'overview';
-    document.querySelectorAll('[data-rail-view]').forEach((button) => {
-        button.classList.toggle('active', button.dataset.railView === railView);
-    });
-}
-
 function updateNsScope() {
     const scopeEl = $('ns-scope');
     scopeEl.textContent = currentView === 'helm' && helmSection === 'repositories'
@@ -864,12 +891,29 @@ function refreshCurrentView() {
     clearDashError();
     clearSelection();
     const scope = requestScopes.beginView(currentView, currentNamespace);
-    // Rows are actionable. Remove the previous owner's rows immediately so a
-    // failed or slow refresh cannot leave clickable data from another scope.
-    clearRenderedView(scope.view);
-    const p = doRefresh(scope);
-    Promise.resolve(p).finally(() => { if (isCurrentViewRequest(scope)) filterCurrentTable(); });
+    const owner = `${$('cluster-select').value}\0${scope.view}\0${scope.namespace}`;
+    const refreshing = owner === renderedViewOwner;
+    // A same-scope refresh keeps the last trustworthy result visible. A scope
+    // transition still clears it immediately so old-cluster rows cannot be used.
+    if (!refreshing) clearRenderedView(scope.view);
+    setViewStatus(refreshing ? 'refreshing' : 'loading', refreshing ? 'Refreshing…' : 'Loading…');
+    const p = Promise.resolve(doRefresh(scope));
+    p.finally(() => {
+        if (!isCurrentViewRequest(scope)) return;
+        filterCurrentTable();
+        if ($('view-status').dataset.state !== 'error') {
+            renderedViewOwner = owner;
+            setViewStatus('current', 'Updated just now');
+        }
+    });
     return p;
+}
+
+function setViewStatus(state, message) {
+    const status = $('view-status');
+    status.dataset.state = state;
+    status.querySelector('span').textContent = message;
+    status.hidden = false;
 }
 
 function clearRenderedView(view = currentView) {
@@ -1022,7 +1066,7 @@ function loadHelmReleases(scope) {
                 tr.dataset.filter = `${r.name} ${r.namespace} ${r.revision} ${r.status}`.toLowerCase();
                 tr.innerHTML = `<td><button class="helm-release-link" type="button">${esc(r.name)}</button></td>
                     <td>${esc(r.namespace)}</td><td class="mono">${esc(r.revision)}</td><td>${helmStatusBadge(r)}</td>
-                    <td>${esc(r.updated)}</td><td class="col-actions"><button class="btn btn-secondary btn-sm helm-open-release" type="button">Open</button>${actionsBtn()}</td>`;
+                    <td>${esc(r.updated)}</td><td class="col-actions"><button class="btn btn-secondary btn-sm helm-open-release" type="button">Open</button>${actionsBtn(ref)}</td>`;
                 tr.addEventListener('click', (event) => {
                     if (!event.target.closest('button')) openHelmDetailModal(ref);
                 });
@@ -1136,13 +1180,26 @@ function row(cellsHtml, opts = {}) {
     tr.innerHTML = cellsHtml;
     const withActions = !!opts.ref && opts.actions !== false;
     if (withActions) {
-        tr.insertAdjacentHTML('afterbegin', `<td class="col-check"><input type="checkbox" class="row-check"></td>`);
-        tr.insertAdjacentHTML('beforeend', `<td class="col-actions">${actionsBtn()}</td>`);
+        const resourceLabel = `${opts.ref.kind} ${opts.ref.namespace ? `${opts.ref.namespace}/` : ''}${opts.ref.name}`;
+        tr.insertAdjacentHTML('afterbegin', `<td class="col-check"><input type="checkbox" class="row-check" aria-label="Select ${esc(resourceLabel)}"></td>`);
+        tr.insertAdjacentHTML('beforeend', `<td class="col-actions">${actionsBtn(opts.ref)}</td>`);
     }
     if (opts.isError) tr.classList.add('error-row');
     if (opts.ref) {
         tr.classList.add('clickable');
-        tr.addEventListener('click', (e) => { if (!e.target.closest('.col-check')) openDrawer(opts.ref); });
+        tr.tabIndex = 0;
+        tr.setAttribute('aria-label', `Open ${opts.ref.kind} ${opts.ref.namespace ? `${opts.ref.namespace}/` : ''}${opts.ref.name}`);
+        const open = (event) => {
+            if (event.target.closest('button, input, a, select, textarea, .col-check')) return;
+            openDrawer(opts.ref);
+        };
+        tr.addEventListener('click', open);
+        tr.addEventListener('keydown', (event) => {
+            if ((event.key === 'Enter' || event.key === ' ') && event.target === tr) {
+                event.preventDefault();
+                openDrawer(opts.ref);
+            }
+        });
         if (withActions) {
             wireRowActions(tr, opts.ref);
             const cb = tr.querySelector('.row-check');
@@ -1180,17 +1237,15 @@ function loadOverview(scope) {
             body.innerHTML = '';
             setAttentionEmptyState(Boolean(sectionErrors.pods), errored.length > 0);
             for (const p of errored) {
-                body.appendChild(row(
-                    `<td class="overview-namespace">${esc(p.namespace)}</td><td class="overview-resource-name" title="${esc(p.name)}">${esc(p.name)}</td><td>${badge(p.status, false)}</td><td class="overview-count">${p.restarts}</td>`,
-                    { isError: true, actions: false, ref: { kind: 'Pod', namespace: p.namespace, name: p.name, isPod: true } },
-                ));
+                const ref = { kind: 'Pod', namespace: p.namespace, name: p.name, isPod: true };
+                const tr = row(
+                    `<td class="overview-namespace">${esc(p.namespace)}</td><td class="overview-resource-name" title="${esc(p.name)}">${esc(p.name)}</td><td>${badge(p.status, false)}</td><td class="overview-count">${p.restarts}</td><td class="overview-issue-actions"><button type="button" class="btn btn-secondary btn-sm issue-inspect">Inspect</button><button type="button" class="btn btn-primary btn-sm issue-diagnose"><span aria-hidden="true">⌁</span>Investigate</button></td>`,
+                    { isError: true, actions: false, ref },
+                );
+                tr.querySelector('.issue-inspect').addEventListener('click', () => openDrawer({ ...ref, tab: 'details' }));
+                tr.querySelector('.issue-diagnose').addEventListener('click', () => openDrawer({ ...ref, tab: 'investigate' }));
+                body.appendChild(tr);
             }
-            const diagnose = $('overview-ai-diagnose');
-            diagnose.hidden = errored.length === 0;
-            diagnose.onclick = errored.length === 0 ? null : () => {
-                const pod = errored[0];
-                openDrawer({ kind: 'Pod', namespace: pod.namespace, name: pod.name, isPod: true, tab: 'ai' });
-            };
 
             renderCapacityMetrics(snapshot?.nodeMetrics ?? []);
             renderNodeStatus(snapshot?.nodeStatus ?? []);
@@ -1499,8 +1554,9 @@ function loadPods(scope) {
 }
 
 // A three-dot actions button + per-row menu, like Lens/Headlamp.
-function actionsBtn() {
-    return `<button class="row-actions-btn" title="Actions">⋯</button>`;
+function actionsBtn(ref = null) {
+    const owner = ref ? ` for ${ref.kind} ${ref.namespace ? `${ref.namespace}/` : ''}${ref.name}` : '';
+    return `<button class="row-actions-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Actions${esc(owner)}">⋯</button>`;
 }
 
 function wireRowActions(tr, ref) {
@@ -1591,6 +1647,7 @@ let activeDrawerScope = null;
 let drawerLoadedTabs = new Set();
 let drawerContainerOwnerKey = '';
 let drawerContainerPromise = null;
+let drawerReturnFocus = null;
 
 function isCurrentDrawerRequest(scope) {
     return !!drawerRef
@@ -1600,7 +1657,10 @@ function isCurrentDrawerRequest(scope) {
 
 function openDrawer(ref) {
     if (ref.kind === 'HelmRelease') { openHelmDetailModal(ref); return; }
+    const drawerWasHidden = $('drawer').hidden;
+    if (drawerWasHidden) drawerReturnFocus = document.activeElement;
     if (drawerRef && !$('drawer').hidden) stopEphemeralForwards(drawerRef);
+    stopIncidentWatch();
     stopFollow();
     stopExec();
     drawerRef = ref;
@@ -1622,6 +1682,8 @@ function openDrawer(ref) {
 
     $('drawer-backdrop').hidden = false;
     $('drawer').hidden = false;
+    $('sidebar').inert = true;
+    document.querySelector('.main').inert = true;
 
     // Gate the write buttons and the subresource tabs. Applied twice: once from
     // whatever answer is already cached, then again when the probe returns — but
@@ -1632,7 +1694,9 @@ function openDrawer(ref) {
     });
 
     resetAIPanel(ref);
+    resetIncidentPanel();
     setDrawerTab(ref.tab ?? 'details');
+    if (drawerWasHidden) requestAnimationFrame(() => $('drawer-close').focus());
 }
 
 function resetDrawerLoads(scope) {
@@ -1660,6 +1724,7 @@ function ensureDrawerTabLoaded(name) {
     else if (name === 'logs' && scope.ref.isPod) prepareLogs(scope);
     else if (name === 'terminal' && scope.ref.isPod) prepareTerminal(scope);
     else if (name === 'forward' && (scope.ref.isPod || scope.ref.kind === 'Service')) prepareForward();
+    else if (name === 'investigate') loadIncident(scope);
 }
 
 // Disable what this token cannot do, rather than hiding it — a greyed-out
@@ -1698,6 +1763,7 @@ function closeDrawer() {
     const closingRef = drawerRef;
     stopFollow();
     stopExec();
+    stopIncidentWatch();
     cancelPendingForwardForDrawer(closingRef);
     requestScopes.closeDrawer();
     activeDrawerScope = null;
@@ -1707,7 +1773,12 @@ function closeDrawer() {
     drawerRef = null;
     $('drawer').hidden = true;
     $('drawer-backdrop').hidden = true;
+    $('sidebar').inert = false;
+    document.querySelector('.main').inert = false;
     if (closingRef) stopEphemeralForwards(closingRef);
+    const target = drawerReturnFocus;
+    drawerReturnFocus = null;
+    if (target?.isConnected) requestAnimationFrame(() => target.focus());
 }
 
 // ---- Scale / Restart (Deployment) ----
@@ -1814,15 +1885,32 @@ $('btn-delete').addEventListener('click', () => {
 
 document.querySelectorAll('.drawer-tab').forEach((tab) => {
     tab.addEventListener('click', () => setDrawerTab(tab.dataset.dtab));
+    tab.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return;
+        const tabs = [...document.querySelectorAll('.drawer-tab:not([hidden]):not(:disabled)')];
+        const current = tabs.indexOf(tab);
+        const next = event.key === 'Home' ? 0
+            : event.key === 'End' ? tabs.length - 1
+            : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+        event.preventDefault();
+        tabs[next]?.focus();
+        if (tabs[next]) setDrawerTab(tabs[next].dataset.dtab);
+    });
 });
 
 function setDrawerTab(name) {
-    document.querySelectorAll('.drawer-tab').forEach((t) => t.classList.toggle('active', t.dataset.dtab === name));
+    document.querySelectorAll('.drawer-tab').forEach((t) => {
+        const active = t.dataset.dtab === name;
+        t.classList.toggle('active', active);
+        t.setAttribute('aria-selected', String(active));
+        t.tabIndex = active ? 0 : -1;
+    });
     $('dpanel-details').hidden = name !== 'details';
     $('dpanel-yaml').hidden = name !== 'yaml';
     $('dpanel-logs').hidden = name !== 'logs';
     $('dpanel-terminal').hidden = name !== 'terminal';
     $('dpanel-forward').hidden = name !== 'forward';
+    $('dpanel-investigate').hidden = name !== 'investigate';
     $('dpanel-ai').hidden = name !== 'ai';
     ensureDrawerTabLoaded(name);
     if (name === 'ai') { prepareAIPanel(); $('ai-input').focus(); }
@@ -1832,6 +1920,205 @@ function setDrawerTab(name) {
         if (execConnected) execTerminal?.focus();
     });
 }
+
+// ---- Incident Studio: deterministic evidence before AI ----
+
+const INCIDENT_WATCH_MS = 60_000;
+const INCIDENT_POLL_MS = 5_000;
+let incidentReport = null;
+let incidentRequestSeq = 0;
+let incidentWatchTimer = null;
+let incidentWatchDeadline = 0;
+let incidentWatchOwner = '';
+let incidentWatchBusy = false;
+
+function resetIncidentPanel() {
+    incidentRequestSeq++;
+    incidentReport = null;
+    $('incident-hero').dataset.state = 'loading';
+    $('incident-summary').textContent = 'Building an incident snapshot…';
+    $('incident-meta').textContent = 'Correlating state, Events, ownership and serving endpoints.';
+    $('incident-loading').hidden = false;
+    $('incident-content').hidden = true;
+    $('incident-error').hidden = true;
+    $('btn-incident-export').disabled = true;
+    $('btn-incident-watch').disabled = false;
+    $('btn-incident-watch').textContent = 'Watch recovery';
+    $('btn-incident-watch').setAttribute('aria-pressed', 'false');
+}
+
+function loadIncident(scope = activeDrawerScope, { silent = false } = {}) {
+    if (!scope || !isCurrentDrawerRequest(scope)) return Promise.resolve(null);
+    const requestID = ++incidentRequestSeq;
+    const ref = scope.ref;
+    if (!silent) {
+        $('incident-loading').hidden = false;
+        $('incident-error').hidden = true;
+        $('btn-incident-refresh').disabled = true;
+    }
+    return InvestigateResource(ref.kind, ref.namespace, ref.name)
+        .then((payload) => {
+            if (requestID !== incidentRequestSeq || !isCurrentDrawerRequest(scope)) return null;
+            const report = typeof payload === 'string' ? JSON.parse(payload) : payload;
+            incidentReport = report;
+            renderIncident(report);
+            if (incidentWatchTimer && report.state === 'healthy') {
+                stopIncidentWatch('verified');
+            }
+            return report;
+        })
+        .catch((err) => {
+            if (requestID !== incidentRequestSeq || !isCurrentDrawerRequest(scope)) return null;
+            $('incident-error').textContent = `Investigation unavailable: ${errMsg(err)}`;
+            $('incident-error').hidden = false;
+            if (!incidentReport) $('incident-content').hidden = true;
+            return null;
+        })
+        .finally(() => {
+            if (requestID !== incidentRequestSeq || !isCurrentDrawerRequest(scope)) return;
+            $('incident-loading').hidden = true;
+            $('btn-incident-refresh').disabled = false;
+        });
+}
+
+function renderIncident(report) {
+    const findings = report?.findings ?? [];
+    const related = report?.related ?? [];
+    const timeline = report?.timeline ?? [];
+    const actions = report?.actions ?? [];
+    const limitations = report?.limitations ?? [];
+    const state = report?.state ?? 'warning';
+    $('incident-hero').dataset.state = state;
+    $('incident-summary').textContent = report?.summary || 'No conclusion is available.';
+    const observed = report?.observedAt ? new Date(report.observedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'now';
+    $('incident-meta').textContent = `${stateLabel(state)} · ${findings.length} finding${findings.length === 1 ? '' : 's'} · observed ${observed}`;
+    $('incident-finding-count').textContent = findings.length ? `${findings.length} finding${findings.length === 1 ? '' : 's'}` : 'Healthy snapshot';
+
+    $('incident-findings').innerHTML = findings.length
+        ? findings.map((finding) => `<article class="incident-finding" data-severity="${esc(finding.severity)}">
+            <div class="incident-finding-head"><h5>${esc(finding.title)}</h5><span class="incident-confidence">${esc(finding.confidence)} confidence</span></div>
+            <p>${esc(finding.explanation)}</p>
+            ${(finding.evidence ?? []).length ? `<ul class="incident-evidence">${finding.evidence.map((evidence) => `<li>${esc(evidence)}</li>`).join('')}</ul>` : ''}
+        </article>`).join('')
+        : '<div class="incident-healthy"><span>✓</span>No deterministic issue is visible in this snapshot.</div>';
+
+    $('incident-actions').innerHTML = actions.length
+        ? actions.map((action, index) => `<button type="button" class="incident-action" data-incident-action="${index}"><strong>${esc(action.label)}</strong><small>${esc(action.description)}</small><span aria-hidden="true">→</span></button>`).join('')
+        : '<p class="incident-empty">No remediation hand-off is available for this resource.</p>';
+    $('incident-actions').querySelectorAll('[data-incident-action]').forEach((button) => {
+        button.addEventListener('click', () => runIncidentAction(actions[Number(button.dataset.incidentAction)]));
+    });
+
+    $('incident-related').innerHTML = related.length
+        ? related.map((item, index) => `<button type="button" class="incident-related-button" data-incident-related="${index}"><strong>${esc(item.kind)} · ${esc(item.name)}</strong><small>${esc(item.role)}${item.status ? ` · ${esc(item.status)}` : ''}</small><span aria-hidden="true">→</span></button>`).join('')
+        : '<p class="incident-empty">No owner or serving relationship was found.</p>';
+    $('incident-related').querySelectorAll('[data-incident-related]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const item = related[Number(button.dataset.incidentRelated)];
+            openDrawer({ kind: item.kind, namespace: item.namespace, name: item.name, isPod: item.kind === 'Pod' });
+        });
+    });
+
+    $('incident-timeline').innerHTML = timeline.length
+        ? timeline.map((moment) => `<li><time class="incident-time" datetime="${esc(moment.at)}">${esc(moment.age || shortIncidentTime(moment.at))}</time><div class="incident-moment" data-severity="${esc(moment.severity)}"><span class="incident-source">${esc(moment.source)}</span><strong>${esc(moment.title)}</strong>${moment.detail ? `<small>${esc(moment.detail)}</small>` : ''}</div></li>`).join('')
+        : '<li class="incident-empty">No timestamped evidence is retained.</li>';
+
+    $('incident-limits-section').hidden = limitations.length === 0;
+    $('incident-limitations').innerHTML = limitations.map((limitation) => `<li>${esc(limitation)}</li>`).join('');
+    $('incident-loading').hidden = true;
+    $('incident-content').hidden = false;
+    $('incident-error').hidden = true;
+    $('btn-incident-export').disabled = false;
+}
+
+function stateLabel(state) {
+    if (state === 'critical') return 'Critical evidence';
+    if (state === 'warning') return 'Needs attention';
+    return 'Healthy now';
+}
+
+function shortIncidentTime(value) {
+    if (!value) return '—';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function runIncidentAction(action) {
+    if (!action) return;
+    const ref = { kind: action.kind, namespace: action.namespace, name: action.name, isPod: action.kind === 'Pod' };
+    if (action.action === 'logs' || action.action === 'yaml' || action.action === 'ai') {
+        openDrawer({ ...ref, tab: action.action });
+        return;
+    }
+    if (action.action === 'rollout') {
+        closeDrawer();
+        openRolloutModal(ref);
+        return;
+    }
+    if (action.action === 'sizing' || action.action === 'topology') {
+        const targetView = action.action === 'sizing' ? 'sizing' : 'structure';
+        closeDrawer();
+        currentNamespace = action.namespace || '';
+        $('namespace-select').value = currentNamespace;
+        syncNamespacePicker();
+        selectView(targetView);
+    }
+}
+
+function startIncidentWatch() {
+    const scope = activeDrawerScope;
+    if (!scope || !isCurrentDrawerRequest(scope)) return;
+    if (incidentWatchTimer) {
+        stopIncidentWatch();
+        return;
+    }
+    incidentWatchOwner = requestScopes.drawerOwnerKey(scope);
+    incidentWatchDeadline = Date.now() + INCIDENT_WATCH_MS;
+    $('btn-incident-watch').textContent = 'Stop watching';
+    $('btn-incident-watch').setAttribute('aria-pressed', 'true');
+    $('incident-meta').textContent = 'Watching recovery every 5 seconds · up to 60 seconds';
+    const poll = () => {
+        if (incidentWatchBusy || !activeDrawerScope || requestScopes.drawerOwnerKey(activeDrawerScope) !== incidentWatchOwner) {
+            if (!activeDrawerScope || requestScopes.drawerOwnerKey(activeDrawerScope) !== incidentWatchOwner) stopIncidentWatch();
+            return;
+        }
+        if (Date.now() >= incidentWatchDeadline) {
+            stopIncidentWatch('timeout');
+            return;
+        }
+        incidentWatchBusy = true;
+        loadIncident(activeDrawerScope, { silent: true }).finally(() => { incidentWatchBusy = false; });
+    };
+    incidentWatchTimer = window.setInterval(poll, INCIDENT_POLL_MS);
+    poll();
+}
+
+function stopIncidentWatch(outcome = '') {
+    if (incidentWatchTimer) window.clearInterval(incidentWatchTimer);
+    incidentWatchTimer = null;
+    incidentWatchOwner = '';
+    incidentWatchBusy = false;
+    const button = $('btn-incident-watch');
+    if (button) {
+        button.textContent = outcome === 'verified' ? 'Recovery verified' : 'Watch recovery';
+        button.setAttribute('aria-pressed', 'false');
+        button.disabled = outcome === 'verified';
+    }
+    if (outcome === 'verified') {
+        $('incident-meta').textContent = `Recovery verified · no deterministic issue at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+    } else if (outcome === 'timeout') {
+        $('incident-meta').textContent = 'Recovery was not verified within 60 seconds. Refresh evidence or continue watching.';
+    }
+}
+
+$('btn-incident-refresh').addEventListener('click', () => loadIncident());
+$('btn-incident-watch').addEventListener('click', startIncidentWatch);
+$('btn-incident-export').addEventListener('click', () => {
+    if (!incidentReport) return;
+    SaveIncidentReport(JSON.stringify(incidentReport))
+        .then((path) => { if (path) $('incident-meta').textContent = `Incident report saved to ${path}`; })
+        .catch((err) => showError(errMsg(err)));
+});
 
 // ---- Details + Events ----
 function loadDetails(scope = activeDrawerScope) {
@@ -1851,12 +2138,23 @@ function loadDetails(scope = activeDrawerScope) {
     loadRelations(scope);
     if (ref.kind === 'Secret') loadSecretData(scope);
 
+    loadDrawerEvents(scope);
+}
+
+function loadDrawerEvents(scope = activeDrawerScope) {
+    if (!scope || !isCurrentDrawerRequest(scope)) return;
+    const ref = scope.ref;
+    const empty = $('detail-events-empty');
+    empty.className = 'empty-inline';
+    empty.textContent = 'Loading events…';
+    empty.hidden = false;
     ListEvents(ref.kind, ref.namespace, ref.name)
         .then((events) => {
             if (!isCurrentDrawerRequest(scope)) return;
             const body = $('detail-events-body');
             body.innerHTML = '';
-            $('detail-events-empty').hidden = (events?.length ?? 0) > 0;
+            empty.textContent = 'No events for this resource.';
+            empty.hidden = (events?.length ?? 0) > 0;
             for (const e of events ?? []) {
                 const tr = document.createElement('tr');
                 const cls = e.isWarn ? 'ev-type-warn' : 'ev-type-normal';
@@ -1865,7 +2163,13 @@ function loadDetails(scope = activeDrawerScope) {
                 body.appendChild(tr);
             }
         })
-        .catch(() => { /* events are best-effort */ });
+        .catch((err) => {
+            if (!isCurrentDrawerRequest(scope)) return;
+            empty.className = 'empty-inline detail-events-unavailable';
+            empty.innerHTML = `<strong>Events unavailable</strong><span>${esc(errMsg(err))}</span><button type="button" class="btn btn-secondary btn-sm">Try again</button>`;
+            empty.hidden = false;
+            empty.querySelector('button').addEventListener('click', () => loadDrawerEvents(scope));
+        });
 }
 
 function renderDetailMeta(d) {
@@ -1879,13 +2183,13 @@ function renderDetailMeta(d) {
     }
 
     let html = `<button class="btn btn-secondary btn-sm ai-explain-btn">
-        <svg class="ico"><use href="#i-sparkle"/></svg> Ask AI about this ${esc(d.kind ?? drawerRef?.kind ?? 'resource')}
+        <span aria-hidden="true">⌁</span> Investigate this ${esc(d.kind ?? drawerRef?.kind ?? 'resource')}
     </button>`;
     html += `<div class="detail-group"><div class="detail-group-title">Overview</div>${rows.join('')}</div>`;
     html += chipsGroup('Labels', d.labels);
     html += chipsGroup('Annotations', d.annotations);
     $('detail-meta').innerHTML = html;
-    $('detail-meta').querySelector('.ai-explain-btn')?.addEventListener('click', () => setDrawerTab('ai'));
+    $('detail-meta').querySelector('.ai-explain-btn')?.addEventListener('click', () => setDrawerTab('investigate'));
 }
 
 function detailRow(k, v) {
@@ -3145,6 +3449,8 @@ function renderForwards() {
 
 function renderPortForwardManager() {
     const count = activeForwards.length;
+    $('btn-port-forwards').hidden = count === 0;
+    if (count === 0) setPortForwardManagerOpen(false);
     $('pf-global-count').textContent = String(count);
     $('btn-port-forwards').classList.toggle('has-forwards', count > 0);
     $('pf-manager-summary').textContent = count === 0 ? 'No active tunnels' : `${count} running in this cluster`;
@@ -3657,6 +3963,8 @@ document.addEventListener('keydown', (e) => {
     // an element inside document, so it has already run; if it acted on the key it
     // called preventDefault, and this handler must not act on the same press.
     if (e.defaultPrevented) return;
+    // The command palette has its own complete keyboard model below.
+    if (!$('palette').hidden) return;
 
     if (e.key === 'Escape') {
         if (!$('pf-manager').hidden) { closePortForwardManager(); return; }
@@ -3666,6 +3974,10 @@ document.addEventListener('keydown', (e) => {
     }
     if (e.key === 'Tab' && !$('modal').hidden) {
         trapOverlayFocus($('modal'), e);
+        return;
+    }
+    if (e.key === 'Tab' && !$('drawer').hidden) {
+        trapOverlayFocus($('drawer'), e);
         return;
     }
     // Enter submits the modal only when focus is NOT in something that owns Enter:
@@ -3971,7 +4283,12 @@ function gate(el, ok, reason) {
 
 // ============ Row actions menu ============
 
+let rowMenuTrigger = null;
+
 function openRowMenu(btn, ref) {
+    if (rowMenuTrigger && rowMenuTrigger !== btn) closeRowMenu();
+    rowMenuTrigger = btn;
+    btn.setAttribute('aria-expanded', 'true');
     const menu = $('row-menu');
     let actions;
     if (ref.kind === 'HelmRelease') {
@@ -3989,6 +4306,7 @@ function openRowMenu(btn, ref) {
     // restart is a patch, and scaling is an update of the scale subresource.
     actions = [
         { label: 'Open details', need: 'get', run: () => openDrawer({ ...ref, tab: 'details' }) },
+        { label: '⌁ Investigate', need: 'get', run: () => openDrawer({ ...ref, tab: 'investigate' }) },
         { label: 'Edit YAML', need: 'get', run: () => openDrawer({ ...ref, tab: 'yaml' }) },
     ];
     if (ref.isPod) {
@@ -4043,7 +4361,7 @@ function applyMenuAccess(actions, ref) {
 // Populate and position the floating row menu near its button.
 function renderRowMenu(menu, btn, actions) {
     menu.innerHTML = actions.map((a, i) =>
-        `<button class="row-menu-item${a.danger ? ' danger' : ''}" data-i="${i}"${
+        `<button class="row-menu-item${a.danger ? ' danger' : ''}" role="menuitem" data-i="${i}"${
             a.disabled ? ` disabled title="${esc(a.disabled)}"` : ''}>${esc(a.label)}</button>`).join('');
     menu.querySelectorAll('.row-menu-item').forEach((el) => {
         el.addEventListener('click', () => { closeRowMenu(); actions[parseInt(el.dataset.i, 10)].run(); });
@@ -4057,9 +4375,35 @@ function renderRowMenu(menu, btn, actions) {
     if (top + menu.offsetHeight > window.innerHeight - 8) top = r.top - menu.offsetHeight - 4;
     menu.style.left = `${left}px`;
     menu.style.top = `${top}px`;
+    menu.querySelector('.row-menu-item:not(:disabled)')?.focus();
 }
 
-function closeRowMenu() { $('row-menu').hidden = true; }
+function closeRowMenu({ restoreFocus = false } = {}) {
+    $('row-menu').hidden = true;
+    if (rowMenuTrigger) rowMenuTrigger.setAttribute('aria-expanded', 'false');
+    const trigger = rowMenuTrigger;
+    rowMenuTrigger = null;
+    if (restoreFocus && trigger?.isConnected) trigger.focus();
+}
+
+$('row-menu').addEventListener('keydown', (event) => {
+    const items = [...$('row-menu').querySelectorAll('.row-menu-item:not(:disabled)')];
+    const current = items.indexOf(document.activeElement);
+    let next = -1;
+    if (event.key === 'ArrowDown') next = (current + 1) % items.length;
+    else if (event.key === 'ArrowUp') next = (current - 1 + items.length) % items.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = items.length - 1;
+    else if (event.key === 'Escape') {
+        event.preventDefault();
+        closeRowMenu({ restoreFocus: true });
+        return;
+    }
+    if (next >= 0) {
+        event.preventDefault();
+        items[next]?.focus();
+    }
+});
 
 function deleteRef(ref) {
     const connectionID = $('cluster-select').value;
@@ -4195,7 +4539,7 @@ document.addEventListener('scroll', closeRowMenu, true);
 // into a horizontal scroll. That happened to ResourceQuotas once and to
 // Right-sizing again. Opting out by class puts the decision next to the markup.
 document.querySelectorAll('#content .view:not(#view-overview) table:not(.plain) thead tr').forEach((tr) => {
-    tr.insertAdjacentHTML('afterbegin', '<th class="no-sort col-check"><input type="checkbox" class="select-all" title="Select all"></th>');
+    tr.insertAdjacentHTML('afterbegin', '<th class="no-sort col-check"><input type="checkbox" class="select-all" aria-label="Select all visible resources"></th>');
 });
 // Overview cards and Pods define their own columns; plain tables opt out.
 document.querySelectorAll('#content .view:not(#view-overview):not(#view-pods) table:not(.plain) thead tr').forEach((tr) => {
@@ -4206,7 +4550,13 @@ document.querySelectorAll('#content .view:not(#view-overview):not(#view-pods) ta
 document.querySelectorAll('#content .view thead th').forEach((th) => {
     if (th.classList.contains('no-sort')) return;
     th.classList.add('sortable');
-    th.addEventListener('click', () => sortTable(th));
+    th.setAttribute('aria-sort', 'none');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'sort-button';
+    button.innerHTML = th.innerHTML;
+    th.replaceChildren(button);
+    button.addEventListener('click', () => sortTable(th));
 });
 
 // ---- Selection state + bulk actions ----
@@ -4291,14 +4641,16 @@ function sortTable(th) {
     // Reset indicators on sibling headers.
     for (const h of headRow.children) {
         h.removeAttribute('data-sort');
+        if (h.classList.contains('sortable')) h.setAttribute('aria-sort', 'none');
         const ind = h.querySelector('.sort-ind');
         if (ind) ind.remove();
     }
     th.setAttribute('data-sort', asc ? 'asc' : 'desc');
+    th.setAttribute('aria-sort', asc ? 'ascending' : 'descending');
     const ind = document.createElement('span');
     ind.className = 'sort-ind';
     ind.textContent = asc ? ' ↑' : ' ↓';
-    th.appendChild(ind);
+    (th.querySelector('.sort-button') || th).appendChild(ind);
 
     rows.sort((a, b) => {
         const av = cellSortValue(a, idx), bv = cellSortValue(b, idx);
@@ -4322,11 +4674,14 @@ function cellSortValue(tr, idx) {
 
 let paletteFiltered = [];
 let paletteSel = 0;
+let paletteReturnFocus = null;
 
 function buildPaletteCommands() {
     const cmds = [];
     for (const [view, title] of Object.entries(PAGE_TITLES)) {
-        cmds.push({ kind: 'Go to', label: title, run: () => selectView(view) });
+        const label = view === 'structure' ? 'Topology · Dependencies'
+            : view === 'traffic' ? 'Topology · Traffic routes' : title;
+        cmds.push({ kind: 'Go to', label, run: () => selectView(view) });
     }
     for (const opt of $('namespace-select').options) {
         const label = opt.value === '' ? 'All namespaces' : opt.value;
@@ -4348,12 +4703,17 @@ function buildPaletteCommands() {
 
 function openPalette() {
     if ($('dashboard').hidden) return; // palette only makes sense inside the dashboard
+    if (!$('palette').hidden) return;
+    paletteReturnFocus = document.activeElement;
     paletteAll = buildPaletteCommands();
     paletteHits = [];
     paletteSel = 0;
     $('palette-input').value = '';
     $('palette-backdrop').hidden = false;
     $('palette').hidden = false;
+    $('sidebar').inert = true;
+    document.querySelector('.main').inert = true;
+    if (!$('drawer').hidden) $('drawer').inert = true;
     renderPalette();
     $('palette-input').focus();
 }
@@ -4362,11 +4722,20 @@ let paletteHits = [];          // live resource-search results (async, from Sear
 let paletteSearchTimer = null;
 let paletteSearchGeneration = 0;
 
-function closePalette() {
+function closePalette({ restoreFocus = true } = {}) {
 	paletteSearchGeneration++;
 	$('palette').hidden = true;
     $('palette-backdrop').hidden = true;
+    $('palette-input').removeAttribute('aria-activedescendant');
+    $('drawer').inert = false;
+    if ($('drawer').hidden) {
+        $('sidebar').inert = false;
+        document.querySelector('.main').inert = false;
+    }
     clearTimeout(paletteSearchTimer);
+    const target = paletteReturnFocus;
+    paletteReturnFocus = null;
+    if (restoreFocus && target?.isConnected) target.focus();
 }
 
 // Navigate to a searched resource: scope its namespace, open its view + drawer.
@@ -4418,23 +4787,33 @@ function renderPalette() {
     $('palette-empty').hidden = paletteFiltered.length > 0;
     const list = $('palette-list');
     list.innerHTML = paletteFiltered.map((c, i) =>
-        `<div class="palette-item${i === paletteSel ? ' sel' : ''}${c.resource ? ' res' : ''}" data-i="${i}"><span>${esc(c.label)}</span><span class="p-kind">${esc(c.kind)}</span></div>`).join('');
+        `<div id="palette-option-${i}" class="palette-item${i === paletteSel ? ' sel' : ''}${c.resource ? ' res' : ''}" role="option" aria-selected="${i === paletteSel}" data-i="${i}"><span>${esc(c.label)}</span><span class="p-kind">${esc(c.kind)}</span></div>`).join('');
     list.querySelectorAll('.palette-item').forEach((el) => {
         el.addEventListener('click', () => runPalette(parseInt(el.dataset.i, 10)));
         el.addEventListener('mousemove', () => { paletteSel = parseInt(el.dataset.i, 10); highlightPalette(); });
     });
+    highlightPalette();
 }
 
 function highlightPalette() {
-    $('palette-list').querySelectorAll('.palette-item').forEach((el, i) => el.classList.toggle('sel', i === paletteSel));
+    $('palette-list').querySelectorAll('.palette-item').forEach((el, i) => {
+        const selected = i === paletteSel;
+        el.classList.toggle('sel', selected);
+        el.setAttribute('aria-selected', String(selected));
+    });
     const sel = $('palette-list').querySelector('.palette-item.sel');
-    if (sel) sel.scrollIntoView({ block: 'nearest' });
+    if (sel) {
+        $('palette-input').setAttribute('aria-activedescendant', sel.id);
+        sel.scrollIntoView({ block: 'nearest' });
+    } else {
+        $('palette-input').removeAttribute('aria-activedescendant');
+    }
 }
 
 function runPalette(i) {
     const c = paletteFiltered[i];
     if (!c) return;
-    closePalette();
+    closePalette({ restoreFocus: false });
     c.run();
 }
 
@@ -4452,6 +4831,7 @@ document.addEventListener('keydown', (e) => {
     else if (e.key === 'ArrowDown') { e.preventDefault(); paletteSel = Math.min(paletteSel + 1, paletteFiltered.length - 1); highlightPalette(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); paletteSel = Math.max(paletteSel - 1, 0); highlightPalette(); }
     else if (e.key === 'Enter') { e.preventDefault(); runPalette(paletteSel); }
+    else if (e.key === 'Tab') { trapOverlayFocus($('palette'), e); }
 });
 
 // ============ Helm (release detail / history / upgrade / search / install) ============
@@ -5313,6 +5693,8 @@ $('btn-live').addEventListener('click', () => {
         clearInterval(liveTimer);
         liveTimer = null;
         $('btn-live').classList.remove('live-on');
+        $('btn-live').setAttribute('aria-pressed', 'false');
+        $('btn-live').title = 'Turn on auto-refresh';
     } else {
         liveTimer = setInterval(() => {
             if ($('dashboard').hidden) return;
@@ -5329,6 +5711,8 @@ $('btn-live').addEventListener('click', () => {
 				.finally(() => { liveRefreshPending = false; });
         }, LIVE_REFRESH_MS);
         $('btn-live').classList.add('live-on');
+        $('btn-live').setAttribute('aria-pressed', 'true');
+        $('btn-live').title = 'Turn off auto-refresh';
     }
 });
 

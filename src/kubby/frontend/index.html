@@ -66,7 +66,13 @@
                 <img class="brand-logo" src="/src/assets/images/kubby-mark.svg" alt=""/>
                 <h1>Kubby</h1>
             </div>
-            <p class="welcome-sub">A personal Kubernetes cluster manager. Load a kubeconfig to get started.</p>
+            <p class="welcome-sub">Connect to a cluster, find what needs attention, and investigate it without memorising kubectl commands.</p>
+
+            <ol class="welcome-steps" aria-label="Connection steps">
+                <li class="active"><span>1</span>Choose config</li>
+                <li><span>2</span>Choose context</li>
+                <li><span>3</span>Connect</li>
+            </ol>
 
             <div class="tabs">
                 <button class="tab active" data-tab="file">Select file</button>
@@ -92,6 +98,8 @@
 
             <p id="welcome-error" class="error" hidden></p>
 
+            <p class="welcome-trust"><span aria-hidden="true">✓</span><span><strong>Your kubeconfig stays on this device.</strong> Pasted credentials are cleared after connecting and are never added to Recent connections.</span></p>
+
             <div id="recent-box" class="recent-box" hidden>
                 <div class="recent-title">Recent connections</div>
                 <div id="recent-list" class="recent-list"></div>
@@ -101,31 +109,12 @@
         <div id="connecting-overlay" class="connecting-overlay" hidden>
             <div class="spinner"></div>
             <p class="connecting-title">Connecting…</p>
-            <p class="connecting-note">The first connection can take up to ~30s if a security agent inspects it. Later ones are instant.</p>
+            <p class="connecting-note">Verifying credentials and discovering cluster capabilities. The first connection can take up to 30 seconds.</p>
         </div>
     </div>
 
     <!-- ============ DASHBOARD ============ -->
     <div id="dashboard" class="dashboard" hidden>
-        <nav class="app-rail" aria-label="Primary navigation">
-            <div class="rail-brand" aria-label="Kubby">
-                <img class="rail-brand-mark" src="/src/assets/images/kubby-mark.svg" alt=""/>
-            </div>
-            <div class="rail-nav">
-                <button class="rail-button active" data-rail-view="overview" title="Overview" aria-label="Overview"><svg class="ico"><use href="#i-overview"/></svg></button>
-                <button class="rail-button" data-rail-view="pods" title="Workloads" aria-label="Workloads"><svg class="ico"><use href="#i-pods"/></svg></button>
-                <button class="rail-button" data-rail-view="traffic" title="Network" aria-label="Network"><svg class="ico"><use href="#i-traffic"/></svg></button>
-                <button class="rail-button" data-rail-view="configmaps" title="Configuration" aria-label="Configuration"><svg class="ico"><use href="#i-configmaps"/></svg></button>
-                <button class="rail-button" data-rail-view="pvs" title="Storage" aria-label="Storage"><svg class="ico"><use href="#i-pvs"/></svg></button>
-                <button class="rail-button" data-rail-view="roles" title="Access" aria-label="Access"><svg class="ico"><use href="#i-roles"/></svg></button>
-                <button class="rail-button" data-rail-view="helm" title="Ecosystem" aria-label="Ecosystem"><svg class="ico"><use href="#i-helm"/></svg></button>
-            </div>
-            <div class="rail-bottom">
-                <button class="rail-button" data-rail-action="theme" title="Toggle light or dark theme" aria-label="Toggle light or dark theme"><svg class="ico theme-moon"><use href="#i-moon"/></svg><svg class="ico theme-sun"><use href="#i-sun"/></svg></button>
-                <button class="rail-button" data-rail-action="settings" title="Settings" aria-label="Settings"><svg class="ico"><use href="#i-settings"/></svg></button>
-            </div>
-        </nav>
-
         <aside id="sidebar" class="sidebar">
             <div class="brand">
                 <img class="brand-logo" src="/src/assets/images/kubby-mark.svg" alt=""/>
@@ -182,31 +171,31 @@
                         <button class="nav-item" data-view="cronjobs"><svg class="ico"><use href="#i-cronjobs"/></svg><span class="nav-label">CronJobs</span></button>
                     </div>
                 </div>
-                <div class="nav-section" data-section="network">
-                    <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Network</span></button>
+                <div class="nav-section collapsed" data-section="network">
+                    <button class="nav-group" aria-expanded="false"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Network</span></button>
                     <div class="nav-items">
                         <button class="nav-item" data-view="services"><svg class="ico"><use href="#i-services"/></svg><span class="nav-label">Services</span></button>
                         <button class="nav-item" data-view="ingresses"><svg class="ico"><use href="#i-ingresses"/></svg><span class="nav-label">Ingresses</span></button>
-                        <button class="nav-item" data-view="traffic"><svg class="ico"><use href="#i-traffic"/></svg><span class="nav-label">Traffic flow</span></button>
+                        <button class="nav-item" data-view="traffic"><svg class="ico"><use href="#i-traffic"/></svg><span class="nav-label">Topology</span></button>
                     </div>
                 </div>
-                <div class="nav-section" data-section="config">
-                    <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Config</span></button>
+                <div class="nav-section collapsed" data-section="config">
+                    <button class="nav-group" aria-expanded="false"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Config</span></button>
                     <div class="nav-items">
                         <button class="nav-item" data-view="configmaps"><svg class="ico"><use href="#i-configmaps"/></svg><span class="nav-label">ConfigMaps</span></button>
                         <button class="nav-item" data-view="secrets"><svg class="ico"><use href="#i-secrets"/></svg><span class="nav-label">Secrets</span></button>
                     </div>
                 </div>
-                <div class="nav-section" data-section="storage">
-                    <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Storage</span></button>
+                <div class="nav-section collapsed" data-section="storage">
+                    <button class="nav-group" aria-expanded="false"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Storage</span></button>
                     <div class="nav-items">
                         <button class="nav-item" data-view="pvcs"><svg class="ico"><use href="#i-pvcs"/></svg><span class="nav-label">PVCs</span></button>
                         <button class="nav-item" data-view="pvs"><svg class="ico"><use href="#i-pvs"/></svg><span class="nav-label">PersistentVolumes</span></button>
                         <button class="nav-item" data-view="storageclasses"><svg class="ico"><use href="#i-storageclasses"/></svg><span class="nav-label">StorageClasses</span></button>
                     </div>
                 </div>
-                <div class="nav-section" data-section="access">
-                    <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Access</span></button>
+                <div class="nav-section collapsed" data-section="access">
+                    <button class="nav-group" aria-expanded="false"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Access</span></button>
                     <div class="nav-items">
                         <button class="nav-item" data-view="serviceaccounts"><svg class="ico"><use href="#i-serviceaccounts"/></svg><span class="nav-label">ServiceAccounts</span></button>
                         <button class="nav-item" data-view="roles"><svg class="ico"><use href="#i-roles"/></svg><span class="nav-label">Roles</span></button>
@@ -215,8 +204,8 @@
                         <button class="nav-item" data-view="clusterrolebindings"><svg class="ico"><use href="#i-clusterrolebindings"/></svg><span class="nav-label">ClusterRoleBindings</span></button>
                     </div>
                 </div>
-                <div class="nav-section" data-section="ecosystem">
-                    <button class="nav-group" aria-expanded="true"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Ecosystem</span></button>
+                <div class="nav-section collapsed" data-section="ecosystem">
+                    <button class="nav-group" aria-expanded="false"><svg class="grp-caret"><use href="#i-caret"/></svg><span>Ecosystem</span></button>
                     <div class="nav-items">
                         <button class="nav-item" data-view="crds"><svg class="ico"><use href="#i-crds"/></svg><span class="nav-label">CRDs</span></button>
                         <button class="nav-item" data-view="helm"><svg class="ico"><use href="#i-helm"/></svg><span class="nav-label">Helm</span></button>
@@ -260,8 +249,6 @@
                     </button>
                 </div>
                 <div class="topbar-actions">
-                    <button id="btn-create" class="btn btn-primary btn-sm btn-icon" aria-label="Create resource"><svg class="btn-ico"><use href="#i-plus"/></svg><span class="topbar-action-label">Create</span></button>
-                    <button id="btn-import" class="btn btn-secondary btn-sm btn-icon" aria-label="Import YAML"><svg class="btn-ico"><use href="#i-upload"/></svg><span class="topbar-action-label">Import YAML</span></button>
                     <div class="pf-manager-wrap">
                         <button id="btn-port-forwards" class="btn btn-secondary btn-sm pf-manager-button" type="button"
                                 aria-haspopup="dialog" aria-expanded="false">
@@ -286,7 +273,7 @@
                         </section>
                     </div>
                     <span class="topbar-sep"></span>
-                    <button id="btn-live" class="icon-btn live-button" title="Auto-refresh (Live)" aria-label="Toggle auto-refresh"><svg class="btn-ico live-play"><use href="#i-play"/></svg><svg class="btn-ico live-pause"><use href="#i-pause"/></svg><span>Live</span></button>
+                    <button id="btn-live" class="icon-btn live-button" title="Turn on auto-refresh" aria-label="Toggle auto-refresh" aria-pressed="false"><svg class="btn-ico live-play"><use href="#i-play"/></svg><svg class="btn-ico live-pause"><use href="#i-pause"/></svg><span>Live</span></button>
                     <button id="btn-refresh" class="icon-btn" title="Refresh" aria-label="Refresh"><svg class="btn-ico"><use href="#i-refresh"/></svg></button>
                     <button id="btn-theme" class="icon-btn" title="Toggle light/dark" aria-label="Toggle light or dark theme"><svg class="btn-ico theme-moon"><use href="#i-moon"/></svg><svg class="btn-ico theme-sun"><use href="#i-sun"/></svg></button>
                     <span class="topbar-sep"></span>
@@ -304,9 +291,16 @@
                     <p id="page-subtitle">Live health and capacity across the connected cluster.</p>
                 </div>
                 <div class="page-heading-actions">
+                    <span id="view-status" class="view-status" role="status" aria-live="polite" hidden><i aria-hidden="true"></i><span></span></span>
+                    <div id="topology-switcher" class="topology-switcher" role="tablist" aria-label="Topology mode" hidden>
+                        <button id="topology-dependencies" type="button" role="tab" data-topology-view="structure" aria-selected="false">Dependencies</button>
+                        <button id="topology-traffic" type="button" role="tab" data-topology-view="traffic" aria-selected="false">Traffic routes</button>
+                    </div>
                     <button id="btn-cluster-structure" class="btn btn-secondary btn-icon" type="button" hidden>
-                        <span class="structure-button-icon" aria-hidden="true">⌘</span><span>Cluster structure</span>
+                        <span class="structure-button-icon" aria-hidden="true">⌘</span><span>Open topology</span>
                     </button>
+                    <button id="btn-import" class="btn btn-secondary btn-sm btn-icon" aria-label="Import YAML"><svg class="btn-ico"><use href="#i-upload"/></svg><span class="topbar-action-label">Import YAML</span></button>
+                    <button id="btn-create" class="btn btn-primary btn-sm btn-icon" aria-label="Create resource"><svg class="btn-ico"><use href="#i-plus"/></svg><span class="topbar-action-label">Create</span></button>
                     <div id="view-search" class="view-search" hidden>
                         <svg class="view-search-ico"><use href="#i-search"/></svg>
                         <input id="view-filter" type="text" placeholder="Filter this view…" autocomplete="off" spellcheck="false">
@@ -315,7 +309,7 @@
                 </div>
             </section>
 
-            <p id="dash-error" class="error" hidden></p>
+            <p id="dash-error" class="error" role="alert" hidden></p>
 
             <main id="content" class="content">
                 <!-- Overview -->
@@ -366,9 +360,9 @@
                         <section class="overview-section overview-attention-section">
                             <header class="overview-section-head">
                                 <div><h3>Attention needed</h3><p>Failures and warnings that may require action.</p></div>
-                                <div class="overview-head-actions"><span id="attention-count" class="overview-section-count">Checking</span><button id="overview-ai-diagnose" class="btn btn-ai btn-sm" hidden><svg class="btn-ico"><use href="#i-sparkle"/></svg>Diagnose with AI</button></div>
+                                <div class="overview-head-actions"><span id="attention-count" class="overview-section-count">Checking</span></div>
                             </header>
-                            <div class="overview-table-wrap"><table class="plain overview-table"><thead><tr><th>Namespace</th><th>Pod</th><th>Status</th><th>Restarts</th></tr></thead>
+                            <div class="overview-table-wrap"><table class="plain overview-table overview-issues-table"><thead><tr><th>Namespace</th><th>Pod</th><th>Status</th><th>Restarts</th><th class="no-sort">Next step</th></tr></thead>
                                 <tbody id="overview-errors-body"></tbody></table>
                             <p class="overview-empty overview-empty-horizontal" id="overview-errors-empty" hidden><span>✓</span><span><strong>Nothing needs attention</strong><small>All monitored workloads are currently healthy.</small></span></p></div>
                         </section>
@@ -820,7 +814,7 @@
 
         <!-- ============ Detail drawer ============ -->
         <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
-        <aside id="drawer" class="drawer" hidden>
+        <aside id="drawer" class="drawer" hidden role="dialog" aria-modal="true" aria-labelledby="drawer-name" aria-describedby="drawer-ns">
             <header class="drawer-head">
                 <div class="drawer-title">
                     <span id="drawer-kind" class="drawer-kind"></span>
@@ -835,19 +829,22 @@
                 </div>
             </header>
 
-            <div class="drawer-tabs">
-                <button class="drawer-tab active" data-dtab="details">Details</button>
-                <button class="drawer-tab" data-dtab="yaml">YAML</button>
-                <button class="drawer-tab" id="drawer-tab-logs" data-dtab="logs" hidden>Logs</button>
-                <button class="drawer-tab" id="drawer-tab-terminal" data-dtab="terminal" hidden>Terminal</button>
-                <button class="drawer-tab" id="drawer-tab-forward" data-dtab="forward" hidden>Port Forward</button>
-                <button class="drawer-tab drawer-tab-ai" data-dtab="ai">
+            <div class="drawer-tabs" role="tablist" aria-label="Resource details">
+                <button id="drawer-tab-details" class="drawer-tab active" role="tab" aria-selected="true" aria-controls="dpanel-details" data-dtab="details">Details</button>
+                <button id="drawer-tab-yaml" class="drawer-tab" role="tab" aria-selected="false" aria-controls="dpanel-yaml" data-dtab="yaml">YAML</button>
+                <button class="drawer-tab" id="drawer-tab-logs" role="tab" aria-selected="false" aria-controls="dpanel-logs" data-dtab="logs" hidden>Logs</button>
+                <button class="drawer-tab" id="drawer-tab-terminal" role="tab" aria-selected="false" aria-controls="dpanel-terminal" data-dtab="terminal" hidden>Terminal</button>
+                <button class="drawer-tab" id="drawer-tab-forward" role="tab" aria-selected="false" aria-controls="dpanel-forward" data-dtab="forward" hidden>Port Forward</button>
+                <button id="drawer-tab-investigate" class="drawer-tab drawer-tab-investigate" role="tab" aria-selected="false" aria-controls="dpanel-investigate" data-dtab="investigate">
+                    <span aria-hidden="true">⌁</span>Investigate
+                </button>
+                <button id="drawer-tab-ai" class="drawer-tab drawer-tab-ai" role="tab" aria-selected="false" aria-controls="dpanel-ai" data-dtab="ai">
                     <svg class="ico"><use href="#i-sparkle"/></svg>Ask AI
                 </button>
             </div>
 
             <!-- Details panel -->
-            <div id="dpanel-details" class="drawer-panel drawer-panel-scroll">
+            <div id="dpanel-details" class="drawer-panel drawer-panel-scroll" role="tabpanel" aria-labelledby="drawer-tab-details">
                 <div id="detail-meta"></div>
                 <div id="detail-relations"></div>
                 <h4 class="detail-section-title">Events</h4>
@@ -857,7 +854,7 @@
             </div>
 
             <!-- YAML panel -->
-            <div id="dpanel-yaml" class="drawer-panel" hidden>
+            <div id="dpanel-yaml" class="drawer-panel" role="tabpanel" aria-labelledby="drawer-tab-yaml" hidden>
                 <div class="drawer-toolbar">
                     <button id="btn-yaml-reload" class="btn btn-secondary btn-sm">↻ Reload</button>
                     <button id="btn-yaml-diff" class="btn btn-secondary btn-sm">Diff</button>
@@ -871,7 +868,7 @@
             </div>
 
             <!-- Logs panel -->
-            <div id="dpanel-logs" class="drawer-panel" hidden>
+            <div id="dpanel-logs" class="drawer-panel" role="tabpanel" aria-labelledby="drawer-tab-logs" hidden>
                 <div class="drawer-toolbar">
                     <label class="logs-container-label">Container
                         <select id="logs-container"></select>
@@ -885,7 +882,7 @@
             </div>
 
             <!-- Terminal panel (Pod) -->
-            <div id="dpanel-terminal" class="drawer-panel" hidden>
+            <div id="dpanel-terminal" class="drawer-panel" role="tabpanel" aria-labelledby="drawer-tab-terminal" hidden>
                 <section class="term-workspace">
                     <header class="term-toolbar">
                         <div class="term-toolbar-copy">
@@ -930,7 +927,7 @@
             </div>
 
             <!-- Port Forward panel (Pod/Service) -->
-            <div id="dpanel-forward" class="drawer-panel drawer-panel-scroll">
+            <div id="dpanel-forward" class="drawer-panel drawer-panel-scroll" role="tabpanel" aria-labelledby="drawer-tab-forward" hidden>
                 <section class="pf-create-card">
                     <header><div><span class="pf-section-kicker">New tunnel</span><h4>Forward a local port</h4></div><p>Route traffic from this machine to the selected workload.</p></header>
                     <div class="pf-form">
@@ -958,8 +955,56 @@
                 </section>
             </div>
 
+            <!-- Incident Studio — deterministic evidence before AI. -->
+            <div id="dpanel-investigate" class="drawer-panel drawer-panel-scroll incident-panel" role="tabpanel" aria-labelledby="drawer-tab-investigate" hidden>
+                <section id="incident-hero" class="incident-hero" data-state="loading" aria-live="polite">
+                    <div class="incident-hero-mark" aria-hidden="true">⌁</div>
+                    <div class="incident-hero-copy">
+                        <span class="incident-kicker">Evidence-first diagnosis</span>
+                        <h3 id="incident-summary">Building an incident snapshot…</h3>
+                        <p id="incident-meta">Correlating state, Events, ownership and serving endpoints.</p>
+                    </div>
+                    <div class="incident-toolbar">
+                        <button id="btn-incident-refresh" class="btn btn-secondary btn-sm" type="button">Refresh evidence</button>
+                        <button id="btn-incident-watch" class="btn btn-primary btn-sm" type="button" aria-pressed="false">Watch recovery</button>
+                        <button id="btn-incident-export" class="btn btn-secondary btn-sm" type="button" disabled>Export report</button>
+                    </div>
+                </section>
+
+                <p id="incident-error" class="error" role="alert" hidden></p>
+                <div id="incident-loading" class="incident-loading"><span></span><div><strong>Correlating live evidence</strong><small>One read-only snapshot; no AI call and no cluster write.</small></div></div>
+
+                <div id="incident-content" class="incident-content" hidden>
+                    <section class="incident-section" aria-labelledby="incident-findings-title">
+                        <header><div><span class="incident-kicker">Diagnosis</span><h4 id="incident-findings-title">Ranked findings</h4></div><span id="incident-finding-count" class="incident-count"></span></header>
+                        <div id="incident-findings" class="incident-findings"></div>
+                    </section>
+
+                    <section class="incident-section" aria-labelledby="incident-actions-title">
+                        <header><div><span class="incident-kicker">Safe next step</span><h4 id="incident-actions-title">Remediation options</h4></div><span class="incident-readonly">Investigation is read-only</span></header>
+                        <div id="incident-actions" class="incident-actions"></div>
+                    </section>
+
+                    <div class="incident-two-column">
+                        <section class="incident-section" aria-labelledby="incident-related-title">
+                            <header><div><span class="incident-kicker">Blast radius</span><h4 id="incident-related-title">Related resources</h4></div></header>
+                            <div id="incident-related" class="incident-related"></div>
+                        </section>
+                        <section class="incident-section" aria-labelledby="incident-timeline-title">
+                            <header><div><span class="incident-kicker">Causal evidence</span><h4 id="incident-timeline-title">Timeline</h4></div></header>
+                            <ol id="incident-timeline" class="incident-timeline"></ol>
+                        </section>
+                    </div>
+
+                    <section id="incident-limits-section" class="incident-limits" hidden>
+                        <strong>Evidence limits</strong>
+                        <ul id="incident-limitations"></ul>
+                    </section>
+                </div>
+            </div>
+
             <!-- Ask AI panel — a conversation grounded in this resource's live state -->
-            <div id="dpanel-ai" class="drawer-panel ai-panel" hidden>
+            <div id="dpanel-ai" class="drawer-panel ai-panel" role="tabpanel" aria-labelledby="drawer-tab-ai" hidden>
                 <header class="ai-head">
                     <div class="ai-head-main">
                         <span class="ai-head-title">Grounded in this resource's live state</span>
@@ -998,7 +1043,7 @@
         </div>
 
         <!-- ============ Row actions menu ============ -->
-        <div id="row-menu" class="row-menu" hidden></div>
+        <div id="row-menu" class="row-menu" role="menu" aria-label="Resource actions" hidden></div>
 
         <div id="pf-toast" class="pf-toast" hidden role="status">
             <div><strong>Port forward is running</strong><span id="pf-toast-message"></span></div>
@@ -1008,14 +1053,15 @@
 
         <!-- ============ Command palette (Ctrl+K) ============ -->
         <div id="palette-backdrop" class="palette-backdrop" hidden></div>
-        <div id="palette" class="palette" hidden role="dialog" aria-modal="true">
+        <div id="palette" class="palette" hidden role="dialog" aria-modal="true" aria-labelledby="palette-title">
+            <h2 id="palette-title" class="sr-only">Search and commands</h2>
             <div class="palette-search">
                 <span class="palette-ico">⌘</span>
-                <input id="palette-input" class="palette-input" type="text" placeholder="Jump to a resource, namespace, cluster, or action…" autocomplete="off" spellcheck="false">
+                <input id="palette-input" class="palette-input" type="text" role="combobox" aria-autocomplete="list" aria-controls="palette-list" aria-expanded="true" placeholder="Jump to a resource, namespace, cluster, or action…" autocomplete="off" spellcheck="false">
                 <span class="palette-esc">Esc</span>
             </div>
-            <div id="palette-list" class="palette-list"></div>
-            <p id="palette-empty" class="palette-empty" hidden>No matches.</p>
+            <div id="palette-list" class="palette-list" role="listbox" aria-label="Search results"></div>
+            <p id="palette-empty" class="palette-empty" role="status" hidden>No matches.</p>
         </div>
 
         <!-- ============ Generic modal (scale / create / import) ============ -->

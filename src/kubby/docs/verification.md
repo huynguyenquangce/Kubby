@@ -37,9 +37,9 @@ cd ..
 | `frontend/src/terminal-io.test.js` | raw input ordering, write-error recovery, and valid PTY dimensions |
 | `frontend/src/log-buffer.test.js` | 5,000-line cap, frame coalescing, incremental append and oldest-chunk trimming |
 | `frontend/src/line-diff.test.js` | diff reconstruction, pathological fallback, and 10,000-line regression budget |
-| `frontend/src/responsive.test.js` | canonical off-canvas navigation, shrinkable top-bar labels, workspace container breakpoints, viewport-bounded overlays, and single-column modal forms/actions |
-| `frontend/e2e/ui.spec.js` | paste/connect workflow, every built-in view, responsive/zoom matrix, mobile navigation ownership, Structure filtering, Pod drawer/YAML, Terminal auto-attach/reconnect/error behavior, mobile Settings layout, and Helm detail/install/repository/destructive-dialog modal behavior |
-| `frontend/e2e/visual.spec.js` | stable Chromium baselines for light/dark Overview, Cluster Structure, and the Pod Terminal; failures retain screenshot, video, and trace evidence |
+| `frontend/src/responsive.test.js` | canonical off-canvas navigation, reachable contextual page actions, workspace container breakpoints, viewport-bounded overlays, and single-column modal forms/actions |
+| `frontend/e2e/ui.spec.js` | paste/connect workflow, every built-in view, responsive/zoom matrix, mobile navigation ownership, Structure filtering, Incident Studio evidence/export/safe hand-off, Pod drawer/YAML, Terminal auto-attach/reconnect/error behavior, mobile Settings layout, and Helm detail/install/repository/destructive-dialog modal behavior |
+| `frontend/e2e/visual.spec.js` | stable Chromium baselines for light/dark Overview, Cluster Structure, Incident Studio, and the Pod Terminal; failures retain screenshot, video, and trace evidence |
 | `internal/k8sclient/exec_test.go` | Bash-first shell selection/fallback/error reporting, initial/coalesced terminal resize, and concurrent unblocking queue close |
 | `internal/k8sclient/logstream_test.go` | rate-limited full batches, quiet-stream timer flush, final flush and cancel semantics |
 | `internal/k8sclient/overview_test.go` | one Node/Pod list, partial failures, terminating-Pod exclusion, and 10k benchmark |
@@ -106,6 +106,7 @@ go run ./cmd/kubby-cli ns-summary <namespace>
 go run ./cmd/kubby-cli search <query>
 go run ./cmd/kubby-cli counts [-n <ns>] [--cluster=false]     # timed — the perf path
 go run ./cmd/kubby-cli overview                               # timed single-call dashboard snapshot
+go run ./cmd/kubby-cli investigate Pod <name> -n <ns>        # deterministic incident report; read-only
 go run ./cmd/kubby-cli structure [-n <ns>]                   # full debug topology snapshot
 go run ./cmd/kubby-cli custom-kinds
 go run ./cmd/kubby-cli list-custom <Kind.group> [-n <ns>]
@@ -205,14 +206,24 @@ like Bash.
 
 Overview visual check: inspect light and dark modes at roughly 1024 px and 1920 px
 width. Inter must be used consistently by navigation, buttons, form controls, KPI
-values, and tables; Cluster pulse must remain readable; capacity meters must match
+values, and tables; the health banner and issue-local next steps must remain readable; capacity meters must match
 their percentages; Node status must show readiness/pressure without repeating the
 capacity meters; the Attention panel must not stretch to Top consumers' height;
 long event messages must scroll inside their section rather than widening the page.
 Also confirm Vietnamese glyphs render without switching to a visibly different
 fallback face. These are manual WebView checks, not claims made by `npm test`.
 
-Cluster structure visual check: open it from Overview, switch between all namespaces
+Incident Studio manual check: use a Pod with a retained warning Event and a
+matching Service/EndpointSlice. Open it from Overview's **Investigate** action;
+confirm the highest-severity finding is first, related resources open the exact
+drawer identity, and remediation buttons lead to the existing logs/YAML/rollout
+or topology flow without writing. Start **Watch recovery**, fix the Pod through a
+separately confirmed action, and confirm Kubby reports recovery only after a
+fresh healthy snapshot. Export the Markdown report and verify it contains no raw
+manifest, Secret value, kubeconfig or application logs. Repeat at narrow width
+and in both themes. Native WebView behaviour remains a manual check.
+
+Topology Dependencies visual check: open it from Overview, switch between all namespaces
 and a busy namespace, filter by a pod/service name, then enable **Only unhealthy
 paths**. At 1024 px and 1920 px in light/dark mode, all four lanes must stay legible;
 select each hop and confirm the inspector identity matches it. **Open full details**
@@ -221,8 +232,8 @@ internal Services and unexposed workloads remain present. This requires a native
 WebView and is not proven by the headless build.
 
 Responsive/zoom visual check: on Windows WebView2, use 1366×768 and 1920×1080
-windows at 80%, 100%, 125%, 150%, 175% and 200%. Visit Overview, Cluster structure,
-Traffic, a resource table, a Pod drawer (Details/YAML/Terminal/Port Forward), Settings
+windows at 80%, 100%, 125%, 150%, 175% and 200%. Visit Overview, both Topology modes,
+a resource table, a Pod drawer (Details/YAML/Terminal/Port Forward), Settings
 and a Helm modal. No shell control may leave the window; only the resource table's
 own scrolling region may scroll horizontally. When the sidebar collapses, the menu
 button must expose the same namespace, cluster and dynamically discovered resource

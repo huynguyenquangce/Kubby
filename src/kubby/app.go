@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -912,6 +913,21 @@ func (a *App) OverviewSnapshot() (*k8sclient.OverviewData, error) {
 	return k8sclient.OverviewSnapshot(a.ctx, cluster)
 }
 
+// InvestigateResource returns one evidence-first incident snapshot. The deep
+// playbook currently targets Pods; other kinds degrade to retained Events.
+func (a *App) InvestigateResource(kind, namespace, name string) (string, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return "", err
+	}
+	report, err := k8sclient.InvestigateResource(a.ctx, cluster, kind, namespace, name)
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(report)
+	return string(payload), err
+}
+
 func (a *App) DeploymentTree(namespace, name string) (*k8sclient.RelationNode, error) {
 	cluster, err := a.requireCluster()
 	if err != nil {
@@ -1262,6 +1278,41 @@ func (a *App) SaveTextToFile(defaultName, content string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// SaveIncidentReport writes the bounded IncidentReport formatter rather than
+// accepting arbitrary evidence from the WebView. The report intentionally
+// contains no manifests, credentials, Secret values or raw application logs.
+func (a *App) SaveIncidentReport(reportJSON string) (string, error) {
+	var report k8sclient.IncidentReport
+	if err := json.Unmarshal([]byte(reportJSON), &report); err != nil {
+		return "", fmt.Errorf("decode incident report: %w", err)
+	}
+	defaultName := fmt.Sprintf("kubby-incident-%s-%s.md", strings.ToLower(report.Kind), safeFilename(report.Name))
+	path, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+		DefaultFilename: defaultName,
+		Title:           "Save incident report",
+	})
+	if err != nil || path == "" {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(k8sclient.FormatIncidentMarkdown(&report)), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func safeFilename(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "resource"
+	}
+	return strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' {
+			return r
+		}
+		return '-'
+	}, value)
 }
 
 // GetYAML returns a resource rendered as YAML for the detail/edit panel.

@@ -92,6 +92,27 @@ func main() {
 	}
 	root.AddCommand(overviewCmd)
 
+	var investigateNamespace string
+	investigateCmd := &cobra.Command{
+		Use:   "investigate <kind> <name>",
+		Short: "Dựng báo cáo sự cố deterministic và evidence-first (read-only)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			report, err := k8sclient.InvestigateResource(context.Background(), cluster, args[0], investigateNamespace, args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Print(k8sclient.FormatIncidentMarkdown(report))
+			return nil
+		},
+	}
+	investigateCmd.Flags().StringVarP(&investigateNamespace, "namespace", "n", "default", "namespace")
+	root.AddCommand(investigateCmd)
+
 	var structureNamespace string
 	structureCmd := &cobra.Command{
 		Use:   "structure",

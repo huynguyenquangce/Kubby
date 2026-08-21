@@ -6,6 +6,22 @@ Bug log — add one line per issue. Resolved items move to the bottom.
 
 ## Fixed
 
+- [2026-08-21] Kubby looked polished in screenshots but remained difficult to read,
+  navigate and operate without a mouse. The causes were systemic rather than one
+  broken component: a duplicate 72 px rail and 258 px sidebar represented the same
+  information architecture; operational labels fell to 9–11 px with several light
+  semantic colours below text contrast; refresh removed trustworthy same-scope data
+  before its replacement arrived; resource rows and sortable headers exposed only
+  click handlers; the drawer and command palette painted overlays without owning
+  focus or complete ARIA semantics; and Overview's global AI action silently chose
+  the first failing Pod. Fix: one sidebar owns navigation, Topology owns dependency
+  and traffic modes, contextual create/import actions live with the page, the
+  Overview issue queue precedes telemetry and gives every Pod explicit Inspect/Ask
+  AI actions, the type/contrast floor was raised, same-scope refresh retains its
+  previous result with freshness feedback, and tables/drawer/palette/row menus now
+  have keyboard, focus-return and accessible state contracts. Events failures are
+  also distinct from a genuinely empty event list and offer Retry.
+
 - [2026-08-19] Connecting to an untrusted kubeconfig could execute its credential
   helper or read an arbitrary local token/client-key path before the user saw any
   additional warning. Cause: client-go treats exec/auth-provider and file-backed

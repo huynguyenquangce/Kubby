@@ -19,22 +19,28 @@ test('narrow shell keeps the canonical sidebar reachable', () => {
     assert.match(responsiveCSS, /@media \(max-width: 820px\)/);
 });
 
-test('topbar labels have shrink targets without removing their actions', () => {
+test('create and import remain contextual page actions at narrow widths', () => {
+    const headingActions = indexHTML.slice(
+        indexHTML.indexOf('<div class="page-heading-actions">'),
+        indexHTML.indexOf('<div id="view-search"'),
+    );
     for (const id of ['btn-create', 'btn-import']) {
         const button = indexHTML.match(new RegExp(`<button id="${id}"[\\s\\S]*?<\\/button>`))?.[0] ?? '';
         assert.match(button, /aria-label="[^"]+"/);
         assert.match(button, /class="topbar-action-label"/);
+        assert.match(headingActions, new RegExp(`id="${id}"`));
     }
-    assert.match(responsiveCSS, /\.topbar-action-label,[\s\S]*?display: none/);
+    assert.doesNotMatch(responsiveCSS, /\.topbar-action-label[^{]*\{[^}]*display:\s*none/);
     assert.doesNotMatch(responsiveCSS, /#btn-(?:create|import)\s*\{[^}]*display:\s*none/);
 });
 
 test('component breakpoints use the remaining workspace width', () => {
     assert.match(responsiveCSS, /container-name:\s*workspace/);
     assert.match(responsiveCSS, /container-type:\s*inline-size/);
-    for (const width of ['1030px', '960px', '760px', '520px']) {
+    for (const width of ['1100px', '1030px', '960px', '760px', '520px']) {
         assert.match(responsiveCSS, new RegExp(`@container workspace \\(max-width: ${width}\\)`));
     }
+    assert.match(responsiveCSS, /@container workspace \(max-width: 1100px\)[\s\S]*?\.overview-grid/);
     assert.match(responsiveCSS, /@container workspace \(max-width: 760px\)[\s\S]*?\.structure-path\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
     assert.match(responsiveCSS, /@container workspace \(max-width: 760px\)[\s\S]*?\.term-controls\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
     assert.match(responsiveCSS, /@container workspace \(max-width: 520px\)[\s\S]*?\.term-brand > span/);

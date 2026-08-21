@@ -210,6 +210,10 @@ export function IngressTree(arg1, arg2) {
   return window['go']['main']['App']['IngressTree'](arg1, arg2);
 }
 
+export function InvestigateResource(arg1, arg2, arg3) {
+  return window['go']['main']['App']['InvestigateResource'](arg1, arg2, arg3);
+}
+
 export function ListCRDs() {
   return window['go']['main']['App']['ListCRDs']();
 }
@@ -416,6 +420,10 @@ export function RunCronJobNowOwned(arg1, arg2, arg3) {
 
 export function SaveAIConfig(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['SaveAIConfig'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SaveIncidentReport(arg1) {
+  return window['go']['main']['App']['SaveIncidentReport'](arg1);
 }
 
 export function SaveTextToFile(arg1, arg2) {

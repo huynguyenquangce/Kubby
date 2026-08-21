@@ -107,6 +107,8 @@ export function HelmUpgradeValuesOwned(arg1:string,arg2:string,arg3:string,arg4:
 
 export function IngressTree(arg1:string,arg2:string):Promise<k8sclient.RelationNode>;
 
+export function InvestigateResource(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function ListCRDs():Promise<Array<k8sclient.CRDInfo>>;
 
 export function ListClusterRoleBindings():Promise<Array<k8sclient.ClusterRoleBindingInfo>>;
@@ -210,6 +212,8 @@ export function RunCronJobNow(arg1:string,arg2:string):Promise<void>;
 export function RunCronJobNowOwned(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SaveAIConfig(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;
+
+export function SaveIncidentReport(arg1:string):Promise<string>;
 
 export function SaveTextToFile(arg1:string,arg2:string):Promise<string>;
 

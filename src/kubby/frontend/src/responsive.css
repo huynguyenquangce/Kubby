@@ -52,7 +52,6 @@
 }
 
 @media (max-width: 1320px) {
-    .topbar-action-label,
     .topbar-actions .live-button span {
         display: none;
     }
@@ -122,6 +121,14 @@
     .page-heading-actions > .btn,
     .page-heading-actions > .view-search {
         max-width: 100%;
+    }
+
+    .topology-switcher {
+        width: 100%;
+    }
+
+    .topology-switcher button {
+        flex: 1 1 0;
     }
 }
 
@@ -240,7 +247,13 @@
 }
 
 /* Component breakpoints depend on the remaining workspace, not on the outer
-   window. This removes the 220-330px blind spot introduced by rail/sidebar. */
+   window. This removes the blind spot introduced by the persistent sidebar. */
+@container workspace (max-width: 1100px) {
+    .overview-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
 @container workspace (max-width: 1030px) {
     .structure-layout {
         grid-template-columns: minmax(0, 1fr);

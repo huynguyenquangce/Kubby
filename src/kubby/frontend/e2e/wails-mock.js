@@ -161,6 +161,29 @@ const DEFAULT_FIXTURES = {
     PodLogs: '2026-08-12T03:20:01Z server listening on :8080\n',
     GetAIConfig: { provider: '', endpoint: '', model: '', language: 'auto', hasApiKey: false },
     GetAIStatus: { configured: false, provider: '', model: '' },
+    InvestigateResource: JSON.stringify({
+        kind: 'Pod', namespace: 'payments', name: 'checkout-7b8d9f-2kw7p', state: 'critical',
+        summary: 'checkout was OOMKilled', observedAt: '2026-08-21T09:30:00Z',
+        findings: [{
+            id: 'terminated-checkout', severity: 'critical', title: 'checkout was OOMKilled',
+            explanation: 'The container exceeded its memory limit and the kernel terminated it.', confidence: 'high',
+            evidence: ['reason: OOMKilled', 'restartCount: 7'],
+        }],
+        timeline: [
+            { at: '2026-08-21T09:29:00Z', age: '1m', source: 'Container', title: 'checkout was OOMKilled', detail: 'exit code 137', severity: 'critical' },
+            { at: '2026-08-21T09:20:00Z', age: '10m', source: 'Pod', title: 'Pod created', detail: 'Scheduled phase: Running', severity: 'info' },
+        ],
+        related: [
+            { kind: 'Deployment', namespace: 'payments', name: 'checkout', role: 'Rollout owner', status: 'controls ReplicaSet checkout-7b8d9f' },
+            { kind: 'Service', namespace: 'payments', name: 'checkout', role: 'Selects this Pod', status: '1 ready endpoints' },
+        ],
+        actions: [
+            { id: 'logs-pod', label: 'Inspect current and previous logs', description: 'Confirm the closest application-level failure.', action: 'logs', kind: 'Pod', namespace: 'payments', name: 'checkout-7b8d9f-2kw7p' },
+            { id: 'sizing-pod', label: 'Check memory sizing', description: 'Compare usage, requests and limits.', action: 'sizing', kind: 'Pod', namespace: 'payments', name: 'checkout-7b8d9f-2kw7p' },
+        ],
+        limitations: ['Kubby is agent-less: the timeline is not a complete historical audit log.'],
+    }),
+    SaveIncidentReport: '/tmp/kubby-incident-pod-checkout.md',
     AppVersion: 'Kubby 0.2.0-test linux/amd64',
     NetworkFlows: { ingresses: [], services: [], routedCount: 0, endpointCount: 0, brokenCount: 0 },
     Sizing: {

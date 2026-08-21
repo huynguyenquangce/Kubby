@@ -87,6 +87,7 @@ These are load-bearing everywhere. Each is explained in the branch that owns it.
 | [docs/traffic-flow.md](docs/traffic-flow.md) | The Traffic view: Ingress **and** Istio Gateway/VirtualService → Service → Pods | working on network topology |
 | [docs/streaming.md](docs/streaming.md) | Log follow, exec terminal, port-forward — the three long-lived connections | touching anything that streams |
 | [docs/ai-assistant.md](docs/ai-assistant.md) | The Ask AI tab, evidence collection, providers, what leaves the machine | changing AI behaviour or its data handling |
+| [docs/incident-studio.md](docs/incident-studio.md) | Deterministic findings, causal timeline, safe next actions, recovery watch and incident export | changing the Investigate workflow |
 | [docs/helm.md](docs/helm.md) | Releases, repositories, Artifact Hub, dry-run previews | working on Helm |
 | [docs/frontend.md](docs/frontend.md) | View system, drawer, theme tokens, command palette, dialogs, CSS conventions | writing any UI |
 | [docs/performance.md](docs/performance.md) | The performance contract and how it was measured | adding anything that lists resources |
@@ -128,6 +129,7 @@ src/kubby/
 │   ├── portforward.go          #   StartPortForward (SPDY)                                       → streaming.md
 │   ├── exec.go                 #   StartExec (resize-aware PTY)                                  → streaming.md
 │   ├── ai.go                   #   DiagnosticContext → AIContext                                 → ai-assistant.md
+│   ├── investigation.go        #   IncidentReport: evidence-first findings + timeline            → incident-studio.md
 │   ├── helm.go, helmrepo.go    #   Helm Go SDK in-process + repositories.yaml                    → helm.md
 │   └── artifacthub.go          #   Chart search/details over HTTP                                → helm.md
 │
