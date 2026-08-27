@@ -321,12 +321,19 @@ select:focus, textarea:focus { outline: 2px solid var(--blue); outline-offset: -
     display: flex;
     align-items: center;
     gap: 0.55rem;
+    width: 100%;
     padding: 0 0.5rem 1rem;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
     font-size: 1.18rem;
     font-weight: 700;
     letter-spacing: -0.01em;
     color: var(--sidebar-ink);
 }
+.brand:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 8px; }
 
 .ns-picker {
     padding: 0.5rem;
@@ -407,6 +414,12 @@ select:focus, textarea:focus { outline: 2px solid var(--blue); outline-offset: -
 }
 .nav-section.collapsed .nav-items { max-height: 0; opacity: 0; }
 
+/* Custom Resources may contain dozens of entries. The outer .nav is the sole
+   vertical scroller, so an expanded dynamic group must contribute its full
+   height instead of clipping everything after the generic 400 px animation cap. */
+#nav-section-custom:not(.collapsed) #nav-custom-items { max-height: none; overflow: visible; }
+#nav-section-custom.collapsed #nav-custom-items { max-height: 0; overflow: hidden; }
+
 .nav-item {
     display: flex;
     align-items: center;
@@ -472,6 +485,11 @@ select:focus, textarea:focus { outline: 2px solid var(--blue); outline-offset: -
     padding: 0.15rem 0;
 }
 .cluster-select:focus { outline: none; }
+.cluster-select:focus-visible {
+    outline: 2px solid #88c0d0;
+    outline-offset: 3px;
+    border-radius: 3px;
+}
 .cluster-select option { background: var(--sidebar-2); color: #e2e8f0; }
 .cluster-footer-actions { display: flex; justify-content: space-between; }
 
@@ -599,6 +617,16 @@ select:focus, textarea:focus { outline: 2px solid var(--blue); outline-offset: -
 .view-search input { border: none; background: transparent; padding: 0.1rem 0; font-size: 0.85rem; width: 180px; color: var(--ink); }
 .view-search input:focus { outline: none; }
 .view-count { font-size: 0.74rem; color: var(--muted); white-space: nowrap; min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+.view-count-wrap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 34px;
+    min-height: 24px;
+    margin-left: 0.15rem;
+    padding-left: 0.55rem;
+    border-left: 1px solid var(--line);
+}
 
 /* Live/Theme icon-buttons swap their glyph by state */
 #btn-live .live-pause, #btn-live.live-on .live-play { display: none; }
@@ -1472,7 +1500,18 @@ tbody tr.selected:hover { background: #e0ebff; }
 .section-count { font-size: 0.72rem; font-weight: 600; color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 20px; padding: 0 0.5rem; margin-left: 0.4rem; }
 
 /* ============ Cluster structure ============ */
-.page-heading-actions { display: flex; align-items: center; gap: 0.65rem; }
+.page-heading-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.55rem; flex-wrap: wrap; }
+.page-write-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 3px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: var(--card);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.page-write-actions .btn { min-height: 32px; }
 .structure-button-icon { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: var(--accent-soft); color: var(--blue); font-weight: 800; }
 .structure-view { min-width: 0; }
 .structure-summary { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 0.7rem; }
@@ -1937,6 +1976,7 @@ tbody tr.selected:hover { background: #e0ebff; }
 .term-frame-button:hover { border-color: #62769a; background: #2d3b53; }
 .term-frame-button:focus-visible { outline: 2px solid #88c0d0; outline-offset: 1px; }
 .term-frame-button:disabled { opacity: 0.55; cursor: wait; }
+.term-frame-button[data-feedback="success"] { border-color: #79a96b; background: #2f523c; color: #e8f6e4; }
 .term-frame-button-accent { border-color: #5478bd; background: #294779; color: #e7f0ff; }
 .term-surface { position: absolute; inset: 42px 0 0; padding: 0.7rem 0.45rem 0.55rem 0.8rem; }
 .term-surface .xterm { height: 100%; }

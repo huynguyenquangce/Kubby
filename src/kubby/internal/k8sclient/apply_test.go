@@ -114,6 +114,27 @@ func TestApplyAndDiffStripTheSameFields(t *testing.T) {
 	}
 }
 
+func TestApplyDoesNotSilentlyTakeAnotherManagersFields(t *testing.T) {
+	write := kubbyApplyOptions(false)
+	if write.FieldManager != fieldManager {
+		t.Fatalf("field manager = %q, want %q", write.FieldManager, fieldManager)
+	}
+	if write.Force {
+		t.Fatal("ordinary Apply must surface managed-field conflicts instead of forcing ownership")
+	}
+	if len(write.DryRun) != 0 {
+		t.Fatalf("write unexpectedly has dry-run options: %v", write.DryRun)
+	}
+
+	preview := kubbyApplyOptions(true)
+	if preview.Force {
+		t.Fatal("Preview must model the same non-forcing ownership semantics as Apply")
+	}
+	if len(preview.DryRun) != 1 || preview.DryRun[0] != "All" {
+		t.Fatalf("preview dry-run = %v, want [All]", preview.DryRun)
+	}
+}
+
 // A bundle that creates a namespace and then fills it cannot be fully previewed,
 // because a dry run creates nothing. Detecting that case is what turns a bare
 // "not found" into an explanation.

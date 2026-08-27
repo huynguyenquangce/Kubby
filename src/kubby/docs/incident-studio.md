@@ -32,6 +32,10 @@ target object is resolved, so the report is one coherent point-in-time payload.
 The UI can re-run that call as a bounded recovery watch after a user performs a
 separately confirmed operation. Recovery is verified only when the deterministic
 report becomes healthy; a timeout is reported as inconclusive, never success.
+Pod phase is the final recovery guard: `Failed`, `Pending`, `Unknown`, an
+unreported phase, and a Running Pod without a true Ready condition cannot become
+healthy merely because retained Events or container statuses are empty. A
+`Succeeded` Pod is healthy for finite Job-style workloads.
 
 Kubby is agent-less and does not pretend to own historical telemetry. The
 timeline contains timestamps retained by the live object and Kubernetes Events.

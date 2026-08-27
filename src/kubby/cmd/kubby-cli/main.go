@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -91,6 +92,28 @@ func main() {
 		},
 	}
 	root.AddCommand(overviewCmd)
+
+	var drawerNamespace string
+	drawerCmd := &cobra.Command{
+		Use:   "drawer <kind> <name>",
+		Short: "In snapshot Details/Events/relationships của drawer (read-only)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			snapshot, err := k8sclient.GetDrawerSnapshot(cmd.Context(), cluster, args[0], drawerNamespace, args[1])
+			if err != nil {
+				return err
+			}
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(snapshot)
+		},
+	}
+	drawerCmd.Flags().StringVarP(&drawerNamespace, "namespace", "n", "default", "namespace")
+	root.AddCommand(drawerCmd)
 
 	var investigateNamespace string
 	investigateCmd := &cobra.Command{

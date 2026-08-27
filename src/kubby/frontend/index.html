@@ -116,10 +116,10 @@
     <!-- ============ DASHBOARD ============ -->
     <div id="dashboard" class="dashboard" hidden>
         <aside id="sidebar" class="sidebar">
-            <div class="brand">
+            <button id="btn-brand-home" class="brand" type="button" aria-label="Go to Overview">
                 <img class="brand-logo" src="/src/assets/images/kubby-mark.svg" alt=""/>
                 <span class="brand-name">Kubby</span>
-            </div>
+            </button>
 
             <div id="namespace-picker" class="ns-picker">
                 <span id="namespace-picker-label" class="ns-picker-label">Namespace</span>
@@ -242,9 +242,10 @@
                     <button id="btn-mobile-nav" class="icon-btn mobile-nav-toggle" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
                         <span class="mobile-nav-glyph" aria-hidden="true"><i></i><i></i><i></i></span>
                     </button>
-                    <button id="btn-command-palette" class="command-search" type="button">
+                    <button id="btn-command-palette" class="command-search" type="button"
+                            aria-label="Search resources, actions, or commands">
                         <svg class="view-search-ico"><use href="#i-search"/></svg>
-                        <span>Search resources, actions, or commands</span>
+                        <span class="command-search-label">Search Kubby…</span>
                         <kbd>Ctrl K</kbd>
                     </button>
                 </div>
@@ -299,12 +300,14 @@
                     <button id="btn-cluster-structure" class="btn btn-secondary btn-icon" type="button" hidden>
                         <span class="structure-button-icon" aria-hidden="true">⌘</span><span>Open topology</span>
                     </button>
-                    <button id="btn-import" class="btn btn-secondary btn-sm btn-icon" aria-label="Import YAML"><svg class="btn-ico"><use href="#i-upload"/></svg><span class="topbar-action-label">Import YAML</span></button>
-                    <button id="btn-create" class="btn btn-primary btn-sm btn-icon" aria-label="Create resource"><svg class="btn-ico"><use href="#i-plus"/></svg><span class="topbar-action-label">Create</span></button>
+                    <div class="page-write-actions" role="group" aria-label="Resource actions">
+                        <button id="btn-import" class="btn btn-secondary btn-sm btn-icon" aria-label="Import YAML"><svg class="btn-ico"><use href="#i-upload"/></svg><span class="topbar-action-label">Import YAML</span></button>
+                        <button id="btn-create" class="btn btn-primary btn-sm btn-icon" aria-label="Create resource"><svg class="btn-ico"><use href="#i-plus"/></svg><span class="topbar-action-label">Create</span></button>
+                    </div>
                     <div id="view-search" class="view-search" hidden>
                         <svg class="view-search-ico"><use href="#i-search"/></svg>
-                        <input id="view-filter" type="text" placeholder="Filter this view…" autocomplete="off" spellcheck="false">
-                        <span id="view-count" class="view-count"></span>
+                        <input id="view-filter" type="search" placeholder="Search resources…" aria-label="Filter resources in this view" autocomplete="off" spellcheck="false">
+                        <span class="view-count-wrap"><span id="view-count" class="view-count"></span><span class="sr-only">visible resources</span></span>
                     </div>
                 </div>
             </section>
@@ -906,7 +909,9 @@
                             <span class="term-brand"><b aria-hidden="true">K›</b><span>KUBBY / EXEC</span></span>
                             <span id="term-session-label">Not connected</span>
                             <span class="term-frame-actions">
-                                <span class="term-key-hint"><kbd>Tab</kbd> complete · <kbd>Ctrl C</kbd> interrupt</span>
+                                <span class="term-key-hint"><kbd>Ctrl Shift C</kbd> copy · <kbd>Ctrl Shift V</kbd> paste</span>
+                                <button id="btn-term-copy" class="term-frame-button" type="button" title="Copy selected text (Ctrl+Shift+C)" disabled>Copy</button>
+                                <button id="btn-term-paste" class="term-frame-button" type="button" title="Paste from clipboard (Ctrl+Shift+V)" disabled>Paste</button>
                                 <button id="btn-term-clear" class="term-frame-button" type="button">Clear</button>
                                 <button id="btn-term-start" class="term-frame-button term-frame-button-accent" type="button">Retry</button>
                                 <button id="btn-term-stop" class="term-frame-button" type="button" hidden>Disconnect</button>
@@ -921,7 +926,7 @@
                     </div>
                     <footer class="term-footer">
                         <span id="term-status" class="term-status" role="status" aria-live="polite"><i></i>Disconnected</span>
-                        <span>Remote PTY · UTF-8 · 5,000-line scrollback</span>
+                        <span>Select to copy · right-click copies selection or pastes · remote PTY</span>
                     </footer>
                 </section>
             </div>

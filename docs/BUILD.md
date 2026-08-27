@@ -141,8 +141,8 @@ Why run these separately from Wails:
 
 - Wails does not run Go tests or `go vet`.
 - Wails does not enforce `gofmt`.
-- `src/kubby/wails.json` uses `npm install`; the explicit `npm ci` verifies the
-  lockfile reproducibly.
+- `src/kubby/wails.json` also uses `npm ci`, so direct Wails builds and the
+  explicit frontend preparation both install exactly the lockfile tree.
 - Playwright runs the real frontend through a deterministic Wails binding mock;
   it needs no kubeconfig or cluster. Screenshots, traces, and videos on failure
   are test evidence, not source artifacts.

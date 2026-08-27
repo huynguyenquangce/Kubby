@@ -32,6 +32,10 @@ bindings verify the expected connection ID before starting.
 HTTP(S) chart index/archive acquisition uses the same operation context (while
 retaining Helm's 120-second request ceiling), so cancellation also stops the
 download that precedes `RunWithContext`.
+Artifact Hub JSON, repository indexes, and chart archives also have explicit
+decoded-body ceilings. Helm HTTP redirects are limited, reject HTTPS-to-HTTP
+downgrades, re-evaluate credential scope on every hop, and never include URL
+userinfo/query values in surfaced fetch errors.
 
 ## What is implemented
 
@@ -69,6 +73,10 @@ maintainer and home links.
   back so the backend can load credentials, client certificates and TLS options
   from the user's Helm configuration. A URL alone is insufficient for a private
   repository. The UI never receives those credentials.
+- **Remote payloads are bounded.** Artifact Hub search/detail responses are
+  capped at 2/8 MiB, repository indexes at 20 MiB, and chart archives at 100 MiB.
+  Keep both the Content-Length precheck and streaming `limit+1` guard because
+  chunked and compressed responses cannot be trusted from headers alone.
 - **Manifest identity is the full GVK.** Resource rows retain `apiVersion` and use
   discovery-derived scope plus a group-qualified `Kind.group` reference when
   opening the generic resource drawer. Unknown/custom kinds are dynamically read

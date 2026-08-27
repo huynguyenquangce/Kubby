@@ -17,16 +17,19 @@ report, so the UI can show what did and did not happen in one place.
 
 ## Server-side apply
 
-`ri.Apply(ctx, name, obj, ApplyOptions{FieldManager: "kubby", Force: true})`.
+`ri.Apply(ctx, name, obj, ApplyOptions{FieldManager: "kubby", Force: false})`.
 
 One call that creates or merges. The important property over a whole-object
 `Update` is that it **leaves server-defaulted fields alone** instead of failing on
 them as immutable — a Service's `clusterIP` is the usual victim of the old
 create-then-update approach.
 
-`Force: true` resolves field-ownership conflicts in Kubby's favour, which is what
-a user clicking "Apply" on a manifest is asking for. A "created" vs "updated" label
-comes from a preliminary `Get`.
+Managed-field conflicts are returned per document instead of being resolved in
+Kubby's favour. The existing Apply confirmation approves the manifest write; it
+does not separately explain or approve taking fields owned by another manager.
+Preview uses the same non-forcing option, so it predicts the write's ownership
+semantics. A future force action would need its own explicit confirmation. A
+"created" vs "updated" label comes from a preliminary `Get`.
 
 ## Two guards worth keeping
 

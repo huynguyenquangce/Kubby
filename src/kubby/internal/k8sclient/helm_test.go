@@ -3,9 +3,11 @@ package k8sclient
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,5 +178,63 @@ func TestLocateHTTPChartCancelsBlockedDownload(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("blocked chart request did not stop after context cancellation")
+	}
+}
+
+func TestFetchHelmHTTPRejectsOversizedBodies(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "123456")
+	}))
+	defer server.Close()
+
+	_, err := fetchHelmHTTP(context.Background(), &action.ChartPathOptions{}, server.URL+"/chart.tgz", 5)
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("oversized chart response error = %v", err)
+	}
+}
+
+func TestHelmRedirectPolicyRejectsDowngradeAndReevaluatesCredentials(t *testing.T) {
+	options := &action.ChartPathOptions{
+		RepoURL:  "https://charts.example.test/repo",
+		Username: "alice",
+		Password: "secret",
+	}
+	policy := helmRedirectPolicy(options)
+	original, _ := http.NewRequest(http.MethodGet, "https://charts.example.test/index.yaml", nil)
+
+	downgrade, _ := http.NewRequest(http.MethodGet, "http://charts.example.test/chart.tgz", nil)
+	if err := policy(downgrade, []*http.Request{original}); err == nil {
+		t.Fatal("HTTPS-to-HTTP redirect was accepted")
+	}
+
+	crossHost, _ := http.NewRequest(http.MethodGet, "https://cdn.example.test/chart.tgz", nil)
+	crossHost.SetBasicAuth("copied", "header")
+	if err := policy(crossHost, []*http.Request{original}); err != nil {
+		t.Fatal(err)
+	}
+	if crossHost.Header.Get("Authorization") != "" {
+		t.Fatal("repository credentials survived a cross-host redirect")
+	}
+
+	sameHost, _ := http.NewRequest(http.MethodGet, "https://charts.example.test/chart.tgz", nil)
+	if err := policy(sameHost, []*http.Request{original}); err != nil {
+		t.Fatal(err)
+	}
+	username, password, ok := sameHost.BasicAuth()
+	if !ok || username != "alice" || password != "secret" {
+		t.Fatal("same-origin redirect did not retain configured repository credentials")
+	}
+}
+
+func TestHelmHTTPURLRejectsEmbeddedCredentials(t *testing.T) {
+	if _, err := validateHelmHTTPURL("https://alice:secret@charts.example.test/chart.tgz"); err == nil {
+		t.Fatal("URL containing embedded credentials was accepted")
+	}
+	parsed, err := validateHelmHTTPURL("https://charts.example.test/chart.tgz?token=secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if safe := safeHelmHTTPURL(parsed); strings.Contains(safe, "token") || strings.Contains(safe, "secret") {
+		t.Fatalf("safe URL leaked its query: %q", safe)
 	}
 }

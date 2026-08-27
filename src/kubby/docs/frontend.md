@@ -106,7 +106,9 @@ Responsive acceptance means no document- or shell-level horizontal overflow from
 390 px upward, while intentionally wide resource tables scroll within `.content`.
 Check the CSS viewport equivalents of 80%, 100%, 125%, 150%, 175% and 200% zoom;
 browser zoom changes CSS viewport width, so fixed physical-window checks alone miss
-the breakpoint boundaries.
+the breakpoint boundaries. Low-height zoom viewports are a separate constraint:
+the Terminal drawer compacts its header, controls and chrome below 560 px high so
+the PTY remains measurable and the toolbar/frame/footer stay inside the drawer.
 
 ## Drawer
 
@@ -133,8 +135,16 @@ the invoking control on close, and exposes its panels as one ARIA tablist. Keep 
 contract aligned with the generic modal rather than treating the slide-over shape as
 permission to leave background controls keyboard-active.
 
-`closeDrawer()` must stop anything the drawer started (log follow, exec,
-Incident Studio recovery watch).
+`closeDrawer()` must stop anything the drawer started (the owned Details
+snapshot, log follow, exec, Incident Studio recovery watch).
+
+The initial Details tab owns one connection- and operation-bound
+`GetDrawerSnapshotOwned` response containing metadata, Events and the relevant
+relationship/Node/Namespace expansion. Render section errors independently and
+cancel the exact operation when its drawer closes or is replaced. YAML, logs,
+Terminal, Incident, AI and Secret reveal remain lazy because they are expensive,
+streaming, or sensitive. Backend cluster transitions also cancel every remaining
+drawer operation, so correctness does not depend on bridge-call ordering.
 
 The Terminal tab is an xterm.js surface, not an input below a `<pre>`. It must be
 opened/fitted only after its drawer panel is visible (xterm measures its parent),
@@ -150,6 +160,11 @@ session waits for Retry instead of looping. Keep the selected Pod/container,
 resolved shell, connection state, and session actions visible in the terminal
 chrome. The explicit shell choices are recovery controls, not a prerequisite for
 the common path.
+
+xterm and FitAddon are dynamic imports owned by the Terminal tab. Do not restore
+top-level JavaScript imports: that adds the whole PTY renderer to startup even for
+users who never open a shell. Module load and container lookup complete together;
+both recheck the drawer scope before starting Exec.
 
 ### Async ownership
 
@@ -179,6 +194,14 @@ Opening or closing a modal and switching connections invalidates older modal wor
 Keep write buttons disabled while required authoritative values for that exact
 owner load, or while an optional defaults request is in flight; chart defaults
 additionally belong to the exact selected chart version.
+
+Ownership also covers user edits and stable logical threads. A late Settings or
+Helm-values loader must preserve fields already edited after the request began.
+`keyed-request.js` owns AI work by connection/resource key, so reopening the same
+resource can finish its in-flight answer while selecting another resource
+invalidates it. Destructive drawer completions and Incident exports may update or
+close only the drawer scope that launched them. Welcome context parsing uses a
+monotonic request ID so a slower file/content source cannot replace the newer one.
 
 `closeModal` accepts an optional ownership scope for async completion. Never pass
 it directly to `addEventListener`: the browser's `MouseEvent` would become that
@@ -242,6 +265,8 @@ Manifest, Notes, and History in one modal so an operation does not discard the
 user's context. Install and Upgrade are guided two-stage flows: edit inputs, then
 preview the exact operation. Their primary action stays disabled until the
 backend returns the corresponding preview ownership data.
+If current release values arrive after the user has begun a draft, keep the draft
+and require an exact preview; never replace editor content with the late response.
 
 Keep tab buttons semantic (`role="tab"`, `aria-selected`, roving `tabIndex`) and
 support Left/Right arrows. At narrow widths, cards and action groups stack while
@@ -399,8 +424,9 @@ The frontend side of [performance.md](performance.md):
 - **Ownership scopes** from `request-scope.js` on any connection, view, namespace,
   drawer, or editor response that can be superseded. Feature-local request IDs may
   supplement the scope (for repeated reloads) but cannot replace it.
-- Known unpaid costs: one `<tr>` per object with listeners, and
-  `filterCurrentTable` reading `tr.textContent` for every row on every keystroke.
+- Known unpaid cost: one `<tr>` per object with listeners. Table filtering caches
+  normalized row text after its first pass, but still scans every row on every
+  keystroke; large tables ultimately need pagination or virtualised rendering.
 
 ## Verify
 

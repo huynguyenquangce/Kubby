@@ -146,6 +146,27 @@ test('a stale submit completion cannot close or report into a newer modal', asyn
     assert.equal(error, '');
 });
 
+test('a stale destructive completion cannot close a newer resource drawer', async () => {
+    const scopes = createRequestScopes();
+    const refA = { kind: 'Pod', namespace: 'default', name: 'a' };
+    const refB = { kind: 'Pod', namespace: 'default', name: 'b' };
+    let resolveDelete;
+    const deletion = new Promise((resolve) => { resolveDelete = resolve; });
+    let visible = refA.name;
+    const scopeA = scopes.openDrawer(refA);
+    const completion = deletion.then(() => {
+        if (scopes.isCurrentDrawer(scopeA, refA)) visible = '';
+    });
+
+    const scopeB = scopes.openDrawer(refB);
+    visible = refB.name;
+    resolveDelete();
+    await completion;
+
+    assert.equal(scopes.isCurrentDrawer(scopeB, refB), true);
+    assert.equal(visible, refB.name);
+});
+
 test('defaults from an older chart version are discarded', async () => {
     const scopes = createRequestScopes();
     const modal = scopes.openModal('chart-install\0repo\0chart');

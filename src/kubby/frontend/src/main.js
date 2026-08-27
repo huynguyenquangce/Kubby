@@ -6,9 +6,6 @@ import './incident.css';
 import '@fontsource-variable/inter/wght.css';
 import '@xterm/xterm/css/xterm.css';
 
-import { FitAddon } from '@xterm/addon-fit';
-import { Terminal } from '@xterm/xterm';
-
 import { createYamlEditor, parseApplyFailures } from './editor.js';
 import {
     canApplyForwardHydration,
@@ -24,6 +21,8 @@ import { createSerialWriter, validTerminalSize } from './terminal-io.js';
 import { createFrameScheduler, IncrementalLogView, LineRingBuffer } from './log-buffer.js';
 import { lineDiff } from './line-diff.js';
 import { confirmedAction, summarizeLineChanges } from './confirmed-action.js';
+import { overviewHealthModel } from './overview-health.js';
+import { createKeyedRequestOwner } from './keyed-request.js';
 
 import {
     PickKubeconfigFile,
@@ -84,14 +83,14 @@ import {
     CanI,
     Sizing,
     GetDetail,
+    GetDrawerSnapshotOwned,
+    CancelDrawerSnapshot,
     ListEvents,
 	DeleteResourceOwned,
 	ScaleDeploymentOwned,
     RestartDeploymentOwned,
     RestartStatefulSetOwned,
     RestartDaemonSetOwned,
-    PodsOnNode,
-    NamespaceSummary,
     SearchResources,
     SidebarCounts,
     CustomKinds,
@@ -115,9 +114,6 @@ import {
     SecretData,
     RecentConnections,
     ForgetConnection,
-    DeploymentTree,
-    ServiceTree,
-    IngressTree,
     OverviewSnapshot,
     InvestigateResource,
     SaveIncidentReport,
@@ -135,7 +131,7 @@ import {
     ExecResize,
     StopExec,
 } from '../wailsjs/go/main/App';
-import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime';
+import { EventsOn, BrowserOpenURL, ClipboardGetText } from '../wailsjs/runtime/runtime';
 
 const PAGE_TITLES = {
     overview: 'Overview',
@@ -237,6 +233,7 @@ const $ = (id) => document.getElementById(id);
 
 let source = { mode: 'path', path: '', content: '' };
 let welcomeConnectPending = false;
+let welcomeContextRequestID = 0;
 let currentView = 'overview';
 let currentNamespace = '';
 let helmSection = 'releases';
@@ -268,6 +265,9 @@ function connectionOwnershipChanged() {
 
 document.querySelectorAll('.tab').forEach((tab) => {
     tab.addEventListener('click', () => {
+        // A late file/content parse must not repopulate the context selector
+        // after the user has deliberately moved to the other source.
+        welcomeContextRequestID++;
         document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
         $('tab-file').hidden = tab.dataset.tab !== 'file';
         $('tab-paste').hidden = tab.dataset.tab !== 'paste';
@@ -276,30 +276,35 @@ document.querySelectorAll('.tab').forEach((tab) => {
 
 $('btn-pick-kubeconfig').addEventListener('click', () => {
     clearWelcomeError();
+    const requestID = ++welcomeContextRequestID;
     PickKubeconfigFile()
         .then((path) => {
-            if (!path) return;
+            if (requestID !== welcomeContextRequestID || !path) return null;
             source = { mode: 'path', path, content: '' };
             const picked = $('picked-path');
             picked.textContent = path;
             picked.hidden = false;
-            return ContextsFromPath(path).then(fillContexts);
+            return ContextsFromPath(path).then((res) => fillContexts(res, requestID));
         })
-        .catch(showWelcomeError);
+        .catch((err) => { if (requestID === welcomeContextRequestID) showWelcomeError(err); });
 });
 
 $('btn-load-paste').addEventListener('click', () => {
     clearWelcomeError();
 	const content = pasteEditor.getValue().trim();
-    if (!content) {
+	if (!content) {
         showWelcomeError('Paste your kubeconfig content first.');
         return;
-    }
+	}
+    const requestID = ++welcomeContextRequestID;
     source = { mode: 'content', path: '', content };
-    ContextsFromContent(content).then(fillContexts).catch(showWelcomeError);
+    ContextsFromContent(content)
+        .then((res) => fillContexts(res, requestID))
+        .catch((err) => { if (requestID === welcomeContextRequestID) showWelcomeError(err); });
 });
 
-function fillContexts(res) {
+function fillContexts(res, requestID = welcomeContextRequestID) {
+    if (requestID !== welcomeContextRequestID) return;
     const select = $('context-select');
     select.innerHTML = '';
     for (const name of res.contexts ?? []) {
@@ -470,6 +475,7 @@ document.querySelectorAll('.nav-item').forEach((btn) => {
 });
 
 $('btn-command-palette').addEventListener('click', openPalette);
+$('btn-brand-home').addEventListener('click', () => selectView('overview'));
 
 // Below the desktop-shell breakpoint the existing sidebar becomes an off-canvas
 // navigation drawer. Reusing it keeps dynamic CRD sections, counts, namespace and
@@ -947,7 +953,10 @@ function filterCurrentTable() {
     const rows = body.querySelectorAll('tr');
     let shown = 0;
     for (const tr of rows) {
-        const match = !term || tr.textContent.toLowerCase().includes(term);
+        // Reading textContent walks every descendant. Cache the normalized row
+        // text after its first filter pass so later keystrokes stay a string scan.
+        const searchText = tr.dataset.searchText ??= tr.textContent.toLowerCase();
+        const match = !term || searchText.includes(term);
         tr.hidden = !match;
         if (match) shown++;
     }
@@ -1230,7 +1239,11 @@ function loadOverview(scope) {
             $('stat-errors').textContent = sectionErrors.pods ? '—' : errored.length;
             $('attention-count').textContent = sectionErrors.pods ? 'Unavailable' : `${errored.length} active`;
             $('attention-count').classList.toggle('has-issues', errored.length > 0);
-            updateClusterHealth(stats.podsAvailable ? (stats.pods ?? 0) : null, errored);
+            updateClusterHealth(
+                stats.podsAvailable ? (stats.pods ?? 0) : null,
+                errored,
+                sectionErrors.nodes ? null : (snapshot?.nodeStatus ?? []),
+            );
             updateWorkloadSummary(stats, errored, sectionErrors);
 
             const body = $('overview-errors-body');
@@ -1255,7 +1268,7 @@ function loadOverview(scope) {
 		.catch((err) => {
 			if (!isCurrentViewRequest(scope)) return;
 			$('overview-warnings').hidden = true;
-            updateClusterHealth(null, []);
+            updateClusterHealth(null, [], null);
             updateWorkloadSummary({}, [], { pods: String(err) });
             $('attention-count').textContent = 'Unavailable';
             $('attention-count').classList.remove('has-issues');
@@ -1268,37 +1281,17 @@ function loadOverview(scope) {
         });
 }
 
-function updateClusterHealth(total, errored) {
+function updateClusterHealth(total, errored, nodes) {
     const banner = $('overview-pulse');
     const icon = $('cluster-health-icon');
     const title = $('cluster-health-title');
     const summary = $('cluster-health-summary');
-    banner.className = 'overview-health-banner';
-    if (total === null) {
-        banner.classList.add('overview-health-unavailable');
-        icon.textContent = '?';
-        title.textContent = 'Cluster health unavailable';
-        summary.textContent = 'Pod status could not be loaded. Other successful sections remain live.';
-        $('cluster-health-ratio').textContent = '– / –';
-        return;
-    }
-    const unhealthy = errored?.length ?? 0;
-    const healthy = Math.max(total - unhealthy, 0);
-    $('cluster-health-ratio').textContent = `${healthy} / ${total}`;
-    if (unhealthy === 0) {
-        banner.classList.add('overview-health-ok');
-        icon.textContent = '✓';
-        title.textContent = total === 0 ? 'Cluster ready' : 'Cluster healthy';
-        summary.textContent = total === 0
-            ? 'No workloads are running yet. Cluster infrastructure is available below.'
-            : 'All workloads are ready. No active pod failures were reported.';
-        return;
-    }
-    const percent = total > 0 ? Math.round((healthy / total) * 100) : 0;
-    banner.classList.add(percent >= 90 ? 'overview-health-warning' : 'overview-health-error');
-    icon.textContent = '!';
-    title.textContent = `${unhealthy} pod${unhealthy === 1 ? ' needs' : 's need'} attention`;
-    summary.textContent = 'Workload health is degraded. Open an issue below for live evidence.';
+    const model = overviewHealthModel({ total, errored, nodes });
+    banner.className = `overview-health-banner overview-health-${model.tone}`;
+    icon.textContent = model.icon;
+    title.textContent = model.title;
+    summary.textContent = model.summary;
+    $('cluster-health-ratio').textContent = model.ratio;
 }
 
 function updateWorkloadSummary(stats, errored, sectionErrors) {
@@ -1659,6 +1652,7 @@ function openDrawer(ref) {
     if (ref.kind === 'HelmRelease') { openHelmDetailModal(ref); return; }
     const drawerWasHidden = $('drawer').hidden;
     if (drawerWasHidden) drawerReturnFocus = document.activeElement;
+    if (activeDrawerScope) CancelDrawerSnapshot(requestScopes.drawerOwnerKey(activeDrawerScope)).catch(() => {});
     if (drawerRef && !$('drawer').hidden) stopEphemeralForwards(drawerRef);
     stopIncidentWatch();
     stopFollow();
@@ -1734,15 +1728,15 @@ function applyDrawerAccess(ref) {
     const set = accessPeek(ref.kind, ref.namespace);
     const reason = (verb) => denyReason(ref.kind, ref.namespace, verb);
 
-    // Saving edited YAML goes through a server-side apply, which the apiserver
-    // accepts on either update or patch.
+    // Drawer YAML Save sends a full-object Update. Patch permission alone is
+    // insufficient even though Create/Import use server-side apply elsewhere.
     const ownsYAML = yamlReady
         && yamlOwnerKey === requestScopes.drawerOwnerKey(activeDrawerScope)
         && isCurrentDrawerRequest(activeDrawerScope);
-    gate($('btn-yaml-save'), ownsYAML && (allowed(set, 'update') || allowed(set, 'patch')),
+    gate($('btn-yaml-save'), ownsYAML && allowed(set, 'update'),
         ownsYAML ? reason('update') : 'Wait for this resource YAML to finish loading.');
     gate($('btn-delete'), allowed(set, 'delete'), reason('delete'));
-    gate($('btn-scale'), allowed(set, 'update'), reason('update'));
+    gate($('btn-scale'), allowed(set, 'scale'), reason('scale'));
     gate($('btn-restart'), allowed(set, 'patch'), reason('patch'));
 
     if (ref.isPod) {
@@ -1761,10 +1755,12 @@ function applyDrawerAccess(ref) {
 
 function closeDrawer() {
     const closingRef = drawerRef;
+    const closingScope = activeDrawerScope;
     stopFollow();
     stopExec();
     stopIncidentWatch();
     cancelPendingForwardForDrawer(closingRef);
+    if (closingScope) CancelDrawerSnapshot(requestScopes.drawerOwnerKey(closingScope)).catch(() => {});
     requestScopes.closeDrawer();
     activeDrawerScope = null;
     yamlReady = false;
@@ -1858,13 +1854,19 @@ function openScaleModal(ref, current, { loading = false, connectionID = $('clust
 
 $('btn-restart').addEventListener('click', () => {
     const ref = drawerRef;
-    if (!ref) return;
+    const scope = activeDrawerScope;
+    if (!ref || !scope) return;
     const connectionID = $('cluster-select').value;
     showConfirm(`Rolling-restart deployment “${ref.name}”?`, { title: 'Restart deployment', icon: '🔄', okText: 'Restart' }).then((ok) => {
-        if (!ok) return;
+        if (!ok || !isCurrentDrawerRequest(scope) || $('cluster-select').value !== connectionID) return;
         RestartDeploymentOwned(connectionID, ref.namespace, ref.name)
-            .then(() => { loadDetails(); refreshCurrentView(); })
-            .catch((err) => showError(errMsg(err)));
+            .then(() => {
+                if (isCurrentDrawerRequest(scope)) loadDetails(scope);
+                if (requestScopes.isCurrentConnection(scope.connectionEpoch)) refreshCurrentView();
+            })
+            .catch((err) => {
+                if (requestScopes.isCurrentConnection(scope.connectionEpoch)) showError(errMsg(err));
+            });
     });
 });
 
@@ -1873,13 +1875,19 @@ $('drawer-backdrop').addEventListener('click', closeDrawer);
 
 $('btn-delete').addEventListener('click', () => {
     const ref = drawerRef;
-    if (!ref) return;
+    const scope = activeDrawerScope;
+    if (!ref || !scope) return;
     const connectionID = $('cluster-select').value;
     showConfirm(`Delete ${ref.kind} “${ref.name}”${ref.namespace ? ` in ${ref.namespace}` : ''}?\nThis cannot be undone.`, { title: `Delete ${ref.kind}`, icon: '🗑', okText: 'Delete', danger: true }).then((ok) => {
-        if (!ok) return;
+        if (!ok || !isCurrentDrawerRequest(scope) || $('cluster-select').value !== connectionID) return;
         DeleteResourceOwned(connectionID, ref.kind, ref.namespace, ref.name)
-            .then(() => { closeDrawer(); refreshCurrentView(); })
-            .catch((err) => showError(errMsg(err)));
+            .then(() => {
+                if (isCurrentDrawerRequest(scope)) closeDrawer();
+                if (requestScopes.isCurrentConnection(scope.connectionEpoch)) refreshCurrentView();
+            })
+            .catch((err) => {
+                if (requestScopes.isCurrentConnection(scope.connectionEpoch)) showError(errMsg(err));
+            });
     });
 });
 
@@ -1915,9 +1923,13 @@ function setDrawerTab(name) {
     ensureDrawerTabLoaded(name);
     if (name === 'ai') { prepareAIPanel(); $('ai-input').focus(); }
     if (name === 'terminal') requestAnimationFrame(() => {
-        ensureTerminal();
-        fitTerminal();
-        if (execConnected) execTerminal?.focus();
+        loadTerminalRuntime().then(() => {
+            if ($('dpanel-terminal').hidden) return;
+            fitTerminal();
+            if (execConnected) execTerminal?.focus();
+        }).catch((err) => {
+            if (!$('dpanel-terminal').hidden) setTerminalStatus('error', `Terminal failed to load: ${errMsg(err)}`);
+        });
     });
 }
 
@@ -2114,10 +2126,21 @@ function stopIncidentWatch(outcome = '') {
 $('btn-incident-refresh').addEventListener('click', () => loadIncident());
 $('btn-incident-watch').addEventListener('click', startIncidentWatch);
 $('btn-incident-export').addEventListener('click', () => {
-    if (!incidentReport) return;
-    SaveIncidentReport(JSON.stringify(incidentReport))
-        .then((path) => { if (path) $('incident-meta').textContent = `Incident report saved to ${path}`; })
-        .catch((err) => showError(errMsg(err)));
+    const report = incidentReport;
+    const scope = activeDrawerScope;
+    if (!report || !scope || !isCurrentDrawerRequest(scope)) return;
+    const button = $('btn-incident-export');
+    button.disabled = true;
+    SaveIncidentReport(JSON.stringify(report))
+        .then((path) => {
+            if (path && isCurrentDrawerRequest(scope) && incidentReport === report) {
+                $('incident-meta').textContent = `Incident report saved to ${path}`;
+            }
+        })
+        .catch((err) => { if (isCurrentDrawerRequest(scope)) showError(errMsg(err)); })
+        .finally(() => {
+            if (isCurrentDrawerRequest(scope) && incidentReport === report) button.disabled = false;
+        });
 });
 
 // ---- Details + Events ----
@@ -2129,16 +2152,27 @@ function loadDetails(scope = activeDrawerScope) {
     $('detail-events-body').innerHTML = '';
     $('detail-events-empty').hidden = true;
 
-    GetDetail(ref.kind, ref.namespace, ref.name)
-        .then((d) => { if (isCurrentDrawerRequest(scope)) renderDetailMeta(d); })
+    const empty = $('detail-events-empty');
+    empty.className = 'empty-inline';
+    empty.textContent = 'Loading events…';
+    empty.hidden = false;
+    const operationID = requestScopes.drawerOwnerKey(scope);
+    const connectionID = $('cluster-select').value;
+    GetDrawerSnapshotOwned(connectionID, operationID, ref.kind, ref.namespace, ref.name)
+        .then((payload) => {
+            if (!isCurrentDrawerRequest(scope)) return;
+            const snapshot = typeof payload === 'string' ? JSON.parse(payload) : payload;
+            renderDetailMeta(snapshot.detail);
+            renderDrawerEvents(snapshot.events, snapshot.sectionErrors?.events, scope);
+            loadRelations(scope, snapshot);
+        })
         .catch((err) => {
-            if (isCurrentDrawerRequest(scope)) $('detail-meta').innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
+            if (!isCurrentDrawerRequest(scope)) return;
+            $('detail-meta').innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
+            renderDrawerEvents([], errMsg(err), scope);
         });
 
-    loadRelations(scope);
     if (ref.kind === 'Secret') loadSecretData(scope);
-
-    loadDrawerEvents(scope);
 }
 
 function loadDrawerEvents(scope = activeDrawerScope) {
@@ -2150,26 +2184,32 @@ function loadDrawerEvents(scope = activeDrawerScope) {
     empty.hidden = false;
     ListEvents(ref.kind, ref.namespace, ref.name)
         .then((events) => {
-            if (!isCurrentDrawerRequest(scope)) return;
-            const body = $('detail-events-body');
-            body.innerHTML = '';
-            empty.textContent = 'No events for this resource.';
-            empty.hidden = (events?.length ?? 0) > 0;
-            for (const e of events ?? []) {
-                const tr = document.createElement('tr');
-                const cls = e.isWarn ? 'ev-type-warn' : 'ev-type-normal';
-                const count = e.count > 1 ? ` (x${e.count})` : '';
-                tr.innerHTML = `<td class="${cls}">${esc(e.type)}</td><td>${esc(e.reason)}</td><td>${esc(e.age)}${count}</td><td>${esc(e.message)}</td>`;
-                body.appendChild(tr);
-            }
+            if (isCurrentDrawerRequest(scope)) renderDrawerEvents(events, '', scope);
         })
-        .catch((err) => {
-            if (!isCurrentDrawerRequest(scope)) return;
-            empty.className = 'empty-inline detail-events-unavailable';
-            empty.innerHTML = `<strong>Events unavailable</strong><span>${esc(errMsg(err))}</span><button type="button" class="btn btn-secondary btn-sm">Try again</button>`;
-            empty.hidden = false;
-            empty.querySelector('button').addEventListener('click', () => loadDrawerEvents(scope));
-        });
+        .catch((err) => { if (isCurrentDrawerRequest(scope)) renderDrawerEvents([], errMsg(err), scope); });
+}
+
+function renderDrawerEvents(events, error, scope) {
+    const body = $('detail-events-body');
+    const empty = $('detail-events-empty');
+    body.innerHTML = '';
+    if (error) {
+        empty.className = 'empty-inline detail-events-unavailable';
+        empty.innerHTML = `<strong>Events unavailable</strong><span>${esc(error)}</span><button type="button" class="btn btn-secondary btn-sm">Try again</button>`;
+        empty.hidden = false;
+        empty.querySelector('button').addEventListener('click', () => loadDrawerEvents(scope));
+        return;
+    }
+    empty.className = 'empty-inline';
+    empty.textContent = 'No events for this resource.';
+    empty.hidden = (events?.length ?? 0) > 0;
+    for (const e of events ?? []) {
+        const tr = document.createElement('tr');
+        const cls = e.isWarn ? 'ev-type-warn' : 'ev-type-normal';
+        const count = e.count > 1 ? ` (x${e.count})` : '';
+        tr.innerHTML = `<td class="${cls}">${esc(e.type)}</td><td>${esc(e.reason)}</td><td>${esc(e.age)}${count}</td><td>${esc(e.message)}</td>`;
+        body.appendChild(tr);
+    }
 }
 
 function renderDetailMeta(d) {
@@ -2197,38 +2237,35 @@ function detailRow(k, v) {
 }
 
 // Relations tree: Deployment→RS→Pod, Service→Pod, Ingress→Service→Pod.
-function loadRelations(scope) {
+function loadRelations(scope, snapshot = {}) {
     const ref = scope.ref;
     $('detail-relations').innerHTML = '';
-    if (ref.kind === 'Node') { loadNodePods(scope); return; }
-    if (ref.kind === 'Namespace') { loadNamespaceSummary(scope); return; }
-    const treeFn = ref.kind === 'Deployment' ? DeploymentTree
-        : ref.kind === 'Service' ? ServiceTree
-        : ref.kind === 'Ingress' ? IngressTree
-        : null;
-    if (!treeFn) return;
-    treeFn(ref.namespace, ref.name)
-        .then((tree) => {
-            if (!isCurrentDrawerRequest(scope)) return;
-            if (!tree) return;
-            const box = $('detail-relations');
-            box.innerHTML =
-                `<h4 class="detail-section-title">Relations</h4><div class="rel-tree">${relNodeHtml(tree, ref.namespace)}</div>`;
-            // Delegate clicks: navigate into the clicked child resource's drawer.
-            box.querySelectorAll('.rel-name[data-kind]').forEach((el) => {
-                el.addEventListener('click', () => {
-                    const kind = el.dataset.kind;
-                    if (kind === drawerRef?.kind && el.dataset.name === drawerRef?.name) return;
-                    openDrawer({
-                        kind,
-                        namespace: el.dataset.namespace || '',
-                        name: el.dataset.name,
-                        isPod: kind === 'Pod',
-                    });
-                });
+    if (ref.kind === 'Node') {
+        renderNodePods(snapshot.nodePods, scope, snapshot.sectionErrors?.nodePods);
+        return;
+    }
+    if (ref.kind === 'Namespace') {
+        renderNamespaceSummary(snapshot.namespaceInfo, scope, snapshot.sectionErrors?.namespaceInfo);
+        return;
+    }
+    const tree = snapshot.relation;
+    if (!tree) return;
+    const box = $('detail-relations');
+    box.innerHTML =
+        `<h4 class="detail-section-title">Relations</h4><div class="rel-tree">${relNodeHtml(tree, ref.namespace)}</div>`;
+    // Delegate clicks: navigate into the clicked child resource's drawer.
+    box.querySelectorAll('.rel-name[data-kind]').forEach((el) => {
+        el.addEventListener('click', () => {
+            const kind = el.dataset.kind;
+            if (kind === drawerRef?.kind && el.dataset.name === drawerRef?.name) return;
+            openDrawer({
+                kind,
+                namespace: el.dataset.namespace || '',
+                name: el.dataset.name,
+                isPod: kind === 'Pod',
             });
-        })
-        .catch(() => { /* best-effort */ });
+        });
+    });
 }
 
 function relNodeHtml(node, namespace) {
@@ -2249,53 +2286,43 @@ function relNodeHtml(node, namespace) {
 }
 
 // Node → Pods: what's scheduled on this node (grouped by namespace).
-function loadNodePods(scope) {
+function renderNodePods(pods, scope, error = '') {
     const ref = scope.ref;
     const box = $('detail-relations');
-    box.innerHTML = '<h4 class="detail-section-title">Pods on this node</h4><p class="empty-inline">Loading…</p>';
-    PodsOnNode(ref.name)
-        .then((pods) => {
-            if (!isCurrentDrawerRequest(scope)) return;
-            if (!pods || pods.length === 0) { box.innerHTML = '<h4 class="detail-section-title">Pods on this node</h4><p class="empty-inline">No pods scheduled here.</p>'; return; }
-            const rows = pods.map((p) =>
-                `<div class="node-pod-row${p.isError ? ' err' : ''}" data-ns="${esc(p.namespace)}" data-name="${esc(p.name)}">
-                    <span class="node-pod-name">${esc(p.name)}</span>
-                    <span class="chart-repo">${esc(p.namespace)}</span>
-                    <span class="node-pod-status">${badge(p.status, !p.isError)}</span>
-                </div>`).join('');
-            box.innerHTML = `<h4 class="detail-section-title">Pods on this node <span class="section-count">${pods.length}</span></h4><div class="node-pod-list">${rows}</div>`;
-            box.querySelectorAll('.node-pod-row').forEach((el) => {
-                el.addEventListener('click', () => openDrawer({ kind: 'Pod', namespace: el.dataset.ns, name: el.dataset.name, isPod: true }));
-            });
-        })
-        .catch((err) => { if (isCurrentDrawerRequest(scope)) box.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
+    if (error) { box.innerHTML = `<p class="error">${esc(error)}</p>`; return; }
+    if (!pods || pods.length === 0) { box.innerHTML = '<h4 class="detail-section-title">Pods on this node</h4><p class="empty-inline">No pods scheduled here.</p>'; return; }
+    const rows = pods.map((p) =>
+        `<div class="node-pod-row${p.isError ? ' err' : ''}" data-ns="${esc(p.namespace)}" data-name="${esc(p.name)}">
+            <span class="node-pod-name">${esc(p.name)}</span>
+            <span class="chart-repo">${esc(p.namespace)}</span>
+            <span class="node-pod-status">${badge(p.status, !p.isError)}</span>
+        </div>`).join('');
+    box.innerHTML = `<h4 class="detail-section-title">Pods on this node <span class="section-count">${pods.length}</span></h4><div class="node-pod-list">${rows}</div>`;
+    box.querySelectorAll('.node-pod-row').forEach((el) => {
+        el.addEventListener('click', () => openDrawer({ kind: 'Pod', namespace: el.dataset.ns, name: el.dataset.name, isPod: true }));
+    });
 }
 
 // Namespace → summary: per-kind counts, click a card to jump into that view scoped here.
-function loadNamespaceSummary(scope) {
+function renderNamespaceSummary(counts, scope, error = '') {
     const ref = scope.ref;
     const box = $('detail-relations');
-    box.innerHTML = '<h4 class="detail-section-title">Contents</h4><p class="empty-inline">Loading…</p>';
-    NamespaceSummary(ref.name)
-        .then((counts) => {
-            if (!isCurrentDrawerRequest(scope)) return;
-            if (!counts || counts.length === 0) { box.innerHTML = ''; return; }
-            const cards = counts.map((c) =>
-                `<button class="ns-sum-card${c.errors > 0 ? ' has-err' : ''}" data-view="${esc(c.view)}">
-                    <span class="ns-sum-num">${c.count}</span>
-                    <span class="ns-sum-kind">${esc(c.kind)}</span>
-                    ${c.errors > 0 ? `<span class="ns-sum-err">${c.errors} failing</span>` : ''}
-                </button>`).join('');
-            box.innerHTML = `<h4 class="detail-section-title">Contents</h4><div class="ns-sum-grid">${cards}</div>`;
-            box.querySelectorAll('.ns-sum-card').forEach((el) => {
-                el.addEventListener('click', () => {
-                    setNamespaceScope(ref.name);
-                    closeDrawer();
-                    selectView(el.dataset.view);
-                });
-            });
-        })
-        .catch((err) => { if (isCurrentDrawerRequest(scope)) box.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`; });
+    if (error) { box.innerHTML = `<p class="error">${esc(error)}</p>`; return; }
+    if (!counts || counts.length === 0) { box.innerHTML = ''; return; }
+    const cards = counts.map((c) =>
+        `<button class="ns-sum-card${c.errors > 0 ? ' has-err' : ''}" data-view="${esc(c.view)}">
+            <span class="ns-sum-num">${c.count}</span>
+            <span class="ns-sum-kind">${esc(c.kind)}</span>
+            ${c.errors > 0 ? `<span class="ns-sum-err">${c.errors} failing</span>` : ''}
+        </button>`).join('');
+    box.innerHTML = `<h4 class="detail-section-title">Contents</h4><div class="ns-sum-grid">${cards}</div>`;
+    box.querySelectorAll('.ns-sum-card').forEach((el) => {
+        el.addEventListener('click', () => {
+            setNamespaceScope(ref.name);
+            closeDrawer();
+            selectView(el.dataset.view);
+        });
+    });
 }
 
 // Point the namespace selector at a specific namespace and refresh scope/counts.
@@ -3065,10 +3092,31 @@ let execResizeObserver = null;
 let execInputEpoch = 0;
 let execWriter = () => Promise.resolve();
 let execHasOutput = false;
+let terminalRuntimePromise = null;
+let TerminalClass = null;
+let FitAddonClass = null;
 
-function ensureTerminal() {
+function loadTerminalRuntime() {
+    if (execTerminal) return Promise.resolve(execTerminal);
+    if (!terminalRuntimePromise) {
+        terminalRuntimePromise = Promise.all([
+            import('@xterm/xterm'),
+            import('@xterm/addon-fit'),
+        ]).then(([terminalModule, fitModule]) => {
+            TerminalClass = terminalModule.Terminal;
+            FitAddonClass = fitModule.FitAddon;
+            return createTerminal();
+        }).catch((err) => {
+            terminalRuntimePromise = null;
+            throw err;
+        });
+    }
+    return terminalRuntimePromise;
+}
+
+function createTerminal() {
     if (execTerminal) return execTerminal;
-    execTerminal = new Terminal({
+    execTerminal = new TerminalClass({
         allowProposedApi: false,
         convertEol: false,
         cursorBlink: true,
@@ -3085,11 +3133,28 @@ function ensureTerminal() {
             brightBlue: '#8fafd2', brightMagenta: '#c19acb', brightCyan: '#9ad3df', brightWhite: '#eceff4',
         },
     });
-    execFitAddon = new FitAddon();
+    execFitAddon = new FitAddonClass();
     execTerminal.loadAddon(execFitAddon);
     execTerminal.open($('term-surface'));
     execTerminal.onData((data) => {
         if (execConnected) execWriter(data);
+    });
+    execTerminal.onSelectionChange(() => {
+        $('btn-term-copy').disabled = !execTerminal?.hasSelection();
+    });
+    execTerminal.attachCustomKeyEventHandler((event) => {
+        if (event.type !== 'keydown') return true;
+        const key = event.key.toLowerCase();
+        const terminalShortcut = event.metaKey || (event.ctrlKey && event.shiftKey);
+        if (terminalShortcut && key === 'c' && execTerminal?.hasSelection()) {
+            copyTerminalSelection();
+            return false;
+        }
+        if (terminalShortcut && key === 'v') {
+            pasteTerminalClipboard();
+            return false;
+        }
+        return true;
     });
     execTerminal.onResize(({ cols, rows }) => {
         const size = validTerminalSize(cols, rows);
@@ -3099,7 +3164,57 @@ function ensureTerminal() {
         if (!$('dpanel-terminal').hidden) requestAnimationFrame(fitTerminal);
     });
     execResizeObserver.observe($('term-surface'));
+    $('term-surface').addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        if (execTerminal?.hasSelection()) copyTerminalSelection();
+        else pasteTerminalClipboard();
+    });
     return execTerminal;
+}
+
+function terminalButtonFeedback(button, label) {
+    const original = button.textContent;
+    button.textContent = label;
+    button.dataset.feedback = 'success';
+    window.setTimeout(() => {
+        if (!button.isConnected) return;
+        button.textContent = original;
+        delete button.dataset.feedback;
+    }, 1200);
+}
+
+function copyTerminalSelection() {
+    const selection = execTerminal?.getSelection() ?? '';
+    if (!selection) return Promise.resolve(false);
+    const button = $('btn-term-copy');
+    return Promise.resolve(CopyToClipboard(selection))
+        .then(() => {
+            terminalButtonFeedback(button, 'Copied');
+            execTerminal?.focus();
+            return true;
+        })
+        .catch((err) => {
+            setTerminalStatus('error', `Copy failed: ${errMsg(err)}`);
+            return false;
+        });
+}
+
+function pasteTerminalClipboard() {
+    if (!execConnected || !execTerminal) return Promise.resolve(false);
+    const sessionID = execSessionID;
+    const button = $('btn-term-paste');
+    return Promise.resolve(ClipboardGetText())
+        .then((text) => {
+            if (!execConnected || execSessionID !== sessionID || !text) return false;
+            execTerminal.paste(String(text));
+            execTerminal.focus();
+            terminalButtonFeedback(button, 'Pasted');
+            return true;
+        })
+        .catch((err) => {
+            if (execSessionID === sessionID) setTerminalStatus('error', `Paste failed: ${errMsg(err)}`);
+            return false;
+        });
 }
 
 function fitTerminal() {
@@ -3133,6 +3248,8 @@ function resetTerminalUI({ clear = false, preserveOutput = false } = {}) {
     $('btn-term-start').disabled = false;
     $('btn-term-start').textContent = 'Retry';
     $('btn-term-stop').hidden = true;
+    $('btn-term-copy').disabled = true;
+    $('btn-term-paste').disabled = true;
     $('term-container').disabled = false;
     $('term-shell').disabled = false;
     $('term-session-label').textContent = 'Not connected';
@@ -3148,16 +3265,21 @@ function resetTerminalUI({ clear = false, preserveOutput = false } = {}) {
 EventsOn('exec-output', (event) => {
     if (!execAcceptOutput || event?.sessionId !== execSessionID) return;
     execHasOutput = true;
-    ensureTerminal().write(String(event.data ?? ''));
+    loadTerminalRuntime().then((terminal) => {
+        if (execAcceptOutput && event?.sessionId === execSessionID) terminal.write(String(event.data ?? ''));
+    }).catch(() => {});
 });
 EventsOn('exec-closed', (event) => {
     if (!execAcceptOutput || event?.sessionId !== execSessionID) return;
     const msg = event.message ?? '';
     const suffix = msg ? `Session ended · ${msg}` : 'Session ended';
     execHasOutput = true;
-    ensureTerminal().write(`\r\n\x1b[90m[${suffix}]\x1b[0m\r\n`);
-    resetTerminalUI({ preserveOutput: true });
-    setTerminalStatus('', 'Session ended');
+    loadTerminalRuntime().then((terminal) => {
+        if (!execAcceptOutput || event?.sessionId !== execSessionID) return;
+        terminal.write(`\r\n\x1b[90m[${suffix}]\x1b[0m\r\n`);
+        resetTerminalUI({ preserveOutput: true });
+        setTerminalStatus('', 'Session ended');
+    }).catch(() => {});
 });
 
 function prepareTerminal(scope = activeDrawerScope) {
@@ -3170,8 +3292,8 @@ function prepareTerminal(scope = activeDrawerScope) {
     $('btn-term-start').textContent = 'Attaching…';
     setTerminalStatus('connecting', 'Discovering container…');
     setTerminalPlaceholder('Preparing Kubby Shell', 'Finding the container and best available shell…');
-    drawerPodContainers(scope)
-        .then((containers) => {
+    Promise.all([drawerPodContainers(scope), loadTerminalRuntime()])
+        .then(([containers]) => {
             if (!isCurrentDrawerRequest(scope)) return;
             for (const c of containers ?? []) {
                 const opt = document.createElement('option');
@@ -3195,13 +3317,23 @@ function prepareTerminal(scope = activeDrawerScope) {
         });
 }
 
-function startTerminal(scope = activeDrawerScope) {
+async function startTerminal(scope = activeDrawerScope) {
     if (!scope || !isCurrentDrawerRequest(scope) || !scope.ref.isPod) return;
+    let terminal;
+    try {
+        terminal = await loadTerminalRuntime();
+    } catch (err) {
+        if (isCurrentDrawerRequest(scope)) {
+            resetTerminalUI();
+            setTerminalStatus('error', `Terminal failed to load: ${errMsg(err)}`);
+        }
+        return;
+    }
+    if (!isCurrentDrawerRequest(scope)) return;
     const ref = scope.ref;
     const container = $('term-container').value;
     const shell = $('term-shell').value;
     if (!container) return;
-    const terminal = ensureTerminal();
     const size = fitTerminal() ?? { cols: 80, rows: 24 };
     const inputEpoch = ++execInputEpoch;
     const sessionID = `exec-${Date.now()}-${++execSessionSeq}`;
@@ -3234,6 +3366,7 @@ function startTerminal(scope = activeDrawerScope) {
             $('btn-term-start').textContent = 'Reconnect';
             $('btn-term-start').disabled = false;
             $('btn-term-stop').hidden = false;
+            $('btn-term-paste').disabled = false;
             $('term-container').disabled = false;
             $('term-shell').disabled = false;
             ExecResize(terminal.cols, terminal.rows);
@@ -3249,6 +3382,8 @@ function startTerminal(scope = activeDrawerScope) {
 
 $('btn-term-start').addEventListener('click', () => startTerminal());
 $('btn-term-stop').addEventListener('click', stopExec);
+$('btn-term-copy').addEventListener('click', copyTerminalSelection);
+$('btn-term-paste').addEventListener('click', pasteTerminalClipboard);
 $('btn-term-clear').addEventListener('click', () => execTerminal?.clear());
 $('term-container').addEventListener('change', () => startTerminal());
 $('term-shell').addEventListener('change', () => startTerminal());
@@ -4303,7 +4438,7 @@ function openRowMenu(btn, ref) {
     }
     // `need` is the verb the action requires — see the RBAC gating block above.
     // It is the verb the *API* wants, not the one the label suggests: a rolling
-    // restart is a patch, and scaling is an update of the scale subresource.
+    // restart is a patch, while scaling has its own deployments/scale probe.
     actions = [
         { label: 'Open details', need: 'get', run: () => openDrawer({ ...ref, tab: 'details' }) },
         { label: '⌁ Investigate', need: 'get', run: () => openDrawer({ ...ref, tab: 'investigate' }) },
@@ -4314,7 +4449,7 @@ function openRowMenu(btn, ref) {
         actions.push({ label: 'Terminal', need: 'exec', run: () => openDrawer({ ...ref, tab: 'terminal' }) });
     }
     if (ref.kind === 'Deployment') {
-        actions.push({ label: 'Scale…', need: 'update', run: () => scaleRef(ref) });
+        actions.push({ label: 'Scale…', need: 'scale', run: () => scaleRef(ref) });
         actions.push({ label: 'Restart', need: 'patch', run: () => restartRef(ref) });
         actions.push({ label: 'Rollout history…', need: 'get', run: () => openRolloutModal(ref) });
         actions.push({ label: 'Pause rollout', need: 'patch', run: () => pauseRef(ref, true) });
@@ -5117,6 +5252,8 @@ function openHelmUpgradeModal(ref) {
     const connectionID = $('cluster-select').value;
     let valuesEditor = null;
     let valuesLoading = true;
+    let valuesTouched = false;
+    let applyingLoadedValues = false;
     let approvedPreview = null;
     let okButton = null;
     let previewStatus = null;
@@ -5145,8 +5282,12 @@ function openHelmUpgradeModal(ref) {
             <pre id="helm-upg-diff" class="helm-content diff-view" hidden></pre>`,
         onOpen: () => {
             valuesEditor = mountModalEditor('helm-values', {
-                value: '# loading…',
-                onChange: () => { if (!valuesLoading) invalidatePreview('Values changed — preview again before upgrading.'); },
+                placeholder: 'Loading current release values…',
+                onChange: () => {
+                    if (applyingLoadedValues) return;
+                    valuesTouched = true;
+                    if (!valuesLoading) invalidatePreview('Values changed — preview again before upgrading.');
+                },
             });
         },
         onOk: () => {
@@ -5170,15 +5311,20 @@ function openHelmUpgradeModal(ref) {
     HelmGet(ref.namespace, ref.name)
         .then((d) => {
             if (!isCurrentModalRequest(scope)) return;
-            valuesEditor.setValue(d.values || '');
             valuesLoading = false;
-            invalidatePreview('Preview is required before Upgrade.');
+            if (valuesTouched) {
+                invalidatePreview('Current values finished loading; your draft was kept. Preview it before upgrading.');
+            } else {
+                applyingLoadedValues = true;
+                valuesEditor.setValue(d.values || '');
+                applyingLoadedValues = false;
+                invalidatePreview('Preview is required before Upgrade.');
+            }
             previewButton.disabled = false;
         })
         .catch((err) => {
             if (!isCurrentModalRequest(scope)) return;
             valuesLoading = false;
-            valuesEditor.setValue('');
             modalError(`Could not load current values: ${errMsg(err)}`, scope);
         });
 
@@ -5744,6 +5890,7 @@ let aiThreadKey = ''; // kind/ns/name the thread belongs to
 let aiBusy = false;
 let aiContext = null; // last-fetched AIContext for the chips / "what gets sent"
 let aiStatus = null;  // cached GetAIStatus() — keeps rendering synchronous
+const aiRequests = createKeyedRequestOwner();
 
 // Starter questions, tuned per kind — a blank prompt box is the main reason
 // people never use an assistant like this.
@@ -5785,7 +5932,7 @@ function aiKeyFor(ref, connectionID = $('cluster-select').value) {
 // different resource, so it is dropped rather than silently carried over.
 function resetAIPanel(ref) {
     const key = aiKeyFor(ref);
-    if (key === aiThreadKey) return;
+    if (!aiRequests.select(key)) return;
     aiThreadKey = key;
     aiThread = [];
     aiContext = null;
@@ -5938,7 +6085,7 @@ function sendAIQuestion(text) {
     if (!q || aiBusy || !drawerRef || !aiContext?.text) return;
 	const ref = drawerRef;
 	const key = aiKeyFor(ref);
-	const scope = activeDrawerScope;
+    const request = aiRequests.begin(key);
 
     aiThread.push({ role: 'user', content: q });
     aiBusy = true;
@@ -5949,20 +6096,23 @@ function sendAIQuestion(text) {
 
 	AskAboutResource(ref.kind, ref.namespace, ref.name, aiContext.text, aiThread)
 		.then((answer) => {
-			if (!isCurrentDrawerRequest(scope) || aiThreadKey !== key) return;
+            if (!aiRequests.isCurrent(request)) return;
             aiThread.push({ role: 'assistant', content: answer });
         })
         .catch((err) => {
-			if (!isCurrentDrawerRequest(scope) || aiThreadKey !== key) return;
+            if (!aiRequests.isCurrent(request)) return;
             aiThread.push({ role: 'assistant', content: `⚠️ **${errMsg(err)}**\n\nOpen the ⚙ button above to check the provider settings.` });
         })
         .finally(() => {
-            // The button is re-enabled even if the user moved on, otherwise the
-            // composer would stay dead on the resource they switched to.
-			if (!isCurrentDrawerRequest(scope) || aiThreadKey !== key) return;
-			$('btn-ai-send').disabled = !aiContext?.text;
+            // The thread, not a particular drawer opening, owns the request.
+            // Reopening the same resource must not leave its composer stuck;
+            // switching resources invalidates the keyed owner and discards this result.
+            if (!aiRequests.isCurrent(request)) return;
             aiBusy = false;
-            renderAIThread();
+            if (drawerRef && aiKeyFor(drawerRef) === key && !$('drawer').hidden) {
+                $('btn-ai-send').disabled = !aiContext?.text;
+                renderAIThread();
+            }
         });
 }
 
@@ -6027,10 +6177,13 @@ $('btn-settings').addEventListener('click', openSettingsModal);
 function openSettingsModal() {
     let configuredProvider = '';
     let hasStoredKey = false;
-    openModal({
+    let settingsDirty = false;
+    let scope;
+    scope = openModal({
         title: 'Settings',
         eyebrow: 'Application',
         description: 'Configure the AI assistant and review build diagnostics stored on this machine.',
+        ownerKey: modalOwner('settings'),
         okText: 'Save',
         bodyHtml: `<div class="modal-context-card"><div><span class="helm-kicker">AI assistant</span><strong>Your evidence, your provider</strong><p>Questions include the selected resource's events, recent logs and manifest. The API key stays in <code>%AppData%/kubby/ai.json</code> on this machine.</p></div><span class="chip">Local key storage</span></div>
             <div class="modal-section-title"><strong>Provider</strong><p>Choose where Kubby sends questions and resource evidence.</p></div>
@@ -6091,28 +6244,40 @@ function openSettingsModal() {
         ollama: 'Install Ollama and pull a model (e.g. `ollama pull llama3.1`). Default endpoint http://localhost:11434. No key, no data leaves this machine.',
     };
     const applyProviderUI = () => {
+        if (!isCurrentModalRequest(scope)) return;
         const p = $('ai-provider').value;
         $('ai-key-wrap').style.display = p === 'ollama' ? 'none' : '';
         $('ai-hint').textContent = hints[p] || '';
     };
     $('ai-provider').addEventListener('change', applyProviderUI);
+    for (const id of ['ai-provider', 'ai-model', 'ai-endpoint', 'ai-key', 'ai-language']) {
+        $(id).addEventListener(id === 'ai-provider' || id === 'ai-language' ? 'change' : 'input', () => {
+            settingsDirty = true;
+        });
+    }
 
     GetAIConfig().then((cfg) => {
+        if (!isCurrentModalRequest(scope)) return;
         configuredProvider = cfg.provider || '';
         hasStoredKey = !!cfg.hasApiKey;
-        $('ai-provider').value = cfg.provider || '';
-        $('ai-endpoint').value = cfg.endpoint || '';
-        $('ai-key').value = '';
+        if (!settingsDirty) {
+            $('ai-provider').value = cfg.provider || '';
+            $('ai-endpoint').value = cfg.endpoint || '';
+            $('ai-key').value = '';
+            $('ai-model').value = cfg.model || '';
+            $('ai-language').value = cfg.language || 'auto';
+        }
         $('ai-key').placeholder = hasStoredKey
             ? 'saved key is hidden — leave blank to keep it'
             : 'stored locally, never shown again';
-        $('ai-model').value = cfg.model || '';
-        $('ai-language').value = cfg.language || 'auto';
         applyProviderUI();
-    }).catch(() => applyProviderUI());
+    }).catch(() => { if (isCurrentModalRequest(scope)) applyProviderUI(); });
 
-    AppVersion().then((v) => { $('about-version').textContent = v; })
-        .catch(() => { $('about-version').textContent = 'unknown'; });
+    AppVersion().then((v) => {
+        if (isCurrentModalRequest(scope)) $('about-version').textContent = v;
+    }).catch(() => {
+        if (isCurrentModalRequest(scope)) $('about-version').textContent = 'unknown';
+    });
 
     $('btn-copy-diagnostics').addEventListener('click', () => {
         const btn = $('btn-copy-diagnostics');
@@ -6123,12 +6288,15 @@ function openSettingsModal() {
         Diagnostics(lastErrorSeen)
             .then((report) => CopyToClipboard(report))
             .then(() => {
+                if (!isCurrentModalRequest(scope)) return;
                 const flag = $('diag-copied');
                 flag.hidden = false;
-                setTimeout(() => { flag.hidden = true; }, 2500);
+                setTimeout(() => { if (flag.isConnected) flag.hidden = true; }, 2500);
             })
-            .catch((err) => showError(errMsg(err), 'Could not copy the diagnostics'))
-            .finally(() => { btn.disabled = false; });
+            .catch((err) => {
+                if (isCurrentModalRequest(scope)) showError(errMsg(err), 'Could not copy the diagnostics');
+            })
+            .finally(() => { if (isCurrentModalRequest(scope)) btn.disabled = false; });
     });
 }
 

@@ -19,7 +19,7 @@ import (
 //
 // Keep the `-dev` suffix on the checked-in value so an unreleased build is never
 // mistaken for a release.
-var Version = "0.2.0-dev"
+var Version = "0.3.0-dev"
 
 // Commit and Date are optional overrides for the same reason. When the source is
 // a git checkout, Go fills the equivalent information into the build info

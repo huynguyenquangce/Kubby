@@ -21,6 +21,18 @@ Each exposes `XxxInfo` + `ListXxx(ctx, client, ns)`. `XxxInfo` is a flat,
 display-shaped struct — the frontend renders it directly, so put formatting
 (`age`, "3/5 ready") in Go rather than in JS.
 
+`drawer.go` owns the one-call initial Details snapshot. `App` binds that call to
+the expected connection and an exactly cancellable drawer operation. It overlaps detail,
+Events, Deployment/Service/Ingress relations, and Node/Namespace expansion; only
+detail failure rejects the snapshot. Keep Secret data out of this payload because
+reveal is an explicit user action.
+
+Verify the same read-only snapshot against a cluster without the GUI:
+
+```bash
+go run ./cmd/kubby-cli drawer Pod <name> -n <namespace>
+```
+
 `IsError` on an `XxxInfo` is what drives the red row and the red dot on the
 sidebar badge. Only some kinds have it; see [performance.md](performance.md) for
 why that distinction matters to how they are counted.
@@ -48,10 +60,15 @@ group-qualified — see [kind-resolution.md](kind-resolution.md).
   they stay clickable. Also here: `NodeMetrics`, `TopPods`, `PodMetricsList`, all
   nil-safe because `Cluster.Metrics` may be absent.
 
-Pod status gives deletion precedence, counts init-container restarts, and only
-marks explicit init failures as errors; normal `Init:PodInitializing` remains a
-progress state. Owner joins compare UID when Kubernetes supplies it, and Job
-health follows true terminal conditions rather than historical retry counts.
+Pod status gives deletion precedence, counts init-container restarts, and uses a
+fixed failure precedence across every init/application container. Container
+ordering must never let a later `ContainerCreating` hide an earlier
+`CrashLoopBackOff`. Normal `Init:PodInitializing`/`ContainerCreating` remain
+progress states, while generic/unschedulable `Pending`, Running-but-not-ready,
+terminal failure and common image/start/OOM reasons enter the shared issue set
+used by lists, counts, search, Overview and topology. Owner joins compare UID
+when Kubernetes supplies it, and Job health follows true terminal conditions
+rather than historical retry counts.
 
 ## Exploration
 

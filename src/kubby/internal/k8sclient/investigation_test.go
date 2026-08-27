@@ -106,6 +106,38 @@ func TestInvestigationMarksReadyPodHealthy(t *testing.T) {
 	}
 }
 
+func TestInvestigationDoesNotVerifyRecoveryForNonHealthyPodPhases(t *testing.T) {
+	now := metav1.NewTime(time.Now().UTC().Add(-time.Minute))
+	tests := []struct {
+		name      string
+		status    corev1.PodStatus
+		wantState string
+		wantTitle string
+	}{
+		{name: "failed without retained evidence", status: corev1.PodStatus{Phase: corev1.PodFailed}, wantState: "critical", wantTitle: "Pod phase is Failed"},
+		{name: "evicted without retained evidence", status: corev1.PodStatus{Phase: corev1.PodFailed, Reason: "Evicted", Message: "node pressure"}, wantState: "critical", wantTitle: "Pod was evicted"},
+		{name: "pending without conditions", status: corev1.PodStatus{Phase: corev1.PodPending}, wantState: "warning", wantTitle: "Pod is Pending"},
+		{name: "unknown", status: corev1.PodStatus{Phase: corev1.PodUnknown}, wantState: "critical", wantTitle: "Pod state is Unknown"},
+		{name: "running without ready condition", status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "app", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}}, wantState: "warning", wantTitle: "Pod is running but not ready"},
+		{name: "successful finite workload", status: corev1.PodStatus{Phase: corev1.PodSucceeded}, wantState: "healthy"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "subject", Namespace: "demo", UID: "subject-uid", CreationTimestamp: now}, Status: tc.status}
+			report, err := InvestigateResource(context.Background(), &Cluster{Clientset: fake.NewSimpleClientset(pod)}, "Pod", "demo", "subject")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.State != tc.wantState {
+				t.Fatalf("state = %q, want %q; findings: %#v", report.State, tc.wantState, report.Findings)
+			}
+			if tc.wantTitle != "" && !hasFinding(report, tc.wantTitle) {
+				t.Fatalf("missing finding %q: %#v", tc.wantTitle, report.Findings)
+			}
+		})
+	}
+}
+
 func TestInvestigationMarkdownContainsBoundedEvidence(t *testing.T) {
 	report := &IncidentReport{
 		Kind: "Pod", Namespace: "demo", Name: "api", State: "critical", ObservedAt: "2026-08-21T00:00:00Z", Summary: "api was OOMKilled",

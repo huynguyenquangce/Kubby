@@ -10,8 +10,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func TestPodStatusHandlesInitAndTerminationWithoutFalseErrors(t *testing.T) {
+func TestPodStatusUsesStableFailurePrecedence(t *testing.T) {
 	deleting := metav1.NewTime(time.Now())
+	crashing := corev1.ContainerStatus{Name: "crashing", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}
+	creating := corev1.ContainerStatus{Name: "creating", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}
 	tests := []struct {
 		name      string
 		pod       corev1.Pod
@@ -21,6 +23,13 @@ func TestPodStatusHandlesInitAndTerminationWithoutFalseErrors(t *testing.T) {
 	}{
 		{name: "ordinary init wait", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodPending, InitContainerStatuses: []corev1.ContainerStatus{{RestartCount: 2, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}}}}}}, want: "Init:PodInitializing", restarts: 2},
 		{name: "failed init", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodPending, InitContainerStatuses: []corev1.ContainerStatus{{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}}}}, want: "Init:CrashLoopBackOff", wantError: true},
+		{name: "generic pending", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodPending}}, want: "Pending", wantError: true},
+		{name: "unschedulable", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: "Unschedulable"}}}}, want: "Unschedulable", wantError: true},
+		{name: "failure before progress", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{crashing, creating}}}, want: "CrashLoopBackOff", wantError: true},
+		{name: "failure after progress", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{creating, crashing}}}, want: "CrashLoopBackOff", wantError: true},
+		{name: "oom killed", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137}}}}}}, want: "OOMKilled", wantError: true},
+		{name: "running but not ready", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "app", Ready: false, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}}}, want: "NotReady", wantError: true},
+		{name: "completed", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodSucceeded, ContainerStatuses: []corev1.ContainerStatus{{Name: "job", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Completed", ExitCode: 0}}}}}}, want: "Succeeded"},
 		{name: "terminating wins", pod: corev1.Pod{ObjectMeta: metav1.ObjectMeta{DeletionTimestamp: &deleting}, Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}}}}, want: "Terminating"},
 	}
 	for _, tc := range tests {

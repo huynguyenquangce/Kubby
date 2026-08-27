@@ -1,6 +1,13 @@
 import { expect, test } from '@playwright/test';
 import { connectDashboard } from './wails-mock.js';
 
+test('Compact command bar visual baseline', async ({ page }) => {
+    await page.setViewportSize({ width: 500, height: 700 });
+    await connectDashboard(page);
+    await page.locator('#page-title').hover();
+    await expect(page.locator('.topbar')).toHaveScreenshot('command-bar-compact.png');
+});
+
 test('Overview light theme visual baseline', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await connectDashboard(page, { theme: 'light' });

@@ -6,6 +6,36 @@ Bug log — add one line per issue. Resolved items move to the bottom.
 
 ## Fixed
 
+- [2026-08-25] Permission gating and the Wails write surface could address a
+  different API request or cluster than the UI implied. Root causes: YAML Save
+  was enabled for patch-only tokens although it performs `Update`, Deployment
+  Scale probed the parent object instead of `deployments/scale`, legacy exported
+  active-cluster write methods remained bound beside the `*Owned` variants, and
+  Helm-owned methods treated an empty connection ID as permission to use the
+  active cluster. Fix: probe exact verbs/subresources, gate Save on update only,
+  remove legacy write bindings, and reject ownerless Helm writes in the backend.
+
+- [2026-08-25] Overview and Incident Studio could show a false healthy/recovered
+  state for Pending, Running-not-ready, Failed or Evicted Pods. Root causes: Pod
+  list status used the last container state encountered, the shared error set
+  omitted phase/readiness and common start/OOM failures, Overview's cluster
+  banner ignored Node readiness/pressure, and Incident recovery inferred health
+  from an empty finding list without a final Pod-phase guard. Fix: use a stable
+  cross-container failure precedence, add phase/readiness coverage to the shared
+  issue classifier, derive the banner from both Pod and Node health, and require
+  explicit healthy phase/Ready evidence before recovery can be verified.
+
+- [2026-08-21] Overview live mode and global search multiplied cluster-wide reads
+  on busy clusters, while table filtering repeatedly walked every row's DOM tree.
+  Root causes: each five-second Overview snapshot listed and sorted the complete
+  Event history to retain only 15 rows; every settled palette query rebuilt the
+  same metadata inventory with a separate per-call semaphore; and every filter
+  keystroke reread `textContent`. Fix: cache the bounded recent-Event result per
+  connection for 30 seconds, publish one coalesced metadata-only search index for
+  15 seconds, and cache normalized row text after the first filter pass. Action-
+  count tests pin one Event list across six live polls and one metadata fan-out
+  across sequential or concurrent searches.
+
 - [2026-08-21] Kubby looked polished in screenshots but remained difficult to read,
   navigate and operate without a mouse. The causes were systemic rather than one
   broken component: a duplicate 72 px rail and 258 px sidebar represented the same
@@ -525,3 +555,72 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   sole capacity owner. Root cause: the user-facing feature summary was not updated
   with the implementation, specification, and earlier defect record. Fix: describe
   the aggregate pulse and the operational node evidence the released UI now shows.
+- [2026-08-25] Late Wails responses could mutate a newer frontend surface or
+  overwrite input begun while data was loading. Root causes: drawer actions and
+  Incident export did not retain their launching scope; Welcome and Settings
+  loaders had no request generation or dirty-field guard; AI busy state belonged
+  to one drawer opening instead of its resource thread; and Helm Upgrade replaced
+  its editor unconditionally when current values arrived. Fix: exact
+  connection/drawer/modal/keyed ownership checks, monotonic Welcome generations,
+  dirty draft preservation, deferred-response tests, and a restored visible
+  keyboard focus ring for the cluster switcher.
+- [2026-08-25] Apply and remote chart acquisition crossed stronger trust
+  boundaries than their confirmations implied. Root causes: server-side apply
+  always used `Force: true`; Artifact Hub and Helm chart bodies could grow
+  without an application limit; redirects used the default policy; and fetch
+  errors could echo query-bearing URLs. Fix: non-forcing preview/write options,
+  shared limit-plus-one body reads with per-payload ceilings, validated HTTP(S)
+  targets, HTTPS downgrade refusal, per-hop credential scoping, and sanitized
+  chart-source error URLs.
+- [2026-08-25] The production entry chunk paid xterm's startup cost even when no
+  Terminal was opened. Root cause: Terminal and FitAddon were top-level imports
+  despite the drawer tab already being lazy. Fix: owner-aware dynamic imports
+  shared by preparation, output and resize paths; the initial JavaScript fell
+  from 910.88 kB (265.44 kB gzip) to 581.55 kB (182.88 kB gzip), with the
+  329.31 kB terminal runtime isolated behind the tab and pinned by Terminal E2E
+  plus its visual baseline.
+- [2026-08-25] Opening the Details tab crossed the Wails bridge separately for
+  metadata, Events and relationships, with additional Node/Namespace calls.
+  Root cause: each panel feature retained its original standalone binding after
+  the drawer became one screen. Fix: one connection-owned JSON
+  `GetDrawerSnapshotOwned` bridge call
+  with concurrent Go fan-out, required detail, best-effort section errors, and
+  Node/Namespace expansions; Secret reveal and other tabs remain deliberately
+  lazy. Unit, race and browser call-count tests pin the boundary.
+- [2026-08-25] Pull requests could pass CI without compiling or testing any Go,
+  and a direct Wails build resolved frontend dependency ranges with `npm install`.
+  Root cause: the only workflow was scoped to browser tests and the Wails install
+  hook predated the committed lockfile. Fix: CI now gates formatting, Go test,
+  build and vet before producing and checksumming a full Windows Wails artifact;
+  Wails uses `npm ci`, rejects stale generated bindings, and a test pins Windows
+  metadata to the shared source version.
+- [2026-08-27] An expanded Custom Resources section could reach the end of its
+  visible scrollbar while later kinds remained inaccessible. Root cause: the
+  generic accordion's 400 px animation cap and `overflow: hidden` clipped a
+  dynamic group that can contain up to 60 entries, outside the sidebar's actual
+  scroll owner. Fix: expanded custom entries contribute their full height to the
+  outer nav scroller, with an E2E case that reaches the last of 18 synthetic kinds.
+- [2026-08-27] The exec terminal transported pasted bytes but offered no reliable
+  WebView clipboard workflow. Root cause: xterm input was wired only to raw PTY
+  data and the UI relied on browser-native behavior whose clipboard permission is
+  not stable in Wails. Fix: explicit selection Copy and clipboard Paste controls,
+  standard terminal shortcuts, right-click behavior, Wails-owned clipboard access,
+  and an E2E assertion that pasted text reaches ordered `ExecWrite` input.
+- [2026-08-27] The sidebar brand looked like navigation but was inert, while the
+  resource-page freshness, write actions, search and count had equal visual weight.
+  Root cause: the brand was a plain `div` and every page action was an unrelated
+  flex peer. Fix: make the Kubby brand an accessible Overview button, group write
+  actions, present freshness as a status pill, and integrate the result count into
+  the responsive resource search control.
+- [2026-08-27] The global command trigger dominated the compact top bar and showed
+  a doubled blue treatment after mouse dismissal. Root causes: its visible label
+  repeated the full palette description and the same glow was applied to ordinary
+  mouse focus. Fix: a concise `Search Kubby…` trigger with a compact accent icon,
+  responsive shortcut disclosure, a full accessible name, and a single border
+  treatment reserved for `:focus-visible` keyboard navigation.
+- [2026-08-27] The Pod Terminal was clipped at the 683×384 and 781×438 CSS
+  viewports produced by 175–200% desktop zoom. Root cause: its 360 px minimum PTY
+  height ignored the drawer header, tabs, stacked controls, footer and padding,
+  while responsive checks only measured horizontal bounds. Fix: a low-height
+  Terminal layout that compacts nonessential chrome while preserving a usable PTY,
+  plus two-axis E2E bounds and xterm-size checks across the zoom matrix.

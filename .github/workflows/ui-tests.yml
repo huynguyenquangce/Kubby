@@ -1,4 +1,4 @@
-name: UI tests
+name: Quality gates
 
 on:
   push:
@@ -8,7 +8,40 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/kubby
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: src/kubby/go.sum
+      - name: Check formatting
+        shell: bash
+        run: |
+          files="$(gofmt -l *.go internal/k8sclient/*.go internal/buildinfo/*.go cmd/kubby-cli/*.go)"
+          if [ -n "$files" ]; then
+            echo "The following Go files need gofmt:"
+            echo "$files"
+            exit 1
+          fi
+      - name: Run backend tests
+        run: go test ./...
+      - name: Build backend and CLI
+        run: go build ./...
+      - name: Run Go vet
+        run: go vet ./...
+
   playwright:
     runs-on: ubuntu-latest
     defaults:
@@ -43,3 +76,43 @@ jobs:
             src/kubby/frontend/test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  windows-build:
+    needs: [backend, playwright]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/kubby
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: src/kubby/go.sum
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/kubby/frontend/package-lock.json
+      - name: Build complete Windows application
+        run: go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build -platform windows/amd64 -trimpath
+      - name: Reject stale generated bindings
+        run: git diff --exit-code -- frontend/wailsjs/go/main
+      - name: Verify and checksum Windows artifact
+        shell: bash
+        run: |
+          file build/bin/kubby.exe | grep -Eq 'PE32\+.*x86-64'
+          sha256sum build/bin/kubby.exe > build/bin/kubby.exe.sha256
+          sha256sum -c build/bin/kubby.exe.sha256
+      - name: Upload CI Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubby-windows-amd64-ci-${{ github.sha }}
+          path: |
+            src/kubby/build/bin/kubby.exe
+            src/kubby/build/bin/kubby.exe.sha256
+          if-no-files-found: error
+          retention-days: 7

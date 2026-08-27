@@ -36,7 +36,9 @@ works for custom resources too.
    patch), the dynamic client otherwise.
 2. `app.go` — a thin `*Owned` bound method after
    `a.requireExpectedCluster(connectionID)`; the expected identity is part of the
-   write contract, not only a frontend guard.
+   write contract, not only a frontend guard. Do not retain a second exported
+   active-cluster write method: every exported `App` method becomes callable from
+   the WebView, even when normal UI code does not import its generated wrapper.
 3. `main.js` — a button in the drawer or an entry in `wireRowActions`, wrapped in
    `showConfirm()`, then `refreshCurrentView()` afterwards so the table reflects it.
 4. `cmd/kubby-cli` — a command, so it can be verified without the GUI.

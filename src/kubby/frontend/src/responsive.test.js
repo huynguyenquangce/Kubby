@@ -34,6 +34,12 @@ test('create and import remain contextual page actions at narrow widths', () => 
     assert.doesNotMatch(responsiveCSS, /#btn-(?:create|import)\s*\{[^}]*display:\s*none/);
 });
 
+test('compact command palette trigger keeps its label while shedding only the shortcut', () => {
+    assert.match(indexHTML, /class="command-search-label">Search Kubby…<\/span>/);
+    assert.match(responsiveCSS, /@media \(max-width: 620px\)[\s\S]*?\.command-search-label\s*\{[\s\S]*?display:\s*block/);
+    assert.match(responsiveCSS, /@media \(max-width: 420px\)[\s\S]*?\.command-search kbd\s*\{[\s\S]*?display:\s*none/);
+});
+
 test('component breakpoints use the remaining workspace width', () => {
     assert.match(responsiveCSS, /container-name:\s*workspace/);
     assert.match(responsiveCSS, /container-type:\s*inline-size/);
@@ -53,6 +59,13 @@ test('small overlays stay within the viewport and preserve reduced motion', () =
     assert.match(responsiveCSS, /@media \(prefers-reduced-motion: reduce\)/);
     assert.match(responsiveCSS, /@media \(max-width: 620px\)[\s\S]*?\.modal-form-grid\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
     assert.match(responsiveCSS, /@media \(max-width: 420px\)[\s\S]*?\.modal-foot-actions \.btn/);
+});
+
+test('low-height zoom keeps the terminal workspace inside its drawer', () => {
+    assert.match(responsiveCSS, /@media \(max-height: 560px\)/);
+    assert.match(responsiveCSS, /@media \(max-height: 560px\)[\s\S]*?#dpanel-terminal\s*\{[\s\S]*?overflow:\s*hidden/);
+    assert.match(responsiveCSS, /@media \(max-height: 560px\)[\s\S]*?\.term-frame\s*\{[\s\S]*?min-height:\s*120px/);
+    assert.match(responsiveCSS, /@media \(max-height: 560px\)[\s\S]*?\.term-toolbar-copy\s*\{[\s\S]*?display:\s*none/);
 });
 
 test('Helm workspace stacks summaries, forms, and action rows at narrow widths', () => {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,6 +17,7 @@ const (
 	overviewConcurrency  = 6
 	overviewTopPods      = 8
 	overviewRecentEvents = 15
+	overviewEventsTTL    = 30 * time.Second
 )
 
 var (
@@ -70,7 +72,7 @@ func OverviewSnapshot(ctx context.Context, c *Cluster) (*OverviewData, error) {
 	var (
 		nodes       *corev1.NodeList
 		pods        *corev1.PodList
-		events      *corev1.EventList
+		events      []EventInfo
 		namespaces  *metav1.PartialObjectMetadataList
 		deployments *metav1.PartialObjectMetadataList
 		nodeUsage   *metricsv1beta1.NodeMetricsList
@@ -93,10 +95,8 @@ func OverviewSnapshot(ctx context.Context, c *Cluster) (*OverviewData, error) {
 			return err
 		}},
 		{name: "events", run: func() error {
-			list, err := c.Clientset.CoreV1().Events("").List(ctx, metav1.ListOptions{})
-			if err == nil {
-				events = list
-			}
+			var err error
+			events, err = overviewRecentEventInfos(ctx, c)
 			return err
 		}},
 	}
@@ -172,10 +172,37 @@ func OverviewSnapshot(ctx context.Context, c *Cluster) (*OverviewData, error) {
 	if podUsage != nil {
 		result.TopPods = topLivePodMetrics(podUsage.Items, pods, overviewTopPods)
 	}
-	if events != nil {
-		result.Events = recentEventInfos(events.Items, overviewRecentEvents)
-	}
+	result.Events = events
 	return result, nil
+}
+
+// overviewRecentEventInfos keeps Event refresh deliberately slower than the
+// rest of Overview. Kubernetes does not support asking its core Event list for
+// "the newest 15" server-side, so an uncached poll transfers and sorts the whole
+// cluster history. The cache stores only the bounded, display-ready result.
+// Holding the per-connection mutex during refresh also coalesces concurrent
+// callers; a failed/cancelled list is never cached.
+func overviewRecentEventInfos(ctx context.Context, c *Cluster) ([]EventInfo, error) {
+	c.overviewEventsMu.Lock()
+	defer c.overviewEventsMu.Unlock()
+
+	if time.Now().Before(c.overviewEventsExpires) {
+		return cloneEventInfos(c.overviewEvents), nil
+	}
+	list, err := c.Clientset.CoreV1().Events("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	events := recentEventInfos(list.Items, overviewRecentEvents)
+	c.overviewEvents = cloneEventInfos(events)
+	c.overviewEventsExpires = time.Now().Add(overviewEventsTTL)
+	return events, nil
+}
+
+func cloneEventInfos(events []EventInfo) []EventInfo {
+	out := make([]EventInfo, len(events))
+	copy(out, events)
+	return out
 }
 
 func overviewNodeStatuses(nodes []corev1.Node, pods *corev1.PodList) []OverviewNodeStatus {

@@ -116,6 +116,65 @@ func TestOverviewSnapshotKeepsPartialDataWhenPodsOrMetricsFail(t *testing.T) {
 	}
 }
 
+func TestOverviewSnapshotIncludesPendingAndNotReadyPodsInAttention(t *testing.T) {
+	client := kubefake.NewSimpleClientset(
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "unscheduled", Namespace: "default"},
+			Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{{
+				Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: "Unschedulable",
+			}}},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "not-ready", Namespace: "default"},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{
+				Type: corev1.PodReady, Status: corev1.ConditionFalse,
+			}}, ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "app", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+			}}},
+		},
+	)
+	snapshot, err := OverviewSnapshot(context.Background(), &Cluster{Clientset: client, Meta: newOverviewMetadataClient()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Stats.Errors != 2 || len(snapshot.FailingPods) != 2 {
+		t.Fatalf("attention = %#v, stats = %#v", snapshot.FailingPods, snapshot.Stats)
+	}
+	got := map[string]string{}
+	for _, pod := range snapshot.FailingPods {
+		got[pod.Name] = pod.Status
+	}
+	if got["unscheduled"] != "Unschedulable" || got["not-ready"] != "NotReady" {
+		t.Fatalf("attention statuses = %#v", got)
+	}
+}
+
+func TestOverviewSnapshotCachesRecentEventsAcrossLivePolls(t *testing.T) {
+	client := kubefake.NewSimpleClientset(&corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Name: "recent", Namespace: "default"},
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Name: "api"},
+		LastTimestamp:  metav1.Now(),
+	})
+	cluster := &Cluster{Clientset: client, Meta: newOverviewMetadataClient()}
+
+	for i := 0; i < 6; i++ {
+		snapshot, err := OverviewSnapshot(context.Background(), cluster)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snapshot.Events) != 1 || snapshot.Events[0].Object != "Pod/api" {
+			t.Fatalf("poll %d events = %#v", i, snapshot.Events)
+		}
+	}
+	assertOneList(t, client.Actions(), "events")
+
+	cluster.overviewEventsExpires = time.Now().Add(-time.Second)
+	if _, err := OverviewSnapshot(context.Background(), cluster); err != nil {
+		t.Fatal(err)
+	}
+	assertListCount(t, client.Actions(), "events", 2)
+}
+
 func TestOverviewNodeStatusesExposeSchedulingPressureAndIgnoreTerminatingPods(t *testing.T) {
 	deleting := metav1.NewTime(time.Now())
 	nodes := []corev1.Node{{
@@ -164,6 +223,35 @@ func BenchmarkOverviewSnapshot10kPods(b *testing.B) {
 	}
 }
 
+func BenchmarkOverviewRecentEvents50kCached(b *testing.B) {
+	events := &corev1.EventList{Items: make([]corev1.Event, 50_000)}
+	for i := range events.Items {
+		events.Items[i] = corev1.Event{
+			ObjectMeta:     metav1.ObjectMeta{Name: fmt.Sprintf("event-%05d", i), Namespace: "load"},
+			InvolvedObject: corev1.ObjectReference{Kind: "Pod", Name: fmt.Sprintf("pod-%05d", i)},
+			LastTimestamp:  metav1.NewTime(time.Unix(int64(i), 0)),
+		}
+	}
+	client := kubefake.NewSimpleClientset()
+	client.PrependReactor("list", "events", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, events, nil
+	})
+	cluster := &Cluster{Clientset: client}
+	if _, err := overviewRecentEventInfos(context.Background(), cluster); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := overviewRecentEventInfos(context.Background(), cluster); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(countListActions(client.Actions(), "events")), "event-lists")
+}
+
 func newOverviewMetadataClient(objects ...runtime.Object) *metadatafake.FakeMetadataClient {
 	scheme := metadatafake.NewTestScheme()
 	metav1.AddMetaToScheme(scheme)
@@ -209,6 +297,10 @@ func podMetric(namespace, name, cpu string) *metricsv1beta1.PodMetrics {
 }
 
 func assertOneList(t *testing.T, actions []clienttesting.Action, resourceName string) {
+	assertListCount(t, actions, resourceName, 1)
+}
+
+func assertListCount(t *testing.T, actions []clienttesting.Action, resourceName string, want int) {
 	t.Helper()
 	count := 0
 	for _, action := range actions {
@@ -216,7 +308,17 @@ func assertOneList(t *testing.T, actions []clienttesting.Action, resourceName st
 			count++
 		}
 	}
-	if count != 1 {
-		t.Fatalf("%s list calls = %d, want 1", resourceName, count)
+	if count != want {
+		t.Fatalf("%s list calls = %d, want %d", resourceName, count, want)
 	}
+}
+
+func countListActions(actions []clienttesting.Action, resourceName string) int {
+	count := 0
+	for _, action := range actions {
+		if action.GetVerb() == "list" && action.GetResource().Resource == resourceName {
+			count++
+		}
+	}
+	return count
 }

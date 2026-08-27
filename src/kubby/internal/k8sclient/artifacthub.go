@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+const (
+	maxArtifactHubSearchResponse = 2 << 20
+	maxArtifactHubDetailResponse = 8 << 20
+)
+
 // ChartSearchResult is one chart returned from an Artifact Hub search.
 type ChartSearchResult struct {
 	Name        string   `json:"name"`
@@ -59,7 +64,7 @@ func SearchCharts(ctx context.Context, query string) ([]ChartSearchResult, error
 			} `json:"repository"`
 		} `json:"packages"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := decodeArtifactHubResponse(resp, maxArtifactHubSearchResponse, &payload); err != nil {
 		return nil, err
 	}
 
@@ -145,7 +150,7 @@ func ChartDetails(ctx context.Context, repoName, chartName string) (*ChartDetail
 			Version string `json:"version"`
 		} `json:"available_versions"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+	if err := decodeArtifactHubResponse(resp, maxArtifactHubDetailResponse, &p); err != nil {
 		return nil, err
 	}
 
@@ -166,4 +171,15 @@ func ChartDetails(ctx context.Context, repoName, chartName string) (*ChartDetail
 		d.Versions = append(d.Versions, v.Version)
 	}
 	return d, nil
+}
+
+func decodeArtifactHubResponse(resp *http.Response, maxBytes int64, target any) error {
+	data, err := readBoundedBody(resp.Body, resp.ContentLength, maxBytes, "Artifact Hub")
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, target); err != nil {
+		return fmt.Errorf("decode Artifact Hub response: %w", err)
+	}
+	return nil
 }

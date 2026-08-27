@@ -52,6 +52,21 @@ type Cluster struct {
 	// and the apiserver remains the real enforcer either way.
 	accessMu sync.Mutex
 	access   map[string]*AccessSet
+
+	// Overview shows only a small recent Event window, while Kubernetes Event
+	// lists can be very large on busy clusters. Cache the already-trimmed result
+	// per connection so the five-second live refresh does not relist and resort
+	// the complete cluster history every time. See overview.go.
+	overviewEventsMu      sync.Mutex
+	overviewEvents        []EventInfo
+	overviewEventsExpires time.Time
+
+	// Global search builds a metadata-only name index. The mutex deliberately
+	// covers refresh: concurrent/superseded palette queries share one fan-out
+	// instead of each starting another set of cluster-wide lists. See explore.go.
+	searchMu           sync.Mutex
+	searchIndex        []searchIndexGroup
+	searchIndexExpires time.Time
 }
 
 // New builds a Cluster from a kubeconfig file path + chosen context.

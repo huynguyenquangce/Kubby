@@ -1,9 +1,14 @@
 package k8sclient
 
 import (
+	"context"
 	"testing"
 
+	authv1 "k8s.io/api/authorization/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes/fake"
+	clienttesting "k8s.io/client-go/testing"
 )
 
 func gvr(group, version, resource string) schema.GroupVersionResource {
@@ -70,9 +75,39 @@ func TestPodProbesCoverTheSubresources(t *testing.T) {
 	}
 }
 
-func TestNonPodKindsGetNoSubresourceProbes(t *testing.T) {
+func TestDeploymentProbeCoversScaleSubresource(t *testing.T) {
+	probes := probesFor(APIKind{GVR: gvr("apps", "v1", "deployments")})
+	for _, probe := range probes {
+		if probe.key == "scale" {
+			if probe.verb != "update" || probe.subresource != "scale" {
+				t.Fatalf("scale probe = verb %q subresource %q", probe.verb, probe.subresource)
+			}
+			return
+		}
+	}
+	t.Fatal("Deployment probes do not include deployments/scale")
+}
+
+func TestCanIAddressesTheExactSubresource(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	var got authv1.ResourceAttributes
+	client.PrependReactor("create", "selfsubjectaccessreviews", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		review := action.(clienttesting.CreateAction).GetObject().(*authv1.SelfSubjectAccessReview)
+		got = *review.Spec.ResourceAttributes
+		return true, &authv1.SelfSubjectAccessReview{Status: authv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+	})
+	allowed, err := (&Cluster{Clientset: client}).canI(context.Background(), "apps", "deployments", "scale", "update", "team-a")
+	if err != nil || !allowed {
+		t.Fatalf("canI = %v, %v", allowed, err)
+	}
+	want := authv1.ResourceAttributes{Namespace: "team-a", Group: "apps", Resource: "deployments", Subresource: "scale", Verb: "update"}
+	if got != want {
+		t.Fatalf("resource attributes = %#v, want %#v", got, want)
+	}
+}
+
+func TestKindsWithoutSpecialActionsGetNoSubresourceProbes(t *testing.T) {
 	for _, ak := range []APIKind{
-		{GVR: gvr("apps", "v1", "deployments")},
 		{GVR: gvr("networking.istio.io", "v1beta1", "virtualservices")},
 		// Same resource name, different group — must not be mistaken for core pods.
 		{GVR: gvr("metrics.k8s.io", "v1beta1", "pods")},

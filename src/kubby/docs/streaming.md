@@ -60,6 +60,13 @@ input/output rather than browser form events. `@xterm/addon-fit` measures the
 visible drawer panel and `ExecResize` feeds its columns/rows to client-go's
 `TerminalSizeQueue`.
 
+Selection copy uses the existing `App.CopyToClipboard` bridge, and paste reads
+through Wails `ClipboardGetText`; neither depends on the WebView granting page
+clipboard permission. The chrome exposes Copy/Paste buttons, xterm handles
+Ctrl/Cmd+Shift+C and Ctrl/Cmd+Shift+V, and right-click copies an active selection
+or pastes when nothing is selected. Plain Ctrl+C remains remote PTY input so it
+continues to interrupt the container process.
+
 xterm only transports the keys. The selected shell owns line editing: Bash/Zsh
 normally interpret Tab and arrow sequences, while a minimal `/bin/sh` may insert a
 tab or print `^[[A`. Hidden paths also require their leading dot (`.a<Tab>`), just
@@ -131,6 +138,8 @@ held.
 
 The GUI check that actually proves exec interactivity: open a Pod's Terminal tab
 and confirm it attaches without a Connect click, type part of an existing path
-and press Tab, use Up to recall the command, then run a
+and press Tab, use Up to recall the command, select and copy output, paste a
+multi-line command through both the button and Ctrl/Cmd+Shift+V, send plain Ctrl+C,
+then run a
 cursor-addressing program such as `top` and resize the drawer/window. A headless
 bundle check cannot prove those WebView/PTY behaviours.

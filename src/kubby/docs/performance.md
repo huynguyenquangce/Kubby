@@ -44,7 +44,11 @@ Overview follows it too: one `OverviewSnapshot()` bound call fans out under a
 fixed semaphore, lists full Nodes and Pods once, and reuses those objects for
 counts, failing Pods, capacity, operational Node status and metrics joins. Namespace and Deployment counts
 are metadata-only. A failed section becomes a warning and does not blank the
-other cards. The 5-second live refresh updates the current screen; expensive
+other cards. The 15 newest Events are cached per connection for 30 seconds:
+Kubernetes cannot return "the newest 15" server-side, so listing and sorting the
+entire Event history on every 5-second poll made busy clusters pay for thousands
+of objects to render fifteen rows. Failed Event reads are not cached. The
+5-second live refresh updates the current screen; expensive
 sidebar tallies have their own 30-second live TTL (manual refresh, writes and
 namespace/cluster changes still refresh immediately).
 
@@ -57,6 +61,14 @@ Cluster structure follows the same rule: one bound call concurrently lists
 Services, Pods, Ingresses, ReplicaSets and metadata-only Nodes/Namespaces, then
 joins selectors and owner chains in memory. It must never list per Service or per
 workload. The existing traffic join is shared so topology semantics cannot drift.
+
+The resource Details tab follows it as well. One `GetDrawerSnapshotOwned` call
+concurrently gathers required detail, best-effort Events, supported relationship
+trees, and the Node/Namespace expansion. Secret values remain a separate explicit
+reveal. The App bridge returns the snapshot as JSON so Wails does not generate and
+reorder a large transitive model graph. Closing or replacing the drawer cancels
+that operation by its exact owner ID; a canceled response cannot render into a
+later drawer.
 
 Traffic also starts Services, Pods, Ingresses and EndpointSlices concurrently.
 Its in-memory Service→Pod join first narrows candidates through an exact
@@ -84,7 +96,12 @@ The split in `counts.go` is explicit:
 `SearchResources` goes further: *everything* is a metadata list, and the error flag
 for the handful of matched Pods is resolved afterwards with targeted `Get`s
 (`markFailingPods`). That keeps the red highlight without listing every Pod in the
-cluster.
+cluster. Its metadata-only name index lives for 15 seconds per connection. The
+mutex covers a cold refresh deliberately: overlapping or superseded palette
+queries share one bounded fan-out instead of multiplying it. Warm queries perform
+no Kubernetes lists; they only scan cached names and resolve the few matching Pod
+statuses. The short TTL bounds staleness for newly created/deleted resources and
+newly installed CRDs.
 
 ## Rule 4 — do not refetch what cannot have changed
 
@@ -124,6 +141,7 @@ both the throttle and the payload scale with it.
 | Global search | 10 kinds, sequential, full objects, throttled | ~40 kinds incl. CRDs, concurrent, metadata-only |
 | Overview bridge calls | 7 independent calls | **1** `OverviewSnapshot` call |
 | Overview processing, synthetic 10,000 Pods | unmeasured | **33 ms/op**, 54.6 MB/op (fake-client benchmark, 3 runs) |
+| Initial production JS (before opening Terminal) | **910.88 kB / 265.44 kB gzip** | **581.55 kB / 182.88 kB gzip**; xterm is a 329.31 kB on-demand chunk |
 
 The 2026-08-14 performance audit additionally measured warmed kind counts at a
 24 ms median, Overview at 20.8 ms/op and 24.30 MB/op for 10,000 synthetic Pods,
@@ -134,6 +152,12 @@ on the same Ryzen 5 5600H development machine. Its output is 100,000 rendered
 endpoint rows, so allocation volume is dominated by the result payload rather
 than selector scanning. Against the pre-index 345.8 ms audit case, selector-join
 latency is about 3.8× lower at the median.
+
+The 2026-08-21 cache pass measured a warm name search over 10,000 metadata
+objects at 225 µs/op, 96 B/op and 2 allocs/op, with zero Kubernetes lists after
+the 23-list cold built-in index. A cached Overview Event read after initially
+reducing 50,000 Events to the newest 15 measured 440 ns/op and 1.5 kB/op; the
+action-count test pins exactly one Event list across six five-second live polls.
 
 Reproduce with the CLI:
 
@@ -152,12 +176,12 @@ Not yet addressed — worth knowing before blaming something else:
 - **Every list is unbounded.** No `Limit`, no `continue`. A production cluster
   with thousands of pods transfers all of them.
 - **One `<tr>` per object in the DOM**, each with event listeners.
-- **`filterCurrentTable` runs on every keystroke** and reads `tr.textContent` for
-  every row — quadratic-feeling on a large table. Caching the search text in a
-  `dataset` attribute at render time and debouncing the input are the cheap fixes;
-  server-side `Limit` or virtualised rendering is the real one.
-- **Editor and terminal modules are eager.** The production JavaScript bundle
-  measured 888,022 bytes (258,860 gzip); an isolated CodeMirror build accounted
-  for 402,666 bytes (131,682 gzip). Lazy-loading editors/terminal would improve
-  startup, but needs a separate UI lifecycle change and native WebView smoke
-  coverage rather than a mechanical import rewrite.
+- **`filterCurrentTable` still scans every row on every keystroke.** Normalized
+  row text is cached in `dataset.searchText` after the first pass, so it no longer
+  walks every descendant repeatedly; server-side `Limit` or virtualised rendering
+  remains the real fix for very large tables.
+- **CodeMirror remains eager** because the Welcome screen immediately needs the
+  shared editor for pasted kubeconfig content. The terminal runtime is lazy: its
+  dynamic xterm/FitAddon chunks load only when a Terminal tab opens, and the
+  drawer scope is rechecked after loading. Splitting CodeMirror needs a separate
+  Welcome lifecycle change and native WebView smoke coverage.

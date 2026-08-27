@@ -49,6 +49,12 @@ type App struct {
 	helmMu             sync.Mutex
 	helmOps            map[uint64]context.CancelFunc
 	helmSeq            uint64
+	drawerReadMu       sync.Mutex
+	drawerReads        map[string]*drawerRead
+}
+
+type drawerRead struct {
+	cancel context.CancelFunc
 }
 
 type portForwardStarter func(context.Context, *k8sclient.Cluster, string, string, string, int, int) (*k8sclient.PortForwardSession, <-chan struct{}, <-chan error, error)
@@ -71,6 +77,7 @@ func NewApp() *App {
 		execStarter:        k8sclient.StartExec,
 		recentPath:         recentFilePath,
 		helmOps:            map[uint64]context.CancelFunc{},
+		drawerReads:        map[string]*drawerRead{},
 	}
 }
 
@@ -79,6 +86,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(context.Context) {
+	a.cancelAllDrawerSnapshots()
 	a.cancelHelmOperations()
 	a.StopLogStream()
 	a.StopExec()
@@ -167,6 +175,7 @@ func (a *App) storeVerifiedCluster(name string, cluster *k8sclient.Cluster) *clu
 	a.StopExec()
 	a.stopAllPortForwards()
 	a.cancelHelmOperations()
+	a.cancelAllDrawerSnapshots()
 
 	a.stateMu.Lock()
 	a.connectionSeq++
@@ -232,6 +241,7 @@ func (a *App) SwitchCluster(id string) error {
 	a.StopExec()
 	a.stopAllPortForwards()
 	a.cancelHelmOperations()
+	a.cancelAllDrawerSnapshots()
 	a.stateMu.Lock()
 	a.activeID = id
 	a.connectionEpoch++
@@ -258,6 +268,7 @@ func (a *App) DisconnectCluster(id string) string {
 		a.StopExec()
 		a.stopAllPortForwards()
 		a.cancelHelmOperations()
+		a.cancelAllDrawerSnapshots()
 	}
 
 	a.stateMu.Lock()
@@ -394,6 +405,75 @@ func (a *App) GetDetail(kind, namespace, name string) (*k8sclient.ResourceDetail
 	return k8sclient.GetDetail(a.ctx, cluster, kind, namespace, name)
 }
 
+// GetDrawerSnapshotOwned returns the initial Details-tab evidence behind one
+// bridge call; the backend overlaps independent Kubernetes reads. Both the
+// connection and operation ID bind the response to the drawer that requested it.
+func (a *App) GetDrawerSnapshotOwned(expectedConnectionID, operationID, kind, namespace, name string) (string, error) {
+	cluster, err := a.requireExpectedCluster(expectedConnectionID)
+	if err != nil {
+		return "", err
+	}
+	ctx, done, err := a.beginDrawerSnapshot(operationID)
+	if err != nil {
+		return "", err
+	}
+	defer done()
+	snapshot, err := k8sclient.GetDrawerSnapshot(ctx, cluster, kind, namespace, name)
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(snapshot)
+	return string(payload), err
+}
+
+func (a *App) beginDrawerSnapshot(operationID string) (context.Context, func(), error) {
+	if strings.TrimSpace(operationID) == "" {
+		return nil, nil, fmt.Errorf("drawer snapshot operation ID is required")
+	}
+	ctx, cancel := context.WithCancel(a.ctx)
+	read := &drawerRead{cancel: cancel}
+	a.drawerReadMu.Lock()
+	if _, exists := a.drawerReads[operationID]; exists {
+		a.drawerReadMu.Unlock()
+		cancel()
+		return nil, nil, fmt.Errorf("drawer snapshot operation %q is already running", operationID)
+	}
+	a.drawerReads[operationID] = read
+	a.drawerReadMu.Unlock()
+	done := func() {
+		a.drawerReadMu.Lock()
+		if a.drawerReads[operationID] == read {
+			delete(a.drawerReads, operationID)
+		}
+		a.drawerReadMu.Unlock()
+		cancel()
+	}
+	return ctx, done, nil
+}
+
+func (a *App) CancelDrawerSnapshot(operationID string) {
+	a.drawerReadMu.Lock()
+	read := a.drawerReads[operationID]
+	delete(a.drawerReads, operationID)
+	a.drawerReadMu.Unlock()
+	if read != nil {
+		read.cancel()
+	}
+}
+
+func (a *App) cancelAllDrawerSnapshots() {
+	a.drawerReadMu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(a.drawerReads))
+	for operationID, read := range a.drawerReads {
+		cancels = append(cancels, read.cancel)
+		delete(a.drawerReads, operationID)
+	}
+	a.drawerReadMu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+}
+
 // ListEvents returns events involving a specific resource (like kubectl describe).
 func (a *App) ListEvents(kind, namespace, name string) ([]k8sclient.EventInfo, error) {
 	cluster, err := a.requireCluster()
@@ -401,15 +481,6 @@ func (a *App) ListEvents(kind, namespace, name string) ([]k8sclient.EventInfo, e
 		return nil, err
 	}
 	return k8sclient.ListEvents(a.ctx, cluster, kind, namespace, name)
-}
-
-// DeleteResource deletes a resource by kind/namespace/name.
-func (a *App) DeleteResource(kind, namespace, name string) error {
-	cluster, err := a.requireCluster()
-	if err != nil {
-		return err
-	}
-	return k8sclient.DeleteResource(a.ctx, cluster, kind, namespace, name)
 }
 
 func (a *App) DeleteResourceOwned(expectedConnectionID, kind, namespace, name string) error {
@@ -422,28 +493,12 @@ func (a *App) DeleteResourceOwned(expectedConnectionID, kind, namespace, name st
 
 // ---- Feature 1: deployment actions ----
 
-func (a *App) ScaleDeployment(namespace, name string, replicas int) error {
-	cluster, err := a.requireCluster()
-	if err != nil {
-		return err
-	}
-	return k8sclient.ScaleDeployment(a.ctx, cluster, namespace, name, int32(replicas))
-}
-
 func (a *App) ScaleDeploymentOwned(expectedConnectionID, namespace, name string, replicas int) error {
 	cluster, err := a.requireExpectedCluster(expectedConnectionID)
 	if err != nil {
 		return err
 	}
 	return k8sclient.ScaleDeployment(a.ctx, cluster, namespace, name, int32(replicas))
-}
-
-func (a *App) RestartDeployment(namespace, name string) error {
-	cluster, err := a.requireCluster()
-	if err != nil {
-		return err
-	}
-	return k8sclient.RestartDeployment(a.ctx, cluster, namespace, name, time.Now().UTC().Format(time.RFC3339Nano))
 }
 
 func (a *App) RestartDeploymentOwned(expectedConnectionID, namespace, name string) error {
@@ -454,14 +509,6 @@ func (a *App) RestartDeploymentOwned(expectedConnectionID, namespace, name strin
 	return k8sclient.RestartDeployment(a.ctx, cluster, namespace, name, time.Now().UTC().Format(time.RFC3339Nano))
 }
 
-func (a *App) RestartStatefulSet(namespace, name string) error {
-	cluster, err := a.requireCluster()
-	if err != nil {
-		return err
-	}
-	return k8sclient.RestartStatefulSet(a.ctx, cluster, namespace, name, time.Now().UTC().Format(time.RFC3339Nano))
-}
-
 func (a *App) RestartStatefulSetOwned(expectedConnectionID, namespace, name string) error {
 	cluster, err := a.requireExpectedCluster(expectedConnectionID)
 	if err != nil {
@@ -470,28 +517,12 @@ func (a *App) RestartStatefulSetOwned(expectedConnectionID, namespace, name stri
 	return k8sclient.RestartStatefulSet(a.ctx, cluster, namespace, name, time.Now().UTC().Format(time.RFC3339Nano))
 }
 
-func (a *App) RestartDaemonSet(namespace, name string) error {
-	cluster, err := a.requireCluster()
-	if err != nil {
-		return err
-	}
-	return k8sclient.RestartDaemonSet(a.ctx, cluster, namespace, name, time.Now().UTC().Format(time.RFC3339Nano))
-}
-
 func (a *App) RestartDaemonSetOwned(expectedConnectionID, namespace, name string) error {
 	cluster, err := a.requireExpectedCluster(expectedConnectionID)
 	if err != nil {
 		return err
 	}
 	return k8sclient.RestartDaemonSet(a.ctx, cluster, namespace, name, time.Now().UTC().Format(time.RFC3339Nano))
-}
-
-func (a *App) SetDeploymentPaused(namespace, name string, paused bool) error {
-	cluster, err := a.requireCluster()
-	if err != nil {
-		return err
-	}
-	return k8sclient.SetDeploymentPaused(a.ctx, cluster, namespace, name, paused)
 }
 
 func (a *App) SetDeploymentPausedOwned(expectedConnectionID, namespace, name string, paused bool) error {
@@ -510,14 +541,6 @@ func (a *App) RolloutHistory(namespace, name string) ([]k8sclient.RolloutRevisio
 	return k8sclient.RolloutHistory(a.ctx, cluster, namespace, name)
 }
 
-func (a *App) RollbackDeployment(namespace, name string, revision int64) error {
-	cluster, err := a.requireCluster()
-	if err != nil {
-		return err
-	}
-	return k8sclient.RollbackDeployment(a.ctx, cluster, namespace, name, revision)
-}
-
 func (a *App) RollbackDeploymentOwned(expectedConnectionID, namespace, name string, revision int64) error {
 	cluster, err := a.requireExpectedCluster(expectedConnectionID)
 	if err != nil {
@@ -528,28 +551,12 @@ func (a *App) RollbackDeploymentOwned(expectedConnectionID, namespace, name stri
 
 // ---- Node actions ----
 
-func (a *App) SetNodeSchedulable(name string, schedulable bool) error {
-	cluster, err := a.requireCluster()
-	if err != nil {
-		return err
-	}
-	return k8sclient.SetNodeSchedulable(a.ctx, cluster, name, schedulable)
-}
-
 func (a *App) SetNodeSchedulableOwned(expectedConnectionID, name string, schedulable bool) error {
 	cluster, err := a.requireExpectedCluster(expectedConnectionID)
 	if err != nil {
 		return err
 	}
 	return k8sclient.SetNodeSchedulable(a.ctx, cluster, name, schedulable)
-}
-
-func (a *App) DrainNode(name string) error {
-	cluster, err := a.requireCluster()
-	if err != nil {
-		return err
-	}
-	return k8sclient.DrainNode(a.ctx, cluster, name)
 }
 
 func (a *App) DrainNodeOwned(expectedConnectionID, name string) error {
@@ -561,14 +568,6 @@ func (a *App) DrainNodeOwned(expectedConnectionID, name string) error {
 }
 
 // ---- CronJob run-now ----
-
-func (a *App) RunCronJobNow(namespace, name string) error {
-	cluster, err := a.requireCluster()
-	if err != nil {
-		return err
-	}
-	return k8sclient.RunCronJobNow(a.ctx, cluster, namespace, name)
-}
 
 func (a *App) RunCronJobNowOwned(expectedConnectionID, namespace, name string) error {
 	cluster, err := a.requireExpectedCluster(expectedConnectionID)
@@ -736,6 +735,16 @@ func (a *App) beginHelmOperation(expectedConnectionID string) (context.Context, 
 	}, nil
 }
 
+// beginOwnedHelmOperation is the write-side entry point. Unlike read snapshots,
+// a Helm mutation must never fall back to whichever cluster happens to be active
+// when a delayed renderer call arrives.
+func (a *App) beginOwnedHelmOperation(expectedConnectionID string) (context.Context, *k8sclient.Cluster, func(), error) {
+	if expectedConnectionID == "" {
+		return nil, nil, nil, fmt.Errorf("the expected connection ID is required for a Helm write")
+	}
+	return a.beginHelmOperation(expectedConnectionID)
+}
+
 func (a *App) cancelHelmOperations() {
 	a.helmMu.Lock()
 	operations := a.helmOps
@@ -770,44 +779,32 @@ func (a *App) HelmHistory(namespace, name string) ([]k8sclient.HelmRevision, err
 	defer done()
 	return k8sclient.HelmHistory(ctx, cluster, namespace, name)
 }
-func (a *App) HelmRollback(namespace, name string, revision int) error {
-	return a.HelmRollbackOwned("", namespace, name, revision)
-}
 func (a *App) HelmRollbackOwned(expectedConnectionID, namespace, name string, revision int) error {
-	ctx, cluster, done, err := a.beginHelmOperation(expectedConnectionID)
+	ctx, cluster, done, err := a.beginOwnedHelmOperation(expectedConnectionID)
 	if err != nil {
 		return err
 	}
 	defer done()
 	return k8sclient.HelmRollback(ctx, cluster, namespace, name, revision)
 }
-func (a *App) HelmUninstall(namespace, name string) error {
-	return a.HelmUninstallOwned("", namespace, name)
-}
 func (a *App) HelmUninstallOwned(expectedConnectionID, namespace, name string) error {
-	ctx, cluster, done, err := a.beginHelmOperation(expectedConnectionID)
+	ctx, cluster, done, err := a.beginOwnedHelmOperation(expectedConnectionID)
 	if err != nil {
 		return err
 	}
 	defer done()
 	return k8sclient.HelmUninstall(ctx, cluster, namespace, name)
 }
-func (a *App) HelmUpgradeValues(namespace, name, valuesYAML string, expectedRevision int, expectedValuesDigest string) error {
-	return a.HelmUpgradeValuesOwned("", namespace, name, valuesYAML, expectedRevision, expectedValuesDigest)
-}
 func (a *App) HelmUpgradeValuesOwned(expectedConnectionID, namespace, name, valuesYAML string, expectedRevision int, expectedValuesDigest string) error {
-	ctx, cluster, done, err := a.beginHelmOperation(expectedConnectionID)
+	ctx, cluster, done, err := a.beginOwnedHelmOperation(expectedConnectionID)
 	if err != nil {
 		return err
 	}
 	defer done()
 	return k8sclient.HelmUpgradeValues(ctx, cluster, namespace, name, valuesYAML, expectedRevision, expectedValuesDigest)
 }
-func (a *App) HelmInstall(namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML, expectedDigest string) error {
-	return a.HelmInstallOwned("", namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML, expectedDigest)
-}
 func (a *App) HelmInstallOwned(expectedConnectionID, namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML, expectedDigest string) error {
-	ctx, cluster, done, err := a.beginHelmOperation(expectedConnectionID)
+	ctx, cluster, done, err := a.beginOwnedHelmOperation(expectedConnectionID)
 	if err != nil {
 		return err
 	}
@@ -857,11 +854,8 @@ func (a *App) HelmReleaseResources(namespace, name string) ([]k8sclient.HelmReso
 	defer done()
 	return k8sclient.HelmReleaseResources(ctx, cluster, namespace, name)
 }
-func (a *App) HelmTest(namespace, name string) (string, error) {
-	return a.HelmTestOwned("", namespace, name)
-}
 func (a *App) HelmTestOwned(expectedConnectionID, namespace, name string) (string, error) {
-	ctx, cluster, done, err := a.beginHelmOperation(expectedConnectionID)
+	ctx, cluster, done, err := a.beginOwnedHelmOperation(expectedConnectionID)
 	if err != nil {
 		return "", err
 	}

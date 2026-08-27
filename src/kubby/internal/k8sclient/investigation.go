@@ -197,9 +197,48 @@ func investigatePod(ctx context.Context, c *Cluster, namespace, name string) (*I
 	if serviceErr == nil {
 		addPodServiceEvidence(report, pod, services, slices, sliceErr == nil)
 	}
+	// Phase-level evidence is the final safety net. Conditions, Events and
+	// container statuses can be absent after eviction or termination, but a
+	// non-healthy phase must never be interpreted as verified recovery.
+	addPodPhaseEvidence(report, pod)
 	finalizeIncident(report)
 	report.Actions = incidentPodActions(report, pod)
 	return report, nil
+}
+
+func addPodPhaseEvidence(report *IncidentReport, pod *corev1.Pod) {
+	if pod.DeletionTimestamp != nil {
+		return // addPodConditionEvidence already records termination
+	}
+	evidence := compactEvidence("phase: "+string(pod.Status.Phase), "reason: "+pod.Status.Reason, pod.Status.Message)
+	appendFinding := func(id, severity, title, explanation string) {
+		report.Findings = append(report.Findings, IncidentFinding{
+			ID: id, Severity: severity, Title: title, Explanation: explanation,
+			Confidence: "high", Evidence: evidence,
+		})
+	}
+	switch pod.Status.Phase {
+	case corev1.PodFailed:
+		title := "Pod phase is Failed"
+		if pod.Status.Reason == "Evicted" {
+			title = "Pod was evicted"
+		} else if pod.Status.Reason != "" {
+			title = "Pod failed: " + pod.Status.Reason
+		}
+		appendFinding("pod-phase-failed", "critical", title, "Kubernetes reports this Pod as terminally failed; it cannot count as recovered without a new healthy Pod.")
+	case corev1.PodPending:
+		appendFinding("pod-phase-pending", "warning", "Pod is Pending", "The Pod has not reached a running, ready state yet.")
+	case corev1.PodUnknown:
+		appendFinding("pod-phase-unknown", "critical", "Pod state is Unknown", "Kubernetes cannot currently determine the Pod state, so recovery cannot be verified.")
+	case corev1.PodRunning:
+		if !podIsReady(pod) {
+			appendFinding("pod-phase-not-ready", "warning", "Pod is running but not ready", "The process may be running, but Kubernetes has not admitted this Pod to ready serving endpoints.")
+		}
+	case corev1.PodSucceeded:
+		// A successful terminal Pod is healthy for finite Job-style workloads.
+	default:
+		appendFinding("pod-phase-unreported", "warning", "Pod phase is not reported", "Kubernetes has not supplied enough state to verify recovery yet.")
+	}
 }
 
 func newIncidentReport(kind, namespace, name string) *IncidentReport {

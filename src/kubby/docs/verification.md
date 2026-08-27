@@ -20,32 +20,41 @@ cd ..
 | `ai_test.go` | write-only provider keys, hosted endpoint transport rules, loopback-only Ollama, redirect refusal, and exact reviewed evidence in the resource prompt |
 | `internal/k8sclient/ai_test.go` | Secret/env/free-text credential redaction before AI preview or transmission |
 | `internal/k8sclient/client_safety_test.go` | the selected kubeconfig context rejects executable, file-backed, and proxy credential paths before transport creation |
-| `internal/k8sclient/apply_test.go` | missing-`---` detection, document splitting, diff-noise stripping, the pending-namespace explanation |
+| `internal/k8sclient/apply_test.go` | missing-`---` detection, document splitting, shared metadata stripping, non-forcing managed-field semantics, and pending-namespace preview explanation |
 | `internal/k8sclient/access_test.go` | **unknown permission == allowed**, explicit deny respected, pod subresources probed separately |
 | `internal/k8sclient/rightsizing_test.go` | unset never rendered as zero, threshold floors, severity order, quota parsing, advice grammar, and partial-metrics suppression |
 | `internal/k8sclient/detail_test.go` | YAML Save cannot change kind, namespace, name, or cluster-scoped identity |
 | `internal/k8sclient/portforward_test.go` | concurrent/repeated tunnel close is idempotent; Service resolution follows ready non-terminating EndpointSlices with PodReady fallback |
 | `internal/k8sclient/actions_test.go` | partial drain failures and server-generated unique CronJob runs |
-| `internal/k8sclient/resources_status_test.go` | init/terminating Pod status, terminal Job conditions, and UID-qualified ownership |
+| `internal/k8sclient/resources_status_test.go` | order-independent Pod failure precedence, Pending/readiness/init/terminating states, terminal Job conditions, and UID-qualified ownership |
 | `internal/k8sclient/netflow_test.go` | EndpointSlice readiness remains authoritative over Pod condition guesses |
 | `app_portforward_test.go` | global tunnel registry preserves target metadata, lists deterministically, invalidates pending starts, and synchronizes List/Stop |
 | `app_connection_test.go` | duplicate context names retain stable independent IDs; registry switching is race-safe; pending exec shell discovery/port-forward/Helm work cannot survive cluster transitions; stale write ownership is rejected |
+| `app_binding_test.go` | exported cluster-write bindings expose only connection-owned variants; Helm writes reject a missing owner ID |
+| `app_drawer_test.go` | drawer snapshot cancellation owns one exact operation and stale cleanup cannot release a replacement |
+| `release_identity_test.go` | Windows file metadata version remains aligned with the shared checked-in build identity |
 | `recent_test.go` | concurrent recent updates remain valid, capped and private |
-| `frontend/src/request-scope.test.js` | late view/drawer/modal responses cannot overwrite a newer owner; stale Helm/chart values cannot cross modal or version boundaries |
-| `frontend/src/markup.test.js` | one Helm workspace owns Releases/Catalog/Repositories; exact-preview ownership; shared modal hierarchy, focus contract, and aligned repository form |
+| `frontend/src/request-scope.test.js` | late view/drawer/modal responses cannot overwrite a newer owner; stale destructive completions cannot close a newer drawer; stale Helm/chart values cannot cross modal or version boundaries |
+| `frontend/src/keyed-request.test.js` | same-resource remount preserves an AI request owner while a newer request/resource invalidates stale work |
+| `frontend/src/markup.test.js` | one Helm workspace owns Releases/Catalog/Repositories; exact-preview ownership; shared modal hierarchy/focus contract; late loader ownership; lazy xterm imports; and cluster-switch keyboard focus |
 | `frontend/src/port-forward-state.test.js` | hydration/upsert, closed-event removal, drawer-close policy, and late Start ownership |
 | `frontend/src/terminal-io.test.js` | raw input ordering, write-error recovery, and valid PTY dimensions |
 | `frontend/src/log-buffer.test.js` | 5,000-line cap, frame coalescing, incremental append and oldest-chunk trimming |
 | `frontend/src/line-diff.test.js` | diff reconstruction, pathological fallback, and 10,000-line regression budget |
-| `frontend/src/responsive.test.js` | canonical off-canvas navigation, reachable contextual page actions, workspace container breakpoints, viewport-bounded overlays, and single-column modal forms/actions |
-| `frontend/e2e/ui.spec.js` | paste/connect workflow, every built-in view, responsive/zoom matrix, mobile navigation ownership, Structure filtering, Incident Studio evidence/export/safe hand-off, Pod drawer/YAML, Terminal auto-attach/reconnect/error behavior, mobile Settings layout, and Helm detail/install/repository/destructive-dialog modal behavior |
-| `frontend/e2e/visual.spec.js` | stable Chromium baselines for light/dark Overview, Cluster Structure, Incident Studio, and the Pod Terminal; failures retain screenshot, video, and trace evidence |
+| `frontend/src/responsive.test.js` | canonical off-canvas navigation, reachable contextual page actions, workspace container breakpoints, viewport-bounded overlays, low-height Terminal compaction, and single-column modal forms/actions |
+| `frontend/e2e/ui.spec.js` | paste/connect workflow, every built-in view, two-axis responsive/zoom matrix, 60-kind Custom Resources navigation, content-owned table scrolling, mobile navigation ownership, Structure filtering, Incident Studio evidence/export/safe hand-off, Pod drawer/YAML with exact snapshot cancellation, stale-delete isolation, Terminal behavior, Settings draft ownership, and Helm detail/install/late-values/repository/destructive-dialog behavior |
+| `frontend/e2e/visual.spec.js` | stable Chromium baselines for the compact command bar, light/dark Overview, Cluster Structure, Incident Studio, and the Pod Terminal; failures retain screenshot, video, and trace evidence |
 | `internal/k8sclient/exec_test.go` | Bash-first shell selection/fallback/error reporting, initial/coalesced terminal resize, and concurrent unblocking queue close |
 | `internal/k8sclient/logstream_test.go` | rate-limited full batches, quiet-stream timer flush, final flush and cancel semantics |
-| `internal/k8sclient/overview_test.go` | one Node/Pod list, partial failures, terminating-Pod exclusion, and 10k benchmark |
+| `internal/k8sclient/overview_test.go` | one Node/Pod list, 30-second recent-Event reuse, partial failures, terminating-Pod exclusion, and 10k benchmark |
+| `internal/k8sclient/explore_test.go` | global-search metadata index reuse and concurrent cold-refresh coalescing |
+| `internal/k8sclient/investigation_test.go` | Pod phase recovery guard, failure/owner/EndpointSlice evidence, safe next actions, and bounded export |
 | `internal/k8sclient/structure_test.go` | complete entry/internal/unexposed topology, ReplicaSet→Deployment collapse, unhealthy propagation, terminating-Pod exclusion, and one list per kind |
 | `internal/k8sclient/helmreleases_test.go` | metadata-only Helm storage listing, newest-revision deduplication, terminating-release exclusion, and pending status classification |
 | `internal/k8sclient/helm_test.go` | chart-source setup, pinned preview digests, PodReady/termination health, and request-context cancellation |
+| `internal/k8sclient/httpbody_test.go`, `artifacthub_test.go` | exact response-size ceilings, chunked overflow, and bounded Artifact Hub decoding |
+| `internal/k8sclient/drawer_test.go` | one concurrent Details snapshot carries required detail plus best-effort Events/relationship expansions without duplicate API actions |
+| `internal/k8sclient/custom_integration_test.go` | fake discovery and dynamic clients prove group-qualified CRDs flow from sidebar discovery through namespaced listing/status |
 
 None of them need a cluster. The Playwright suite needs its pinned Chromium and
 Linux system libraries installed as described in `docs/BUILD.md`. Everything else is still verified through
@@ -72,9 +81,10 @@ probing in `internal/k8sclient/diagnostics.go`).
   because Wails cross-builds or source archives may omit those stamps; the sole
   command and checklist live in [`docs/BUILD.md`](../../../docs/BUILD.md).
 - `wails.json` carries the `info` block (`productVersion`, `companyName`,
-  `copyright`), which fills the Windows exe's file-properties metadata. Its
-  numeric `productVersion` must match the release version passed through ldflags;
-  nothing enforces that equality automatically.
+  `copyright`), which fills the Windows exe's file-properties metadata.
+  `release_identity_test.go` enforces that its numeric `productVersion` matches
+  the checked-in `buildinfo.Version` after the required `-dev` suffix is removed;
+  release ldflags must use that same numeric version.
 
 > **Treat diagnostics as user-reviewed data.** It reads AI provider and model
 > from `GetAIStatus()`, which does not return the configured key, and the
@@ -106,6 +116,7 @@ go run ./cmd/kubby-cli ns-summary <namespace>
 go run ./cmd/kubby-cli search <query>
 go run ./cmd/kubby-cli counts [-n <ns>] [--cluster=false]     # timed — the perf path
 go run ./cmd/kubby-cli overview                               # timed single-call dashboard snapshot
+go run ./cmd/kubby-cli drawer <Kind[.group]> <name> -n <ns>  # one Details/Events/relationship snapshot
 go run ./cmd/kubby-cli investigate Pod <name> -n <ns>        # deterministic incident report; read-only
 go run ./cmd/kubby-cli structure [-n <ns>]                   # full debug topology snapshot
 go run ./cmd/kubby-cli custom-kinds
@@ -196,7 +207,10 @@ must reach its own API server, and disconnecting one must leave the other usable
 Interactive terminal manual check: open a Pod's Terminal tab and verify it attaches
 without a Connect click, prefers Bash when the image provides it, and reports the
 fallback shell truthfully otherwise. Type a partial path or command and press
-**Tab**, use **Up** for history, send **Ctrl+C**,
+**Tab**, use **Up** for history, select output and copy it through the button and
+Ctrl/Cmd+Shift+C, paste a multi-line command through the button and
+Ctrl/Cmd+Shift+V, verify right-click copies a selection or pastes with no selection,
+then send plain **Ctrl+C** to the remote process,
 then run `top` (or another cursor-addressing program) and resize the window. Input,
 ANSI output, cursor placement, and the remote program's dimensions must all remain
 correct. This cannot be claimed from the Node tests or a headless Wails build.
@@ -311,15 +325,17 @@ VirtualService manifests.
 The highest-value missing piece is **actual tests**. The code has a lot of pure
 logic that needs no cluster:
 
-Still untested: `openAIBaseURL`, `splitKindGroup`, `titleFor`, `isFullyReady`,
-`readyCondition`, `destinationService` (Istio host parsing).
+Still untested: `openAIBaseURL`, `isFullyReady`, and `destinationService`
+(Istio host parsing). The custom-resource integration test now exercises
+`splitKindGroup`, `titleFor`, and `readyCondition` through their public workflow.
 (`checkMissingSeparator` and `splitYAMLDocuments` are now covered.)
 
 Frontend request ownership is covered by the built-in Node test runner. Still
 untested: `documentStarts` and `parseApplyFailures` in `editor.js`, and
 `collapseDiff` in `main.js`.
 
-And above that, `k8s.io/client-go/kubernetes/fake` + `dynamic/fake` +
-`metadata/fake` would let `SidebarCounts`, `NetworkTopology`, `istioFlows` and
-`ApplyYAML` be tested against synthetic clusters — including the cases that
-currently require hand-building CRDs on a kind cluster.
+`k8s.io/client-go/kubernetes/fake` + `dynamic/fake` + `metadata/fake` now cover
+the first end-to-end custom-resource discovery/listing path. Extending that
+synthetic-cluster layer to `SidebarCounts`, `NetworkTopology`, `istioFlows` and
+`ApplyYAML` would cover cases that still require hand-building CRDs on a kind
+cluster.

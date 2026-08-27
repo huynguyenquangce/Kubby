@@ -16,26 +16,42 @@ const zoomMatrix = [
 ];
 
 async function expectViewportBounded(page) {
-    const overflow = await page.evaluate(() => {
-        const result = [];
-        const root = document.documentElement;
-        if (root.scrollWidth > window.innerWidth + 1) {
-            result.push(`document ${root.scrollWidth} > viewport ${window.innerWidth}`);
-        }
-        for (const selector of ['#dashboard', '.main', '.topbar', '.page-heading', '#content']) {
-            const element = document.querySelector(selector);
-            if (!element || element.hidden) continue;
-            const rect = element.getBoundingClientRect();
-            if (rect.left < -1 || rect.right > window.innerWidth + 1) {
-                result.push(`${selector} [${rect.left}, ${rect.right}] outside ${window.innerWidth}`);
+    await expect.poll(() => page.evaluate(() => {
+            const result = [];
+            const root = document.documentElement;
+            if (root.scrollWidth > window.innerWidth + 1) {
+                result.push(`document ${root.scrollWidth} > viewport ${window.innerWidth}`);
             }
-        }
-        return result;
-    });
-    expect(overflow).toEqual([]);
+            const selectors = [
+                '#dashboard', '.main', '.topbar', '.topbar-primary', '.topbar-actions',
+                '#btn-command-palette', '.page-heading', '.page-heading-actions',
+                '.page-write-actions', '#view-search', '#content', '#drawer', '#modal',
+                '.term-toolbar', '.term-frame', '.modal-foot',
+            ];
+            const verticallyOwned = new Set([
+                '#drawer', '#modal', '.term-toolbar', '.term-frame', '.term-footer', '.modal-foot',
+            ]);
+            for (const selector of selectors) {
+                for (const element of document.querySelectorAll(selector)) {
+                    const rect = element.getBoundingClientRect();
+                    if (element.hidden || (rect.width === 0 && rect.height === 0)) continue;
+                    if (rect.left < -1 || rect.right > window.innerWidth + 1) {
+                        result.push(`${selector} [${rect.left}, ${rect.right}] outside ${window.innerWidth}`);
+                    }
+                    if (verticallyOwned.has(selector) && (rect.top < -1 || rect.bottom > window.innerHeight + 1)) {
+                        result.push(`${selector} [${rect.top}, ${rect.bottom}] outside ${window.innerHeight}`);
+                    }
+                }
+            }
+            return result;
+        }), { timeout: 2_500 }).toEqual([]);
 }
 
 async function openNavView(page, target) {
+    const mobileToggle = page.locator('#btn-mobile-nav');
+    if (await mobileToggle.isVisible() && await mobileToggle.getAttribute('aria-expanded') === 'false') {
+        await mobileToggle.click();
+    }
     const navItem = page.locator(`.nav-item[data-view="${target}"]`);
     const section = navItem.locator('xpath=ancestor::div[contains(@class,"nav-section")]');
     if (await section.evaluate((element) => element.classList.contains('collapsed'))) {
@@ -43,6 +59,30 @@ async function openNavView(page, target) {
     }
     await navItem.click();
 }
+
+test('FR-28/FR-38: compact Command Palette trigger is bounded and uses keyboard-only focus emphasis', async ({ page }) => {
+    await page.setViewportSize({ width: 500, height: 700 });
+    await connectDashboard(page);
+    const trigger = page.locator('#btn-command-palette');
+    await expect(trigger).toHaveAccessibleName('Search resources, actions, or commands');
+    await expect(trigger.locator('.command-search-label')).toHaveText('Search Kubby…');
+    const restingBorder = await trigger.evaluate((element) => getComputedStyle(element).borderTopColor);
+    await expectViewportBounded(page);
+
+    await trigger.click();
+    await expect(page.locator('#palette')).toBeVisible();
+    await page.locator('#palette-backdrop').click({ position: { x: 4, y: 4 } });
+    expect(await trigger.evaluate((element) => element.matches(':focus-visible'))).toBe(false);
+
+    await trigger.press('Enter');
+    await page.keyboard.press('Escape');
+    expect(await trigger.evaluate((element) => element.matches(':focus-visible'))).toBe(true);
+    await expect.poll(() => trigger.evaluate((element) => getComputedStyle(element).borderTopColor))
+        .not.toBe(restingBorder);
+    await expect(trigger).toHaveCSS('outline-style', 'none');
+    await expect(trigger).toHaveCSS('box-shadow', 'none');
+    await expectViewportBounded(page);
+});
 
 test('FR-2/FR-13: pasted kubeconfig enters a populated Overview', async ({ page }) => {
     const pageErrors = collectPageErrors(page);
@@ -178,6 +218,56 @@ for (const [label, width, height] of zoomMatrix) {
     });
 }
 
+const criticalSurfaceMatrix = [
+    ['390 px mobile', 390, 844],
+    ['683 px at 200% zoom', 683, 384],
+    ['781 px at 175% zoom', 781, 438],
+    ['911 px at 150% zoom', 911, 512],
+    ['960 px compact desktop', 960, 540],
+    ['1097 px at 175% zoom', 1097, 617],
+    ['1280 px at 150% zoom', 1280, 720],
+    ['1366 px desktop', 1366, 768],
+    ['1536 px at 125% zoom', 1536, 864],
+    ['1920 px desktop', 1920, 1080],
+    ['2400 px at 80% zoom', 2400, 1350],
+];
+
+for (const [label, width, height] of criticalSurfaceMatrix) {
+    test(`FR-38: critical surfaces remain viewport-owned at ${label}`, async ({ page }) => {
+        test.slow();
+        const pageErrors = collectPageErrors(page);
+        await page.setViewportSize({ width, height });
+        await connectDashboard(page);
+
+        await openNavView(page, 'pods');
+        await expect(page.locator('#view-search')).toBeVisible();
+        await expectViewportBounded(page);
+
+        await page.locator('#pods-body tr').first().click();
+        await expect(page.locator('#drawer')).toBeVisible();
+        await expectViewportBounded(page);
+        await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+        await expect(page.locator('#term-status')).toContainText('Attached');
+        await expect.poll(async () => (await page.locator('.term-frame').boundingBox())?.height ?? 0)
+            .toBeGreaterThan(110);
+        await expect.poll(async () => (await page.locator('#term-surface .xterm-screen').boundingBox())?.height ?? 0)
+            .toBeGreaterThan(40);
+        await expectViewportBounded(page);
+        await page.locator('#drawer-close').click();
+
+        await page.locator('#btn-settings').click();
+        await expect(page.locator('#modal')).toBeVisible();
+        await expectViewportBounded(page);
+        await page.keyboard.press('Escape');
+
+        await openNavView(page, 'traffic');
+        await expectViewportBounded(page);
+        await openNavView(page, 'helm');
+        await expectViewportBounded(page);
+        expect(pageErrors).toEqual([]);
+    });
+}
+
 test('FR-37: cluster structure supports filtering and resource inspection', async ({ page }) => {
     const pageErrors = collectPageErrors(page);
     await page.setViewportSize({ width: 1100, height: 760 });
@@ -213,6 +303,10 @@ test('FR-7/FR-14/FR-38: Pod drawer owns the selected resource and stays in the v
     await expect(page.locator('#drawer-tab-logs')).toBeVisible();
     await page.getByRole('tab', { name: 'YAML', exact: true }).click();
     await expect(page.locator('#dpanel-yaml .cm-editor')).toContainText('api-6df7fdd9f8-4zj8g');
+    const detailCalls = await page.evaluate(() => window.__wailsMock.calls
+        .filter((call) => ['GetDrawerSnapshotOwned', 'GetDetail', 'ListEvents', 'PodsOnNode', 'NamespaceSummary'].includes(call.method))
+        .map((call) => call.method));
+    expect(detailCalls).toEqual(['GetDrawerSnapshotOwned']);
 
     const drawerBounds = await page.locator('#drawer').evaluate((element) => {
         const rect = element.getBoundingClientRect();
@@ -223,6 +317,62 @@ test('FR-7/FR-14/FR-38: Pod drawer owns the selected resource and stays in the v
     await page.locator('#drawer-close').click();
     await expect(page.locator('#drawer')).toBeHidden();
     expect(pageErrors).toEqual([]);
+});
+
+test('FR-7/NFR-7: closing a drawer cancels its exact snapshot and stale data cannot remount', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await connectDashboard(page);
+    await page.evaluate(() => window.__wailsMock.setResponse('GetDrawerSnapshotOwned', { __deferred: 'old-drawer' }));
+    await page.locator('.nav-item[data-view="pods"]').click();
+    await page.locator('#pods-body tr', { hasText: 'api-6df7fdd9f8-4zj8g' }).click();
+
+    const snapshotCall = await page.evaluate(() => window.__wailsMock.calls
+        .find((call) => call.method === 'GetDrawerSnapshotOwned'));
+    expect(snapshotCall.args[0]).toBe('cluster-1');
+    expect(snapshotCall.args[1]).toBeTruthy();
+
+    await page.locator('#drawer-close').click();
+    await expect.poll(() => page.evaluate(() => window.__wailsMock.calls
+        .filter((call) => call.method === 'CancelDrawerSnapshot').length)).toBe(1);
+    const canceledID = await page.evaluate(() => window.__wailsMock.calls
+        .find((call) => call.method === 'CancelDrawerSnapshot')?.args[0]);
+    expect(canceledID).toBe(snapshotCall.args[1]);
+
+    await page.evaluate(() => window.__wailsMock.setResponse('GetDrawerSnapshotOwned', {
+        detail: {
+            kind: 'Pod', name: 'checkout-7b8d9f-2kw7p', namespace: 'payments', created: '2026-08-12T03:23:00Z', age: '9m',
+            labels: { app: 'checkout' }, annotations: {}, info: [{ label: 'Status', value: 'CrashLoopBackOff' }],
+        },
+        events: [], relation: null, nodePods: [], namespaceInfo: [], sectionErrors: {},
+    }));
+    await page.locator('#pods-body tr', { hasText: 'checkout-7b8d9f-2kw7p' }).click();
+    await expect(page.locator('#drawer-name')).toHaveText('checkout-7b8d9f-2kw7p');
+    await expect(page.locator('#detail-meta')).toContainText('CrashLoopBackOff');
+
+    await page.evaluate(() => window.__wailsMock.rejectDeferred('old-drawer', 'request canceled'));
+    await expect(page.locator('#drawer')).toBeVisible();
+    await expect(page.locator('#drawer-name')).toHaveText('checkout-7b8d9f-2kw7p');
+    await expect(page.locator('#detail-meta')).toContainText('CrashLoopBackOff');
+    expect(pageErrors).toEqual([]);
+});
+
+test('FR-14: a completed delete cannot close a newer resource drawer', async ({ page }) => {
+    await connectDashboard(page);
+    await page.evaluate(() => window.__wailsMock.setResponse('DeleteResourceOwned', { __deferred: 'delete-api' }));
+    await page.locator('.nav-item[data-view="pods"]').click();
+    await page.locator('#pods-body tr', { hasText: 'api-6df7fdd9f8-4zj8g' }).click();
+    await page.locator('#btn-delete').click();
+    await page.locator('#dialog-ok').click();
+    await expect.poll(() => page.evaluate(() => window.__wailsMock.calls
+        .filter((call) => call.method === 'DeleteResourceOwned').length)).toBe(1);
+
+    await page.locator('#drawer-close').click();
+    await page.locator('#pods-body tr', { hasText: 'checkout-7b8d9f-2kw7p' }).click();
+    await expect(page.locator('#drawer-name')).toHaveText('checkout-7b8d9f-2kw7p');
+    await page.evaluate(() => window.__wailsMock.resolveDeferred('delete-api'));
+
+    await expect(page.locator('#drawer')).toBeVisible();
+    await expect(page.locator('#drawer-name')).toHaveText('checkout-7b8d9f-2kw7p');
 });
 
 test('FR-21/FR-38: Pod Terminal auto-attaches Bash-first and keeps session controls owned', async ({ page }) => {
@@ -253,6 +403,12 @@ test('FR-21/FR-38: Pod Terminal auto-attaches Bash-first and keeps session contr
     await page.keyboard.type('pwd');
     await expect.poll(() => page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'ExecWrite').length)).toBeGreaterThan(0);
 
+    await page.evaluate(() => { window.__wailsMock.clipboardText = 'printf clipboard-ready'; });
+    await page.locator('#btn-term-paste').click();
+    await expect.poll(() => page.evaluate(() => window.__wailsMock.calls
+        .filter((call) => call.method === 'ExecWrite')
+        .some((call) => call.args[0] === 'printf clipboard-ready'))).toBe(true);
+
     await page.locator('#term-shell').selectOption('/bin/sh');
     await expect.poll(() => page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'StartExec').length)).toBe(2);
     const shellRequests = await page.evaluate(() => window.__wailsMock.calls
@@ -269,6 +425,77 @@ test('FR-21/FR-38: Pod Terminal auto-attaches Bash-first and keeps session contr
     await page.locator('#btn-term-stop').click();
     await expect(page.locator('#term-status')).toHaveText('Disconnected by user');
     expect(pageErrors).toEqual([]);
+});
+
+test('FR-29: clicking the Kubby brand returns to Overview', async ({ page }) => {
+    await connectDashboard(page);
+    await openNavView(page, 'pods');
+    await expect(page.locator('#page-title')).toHaveText('Pods');
+    await page.locator('#btn-brand-home').click();
+    await expect(page.locator('#page-title')).toHaveText('Overview');
+    await expect(page.locator('#btn-brand-home')).toHaveAccessibleName('Go to Overview');
+});
+
+test('FR-33/FR-38: a long Custom Resources group scrolls to its final kind without clipping', async ({ page }) => {
+    const kinds = Array.from({ length: 60 }, (_, index) => ({
+        refKind: `Widget${String(index + 1).padStart(2, '0')}.example.test`,
+        title: `Widget ${String(index + 1).padStart(2, '0')}`,
+        namespaced: true,
+    }));
+    await page.setViewportSize({ width: 683, height: 384 });
+    await connectDashboard(page, {
+        overrides: { CustomKinds: { kinds, overflow: 0, total: kinds.length } },
+    });
+
+    await page.locator('#btn-mobile-nav').click();
+    await page.locator('#nav-section-custom .nav-group').click();
+    const nav = page.locator('.nav');
+    await nav.hover();
+    await page.mouse.wheel(0, 20_000);
+    const lastKind = page.locator('#nav-custom-items .nav-item').last();
+    await expect(lastKind).toBeVisible();
+    const geometry = await lastKind.evaluate((element) => {
+        const navRect = element.closest('.nav').getBoundingClientRect();
+        const itemRect = element.getBoundingClientRect();
+        const items = element.parentElement;
+        return {
+            navBottom: navRect.bottom,
+            itemBottom: itemRect.bottom,
+            itemsClientHeight: items.clientHeight,
+            itemsScrollHeight: items.scrollHeight,
+        };
+    });
+    expect(geometry.itemBottom).toBeLessThanOrEqual(geometry.navBottom + 1);
+    expect(geometry.itemsClientHeight).toBe(geometry.itemsScrollHeight);
+    await lastKind.click();
+    await expect(page.locator('#page-title')).toHaveText('Widget 60');
+    await expect(page.locator('#btn-mobile-nav')).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('FR-5/FR-38: a wide resource table scrolls inside content without widening the shell', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await connectDashboard(page);
+    await openNavView(page, 'pods');
+
+    const content = page.locator('#content');
+    const dimensions = await content.evaluate((element) => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        viewportWidth: window.innerWidth,
+    }));
+    expect(dimensions.scrollWidth).toBeGreaterThan(dimensions.clientWidth);
+    expect(dimensions.documentWidth).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
+
+    await content.hover();
+    await page.mouse.wheel(20_000, 0);
+    await expect.poll(() => content.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+
+    const contentRight = await content.evaluate((element) => element.getBoundingClientRect().right);
+    const lastCellRight = await page.locator('#pods-body tr').first().locator('td').last()
+        .evaluate((element) => element.getBoundingClientRect().right);
+    expect(lastCellRight).toBeLessThanOrEqual(contentRight + 1);
+    await expectViewportBounded(page);
 });
 
 test('FR-21: shell discovery failure stops after one attempt and offers Retry', async ({ page }) => {
@@ -343,6 +570,19 @@ test('FR-31/FR-38: Settings modal closes with Escape and remains viewport-bounde
     expect(pageErrors).toEqual([]);
 });
 
+test('FR-31: late Settings data preserves fields the user already edited', async ({ page }) => {
+    await connectDashboard(page);
+    await page.evaluate(() => window.__wailsMock.setResponse('GetAIConfig', { __deferred: 'settings-config' }));
+    await page.locator('#btn-settings').click();
+    await page.locator('#ai-model').fill('my-local-draft');
+
+    await page.evaluate(() => window.__wailsMock.resolveDeferred('settings-config', {
+        provider: 'openai', endpoint: 'https://api.openai.com', model: 'server-model', language: 'en', hasApiKey: true,
+    }));
+
+    await expect(page.locator('#ai-model')).toHaveValue('my-local-draft');
+});
+
 test('FR-5: every built-in navigation target renders without a browser exception', async ({ page }) => {
     const pageErrors = collectPageErrors(page);
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -404,4 +644,24 @@ test('FR-23/24/25: Helm workspace keeps release, catalog, and repository context
     await expect(page.locator('#helm-catalog-source')).toHaveValue('repo:team-charts');
     await expect(page.locator('#chart-results')).toContainText('checkout');
     expect(pageErrors).toEqual([]);
+});
+
+test('FR-24: late Helm values keep a draft started while the release loads', async ({ page }) => {
+    await connectDashboard(page);
+    await openNavView(page, 'helm');
+    await page.locator('#helm-body .helm-open-release').click();
+    await page.evaluate(() => window.__wailsMock.setResponse('HelmGet', { __deferred: 'helm-values' }));
+    await page.locator('#helm-upgrade-release').click();
+    await expect(page.locator('#modal-title')).toHaveText('Upgrade values — checkout');
+    await page.locator('#helm-values .cm-content').fill('replicaCount: 7\ncustomDraft: true');
+
+    await page.evaluate(() => window.__wailsMock.resolveDeferred('helm-values', {
+        name: 'checkout', namespace: 'payments', revision: 4, status: 'deployed',
+        values: 'replicaCount: 2\n', manifest: '', notes: '',
+    }));
+
+    await expect(page.locator('#helm-values .cm-content')).toContainText('replicaCount: 7');
+    await expect(page.locator('#helm-values .cm-content')).toContainText('customDraft: true');
+    await expect(page.locator('#helm-preview-status')).toContainText('your draft was kept');
+    await expect(page.locator('#helm-preview-btn')).toBeEnabled();
 });

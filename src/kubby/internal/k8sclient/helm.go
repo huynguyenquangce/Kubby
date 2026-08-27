@@ -8,7 +8,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -68,8 +67,10 @@ func (g *restClientGetter) ToRawKubeConfigLoader() clientcmd.ClientConfig {
 }
 
 const (
-	helmOperationTimeout = 5 * time.Minute
-	helmChartHTTPTimeout = 120 * time.Second
+	helmOperationTimeout  = 5 * time.Minute
+	helmChartHTTPTimeout  = 120 * time.Second
+	maxHelmRepoIndexBytes = 20 << 20
+	maxHelmChartBytes     = 100 << 20
 )
 
 type helmContextRoundTripper struct {
@@ -290,7 +291,7 @@ func locateHTTPChart(ctx context.Context, options *action.ChartPathOptions, char
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			return nil, false, nil
 		}
-		archive, err := fetchHelmHTTP(ctx, options, chartName)
+		archive, err := fetchHelmHTTP(ctx, options, chartName, maxHelmChartBytes)
 		return archive, true, err
 	}
 	base, err := url.Parse(options.RepoURL)
@@ -301,7 +302,7 @@ func locateHTTPChart(ctx context.Context, options *action.ChartPathOptions, char
 	if err != nil {
 		return nil, true, err
 	}
-	indexYAML, err := fetchHelmHTTP(ctx, options, indexURL)
+	indexYAML, err := fetchHelmHTTP(ctx, options, indexURL, maxHelmRepoIndexBytes)
 	if err != nil {
 		return nil, true, err
 	}
@@ -321,11 +322,15 @@ func locateHTTPChart(ctx context.Context, options *action.ChartPathOptions, char
 	if err != nil {
 		return nil, true, err
 	}
-	archive, err := fetchHelmHTTP(ctx, options, chartURL)
+	archive, err := fetchHelmHTTP(ctx, options, chartURL, maxHelmChartBytes)
 	return archive, true, err
 }
 
-func fetchHelmHTTP(ctx context.Context, options *action.ChartPathOptions, target string) ([]byte, error) {
+func fetchHelmHTTP(ctx context.Context, options *action.ChartPathOptions, target string, maxBytes int64) ([]byte, error) {
+	targetURL, err := validateHelmHTTPURL(target)
+	if err != nil {
+		return nil, err
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: options.InsecureSkipTLSverify} // #nosec G402 -- explicit user repository option
 	if options.CaFile != "" {
@@ -353,7 +358,7 @@ func fetchHelmHTTP(ctx context.Context, options *action.ChartPathOptions, target
 		tlsConfig.Certificates = []tls.Certificate{certificate}
 	}
 	transport.TLSClientConfig = tlsConfig
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -361,24 +366,68 @@ func fetchHelmHTTP(ctx context.Context, options *action.ChartPathOptions, target
 	if options.Username != "" && options.Password != "" && helmCredentialsAllowed(options.RepoURL, target, options.PassCredentialsAll) {
 		request.SetBasicAuth(options.Username, options.Password)
 	}
-	response, err := (&http.Client{Transport: transport, Timeout: helmChartHTTPTimeout}).Do(request)
+	client := &http.Client{
+		Transport:     transport,
+		Timeout:       helmChartHTTPTimeout,
+		CheckRedirect: helmRedirectPolicy(options),
+	}
+	response, err := client.Do(request)
 	if err != nil {
-		return nil, err
+		if urlErr, ok := err.(*url.Error); ok {
+			err = urlErr.Err
+		}
+		return nil, fmt.Errorf("failed to fetch Helm chart source %s: %w", safeHelmHTTPURL(targetURL), err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch %s: %s", target, response.Status)
+		return nil, fmt.Errorf("failed to fetch Helm chart source %s: %s", safeHelmHTTPURL(targetURL), response.Status)
 	}
-	return io.ReadAll(response.Body)
+	return readBoundedBody(response.Body, response.ContentLength, maxBytes, "Helm chart source")
 }
 
 func helmCredentialsAllowed(repoURL, target string, passAll bool) bool {
 	if passAll {
-		return true
+		repoParsed, repoErr := url.Parse(repoURL)
+		targetParsed, targetErr := url.Parse(target)
+		return repoErr == nil && targetErr == nil && !(repoParsed.Scheme == "https" && targetParsed.Scheme != "https")
 	}
 	repoParsed, repoErr := url.Parse(repoURL)
 	targetParsed, targetErr := url.Parse(target)
 	return repoErr == nil && targetErr == nil && repoParsed.Scheme == targetParsed.Scheme && repoParsed.Host == targetParsed.Host
+}
+
+func validateHelmHTTPURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, fmt.Errorf("Helm chart source must be an absolute http:// or https:// URL")
+	}
+	if parsed.User != nil {
+		return nil, fmt.Errorf("Helm chart source URL must not contain embedded credentials")
+	}
+	return parsed, nil
+}
+
+func safeHelmHTTPURL(parsed *url.URL) string {
+	return parsed.Scheme + "://" + parsed.Host + parsed.EscapedPath()
+}
+
+func helmRedirectPolicy(options *action.ChartPathOptions) func(*http.Request, []*http.Request) error {
+	return func(request *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 Helm chart redirects")
+		}
+		if _, err := validateHelmHTTPURL(request.URL.String()); err != nil {
+			return err
+		}
+		if len(via) > 0 && via[0].URL.Scheme == "https" && request.URL.Scheme != "https" {
+			return fmt.Errorf("refusing Helm chart redirect from HTTPS to plaintext HTTP")
+		}
+		request.Header.Del("Authorization")
+		if options.Username != "" && options.Password != "" && helmCredentialsAllowed(options.RepoURL, request.URL.String(), options.PassCredentialsAll) {
+			request.SetBasicAuth(options.Username, options.Password)
+		}
+		return nil
+	}
 }
 
 func configureChartSource(options *action.ChartPathOptions, repoURL, version string, repoNames ...string) error {

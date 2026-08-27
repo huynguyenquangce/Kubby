@@ -2,9 +2,11 @@ package k8sclient
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -188,15 +190,32 @@ var searchKinds = []searchKind{
 	{"Namespace", "namespaces", schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}},
 }
 
+const searchIndexTTL = 15 * time.Second
+
+type searchIndexItem struct {
+	namespace string
+	name      string
+}
+
+// searchIndexGroup retains the deliberate built-in/custom kind ordering while
+// storing only the two metadata fields a name search needs. It is immutable
+// after publication, so readers can safely use it after the cache mutex unlocks.
+type searchIndexGroup struct {
+	kind  string
+	view  string
+	items []searchIndexItem
+}
+
 // SearchResources finds resources whose name contains the query, across all
 // namespaces and **every kind the UI has a section for**, custom resources
 // included — powering the Ctrl+K "find any resource".
 //
-// Two things make this affordable to run on a debounced keystroke. Every kind is
-// listed **concurrently** (bounded, so it overlaps round-trips without bursting
-// the API server), and every list is **metadata-only**: the API server returns
-// names, not object bodies. A search used to pull every Secret's data and every
-// Pod's full status cluster-wide, one kind after another.
+// Three things make this affordable to run on a debounced keystroke. Every kind
+// is listed **concurrently** (bounded, so it overlaps round-trips without
+// bursting the API server), every list is **metadata-only**, and the resulting
+// name index is reused briefly across settled queries. A search used to pull
+// every Secret's data and every Pod's full status cluster-wide, one kind after
+// another; later it still repeated the metadata fan-out for every query.
 //
 // The cost of metadata-only is that a hit carries no computed status, so the
 // error flag is resolved afterwards — for the handful of Pods that matched only.
@@ -207,64 +226,101 @@ func SearchResources(ctx context.Context, c *Cluster, query string) ([]SearchHit
 	}
 	const perKind = 8
 	const maxTotal = 60
+	index, err := c.cachedSearchIndex(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	kinds := searchKinds
+	hits := []SearchHit{}
+	for _, group := range index {
+		matched := 0
+		for _, item := range group.items {
+			if !strings.Contains(strings.ToLower(item.name), q) {
+				continue
+			}
+			hits = append(hits, SearchHit{group.kind, group.view, item.namespace, item.name, false})
+			matched++
+			if matched >= perKind || len(hits) >= maxTotal {
+				break
+			}
+		}
+		if len(hits) >= maxTotal {
+			break
+		}
+	}
+	markFailingPods(ctx, c, hits)
+	return hits, nil
+}
+
+// cachedSearchIndex serializes cold refreshes per connection. A second query
+// arriving while the first is listing waits for and reuses that same snapshot;
+// it never starts another countConcurrency-sized fan-out.
+func (c *Cluster) cachedSearchIndex(ctx context.Context) ([]searchIndexGroup, error) {
+	c.searchMu.Lock()
+	defer c.searchMu.Unlock()
+	if time.Now().Before(c.searchIndexExpires) {
+		return c.searchIndex, nil
+	}
+	index, err := buildSearchIndex(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	c.searchIndex = index
+	c.searchIndexExpires = time.Now().Add(searchIndexTTL)
+	return index, nil
+}
+
+func buildSearchIndex(ctx context.Context, c *Cluster) ([]searchIndexGroup, error) {
+	if c.Meta == nil {
+		return nil, fmt.Errorf("metadata client is unavailable")
+	}
+	kinds := append([]searchKind(nil), searchKinds...)
 	// Custom resources are why "virtualservice" used to find nothing. Failing to
-	// enumerate them must not fail the search over built-in kinds.
-	if custom, err := CustomKinds(ctx, c); err == nil {
-		for _, ck := range custom.Kinds {
-			if ak, err := c.ResolveKind(ck.RefKind); err == nil {
-				kinds = append(kinds, searchKind{ck.Kind, "custom:" + ck.RefKind, ak.GVR})
+	// enumerate them must not fail the index over built-in kinds.
+	if c.Dynamic != nil {
+		if custom, err := CustomKinds(ctx, c); err == nil {
+			for _, ck := range custom.Kinds {
+				if ak, err := c.ResolveKind(ck.RefKind); err == nil {
+					kinds = append(kinds, searchKind{ck.Kind, "custom:" + ck.RefKind, ak.GVR})
+				}
 			}
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
-	var (
-		mu  sync.Mutex
-		wg  sync.WaitGroup
-		sem = make(chan struct{}, countConcurrency)
-		// Grouped by kind index so the result order stays stable (and matches
-		// searchKinds' deliberate ordering) regardless of which list finishes first.
-		found = make([][]SearchHit, len(kinds))
-	)
+	index := make([]searchIndexGroup, len(kinds))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, countConcurrency)
 	for i := range kinds {
 		idx, sk := i, kinds[i]
+		index[idx] = searchIndexGroup{kind: sk.kind, view: sk.view}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
 			list, err := c.Meta.Resource(sk.gvr).Namespace("").List(ctx, metav1.ListOptions{})
 			if err != nil {
 				return // forbidden, or the kind is not served — just contributes nothing
 			}
-			hits := []SearchHit{}
+			items := make([]searchIndexItem, 0, len(list.Items))
 			for _, item := range list.Items {
-				if !strings.Contains(strings.ToLower(item.GetName()), q) {
-					continue
-				}
-				hits = append(hits, SearchHit{sk.kind, sk.view, item.GetNamespace(), item.GetName(), false})
-				if len(hits) >= perKind {
-					break
-				}
+				items = append(items, searchIndexItem{namespace: item.GetNamespace(), name: item.GetName()})
 			}
-			mu.Lock()
-			found[idx] = hits
-			mu.Unlock()
+			index[idx].items = items
 		}()
 	}
 	wg.Wait()
-
-	hits := []SearchHit{}
-	for _, group := range found {
-		hits = append(hits, group...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	if len(hits) > maxTotal {
-		hits = hits[:maxTotal]
-	}
-	markFailingPods(ctx, c, hits)
-	return hits, nil
+	return index, nil
 }
 
 // markFailingPods sets IsError on the Pod hits, which metadata-only lists cannot

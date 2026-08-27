@@ -123,6 +123,10 @@
         max-width: 100%;
     }
 
+    .page-write-actions {
+        margin-left: auto;
+    }
+
     .topology-switcher {
         width: 100%;
     }
@@ -146,9 +150,15 @@
     .command-search {
         flex: 1 1 auto;
         width: auto;
+        min-width: 0;
+        max-width: none;
     }
 
-    .command-search span {
+    .command-search-label {
+        display: block;
+    }
+
+    .command-search kbd {
         display: block;
     }
 
@@ -233,6 +243,10 @@
 }
 
 @media (max-width: 420px) {
+    .command-search kbd {
+        display: none;
+    }
+
     .modal-foot-actions .btn {
         flex: 1 1 0;
     }
@@ -315,6 +329,15 @@
     .view-search {
         width: 100%;
         min-width: 0;
+        order: 3;
+    }
+
+    .page-heading-actions .view-status {
+        margin-right: auto;
+    }
+
+    .page-write-actions {
+        max-width: 100%;
     }
 
     .structure-summary {
@@ -389,6 +412,16 @@
     .term-frame-button {
         padding-inline: 0.4rem;
     }
+
+    #btn-term-copy,
+    #btn-term-paste {
+        font-size: 0;
+        width: 27px;
+        padding: 0;
+    }
+
+    #btn-term-copy::after { content: "C"; font-size: 0.66rem; }
+    #btn-term-paste::after { content: "V"; font-size: 0.66rem; }
 
     .structure-summary {
         grid-template-columns: minmax(0, 1fr);
@@ -470,6 +503,79 @@
     .rollout-actions {
         width: 100%;
         flex-wrap: wrap;
+    }
+}
+
+/* Zooming a 1366×768 desktop to 175–200% leaves less vertical room than a
+   phone. Compact the owned Terminal workspace so its controls, PTY, and status
+   remain usable without making the whole drawer an accidental scroller. */
+@media (max-height: 560px) {
+    .drawer-head {
+        padding: 0.55rem 0.8rem;
+    }
+
+    .drawer-kind {
+        font-size: 0.62rem;
+    }
+
+    .drawer-title h2 {
+        margin-block: 0.15rem 0;
+        font-size: 1rem;
+    }
+
+    .drawer-ns {
+        font-size: 0.7rem;
+    }
+
+    .drawer-tabs {
+        padding-inline: 0.8rem;
+    }
+
+    .drawer-tab {
+        margin-right: 0.45rem;
+        padding-block: 0.5rem;
+    }
+
+    #dpanel-terminal {
+        padding: 0.45rem 0.8rem 0.55rem;
+        overflow: hidden;
+    }
+
+    .term-toolbar {
+        align-items: flex-end;
+        flex-direction: row;
+        gap: 0.5rem;
+        margin-bottom: 0.4rem;
+    }
+
+    .term-toolbar-copy {
+        display: none;
+    }
+
+    .term-controls {
+        flex: 1;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .term-frame {
+        min-height: 120px;
+    }
+
+    .term-frame-head {
+        height: 36px;
+    }
+
+    .term-surface,
+    .term-placeholder {
+        inset-block-start: 36px;
+    }
+
+    .term-footer {
+        padding-top: 0.35rem;
+    }
+
+    .term-footer > span:last-child {
+        display: none;
     }
 }
 

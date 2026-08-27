@@ -62,6 +62,7 @@ const DEFAULT_FIXTURES = {
             update: true,
             patch: true,
             delete: true,
+            scale: true,
             logs: true,
             exec: true,
             portforward: true,
@@ -155,6 +156,18 @@ const DEFAULT_FIXTURES = {
         labels: { app: 'api', tier: 'backend' }, annotations: {},
         info: [{ label: 'Status', value: 'Running' }, { label: 'Node', value: 'kubby-worker' }],
     },
+    GetDrawerSnapshotOwned: {
+        detail: {
+            kind: 'Pod', name: 'api-6df7fdd9f8-4zj8g', namespace: 'payments', created: '2026-08-12T03:20:00Z', age: '12m',
+            labels: { app: 'api', tier: 'backend' }, annotations: {},
+            info: [{ label: 'Status', value: 'Running' }, { label: 'Node', value: 'kubby-worker' }],
+        },
+        events: [{ type: 'Normal', reason: 'Started', age: '12m', message: 'Started container api', count: 1 }],
+        relation: null,
+        nodePods: [],
+        namespaceInfo: [],
+        sectionErrors: {},
+    },
     GetYAML: 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: api-6df7fdd9f8-4zj8g\n  namespace: payments\nspec:\n  containers:\n    - name: api\n      image: example.invalid/api:v1\n',
     ListEvents: [{ type: 'Normal', reason: 'Started', age: '12m', message: 'Started container api', count: 1 }],
     PodContainers: ['api'],
@@ -199,6 +212,7 @@ export async function installWailsMock(page, overrides = {}) {
         const responses = { ...fixtures, ...responseOverrides };
         const calls = [];
         const listeners = new Map();
+        const deferred = new Map();
         const app = new Proxy({}, {
             get(_target, method) {
                 return (...args) => {
@@ -209,6 +223,11 @@ export async function installWailsMock(page, overrides = {}) {
                     if (response && typeof response === 'object' && response.__error) {
                         return Promise.reject(new Error(String(response.__error)));
                     }
+                    if (response && typeof response === 'object' && response.__deferred) {
+                        return new Promise((resolve, reject) => {
+                            deferred.set(String(response.__deferred), { resolve, reject });
+                        });
+                    }
                     return Promise.resolve(clone(response));
                 };
             },
@@ -216,6 +235,20 @@ export async function installWailsMock(page, overrides = {}) {
 
         window.__wailsMock = {
             calls,
+            clipboardText: '',
+            setResponse(method, value) { responses[method] = clone(value); },
+            resolveDeferred(name, value) {
+                const pending = deferred.get(name);
+                if (!pending) throw new Error(`No deferred Wails call named ${name}`);
+                deferred.delete(name);
+                pending.resolve(clone(value));
+            },
+            rejectDeferred(name, message) {
+                const pending = deferred.get(name);
+                if (!pending) throw new Error(`No deferred Wails call named ${name}`);
+                deferred.delete(name);
+                pending.reject(new Error(String(message)));
+            },
             emit(name, ...args) {
                 for (const listener of listeners.get(name) ?? []) listener(...args);
             },
@@ -236,7 +269,15 @@ export async function installWailsMock(page, overrides = {}) {
                 for (const listener of listeners.get(name) ?? []) listener(...args);
             },
             BrowserOpenURL(url) { calls.push({ method: 'BrowserOpenURL', args: [url] }); },
-            ClipboardSetText(value) { calls.push({ method: 'ClipboardSetText', args: [value] }); },
+            ClipboardGetText() {
+                calls.push({ method: 'ClipboardGetText', args: [] });
+                return Promise.resolve(window.__wailsMock.clipboardText);
+            },
+            ClipboardSetText(value) {
+                calls.push({ method: 'ClipboardSetText', args: [value] });
+                window.__wailsMock.clipboardText = String(value);
+                return Promise.resolve(true);
+            },
             LogPrint() {}, LogTrace() {}, LogDebug() {}, LogInfo() {}, LogWarning() {}, LogError() {}, LogFatal() {},
         };
     }, { fixtures: DEFAULT_FIXTURES, responseOverrides: overrides });

@@ -74,6 +74,10 @@ custom kinds — there is no sensible per-kind template. Import YAML still works
 
 - The section is **hidden entirely** when the cluster defines no CRDs. Don't make
   it appear empty.
+- The generic accordion animation caps `.nav-items` at 400 px. An expanded
+  `#nav-custom-items` must opt out of that cap and let the outer `.nav` own the
+  vertical scroll; otherwise the scrollbar reaches its end while later CRD kinds
+  remain clipped.
 - On a cluster switch, `CUSTOM_KINDS` must be cleared and rebuilt — a different
   cluster has different CRDs.
 - A custom kind's drawer ref carries the **qualified** `Kind.group`, which is what

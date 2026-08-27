@@ -32,7 +32,7 @@ func CanI(ctx, c, kind, namespace string) (*AccessSet, error)
 
 type AccessSet struct {
     Kind, Namespace string
-    Verbs   map[string]bool   // "get" "list" "create" "update" "patch" "delete" (+ pod extras)
+    Verbs   map[string]bool   // resource verbs plus exact subresource actions
     Checked bool
 }
 func (a *AccessSet) Allowed(verb string) bool   // nil-safe; absent == allowed
@@ -60,6 +60,10 @@ would show Terminal as available.
 
 The group is checked too, so `metrics.k8s.io/pods` is not mistaken for core pods
 (`TestNonPodKindsGetNoSubresourceProbes`).
+
+Deployment scaling is also a separate question: key `scale` probes verb `update`
+on `apps/deployments/scale`. Permission to update the Deployment object does not
+imply permission to update its scale subresource, or vice versa.
 
 ## Caching
 
@@ -91,11 +95,11 @@ not the one the label suggests**:
 
 | Action | Needs | Why |
 |---|---|---|
-| Scale | `update` | the `scale` subresource is updated |
+| Scale | `scale` | key for `update` on `deployments/scale` |
 | Restart (rolling) | `patch` | it patches a template annotation |
 | Pause / resume, cordon / uncordon | `patch` | |
 | Trigger now (CronJob) | `create` on **`Job`** | it creates a Job; the CronJob's own verbs are irrelevant — that is what `needKind` is for |
-| Save edited YAML | `update` **or** `patch` | the apiserver accepts either |
+| Save edited YAML | `update` | the drawer sends a full-object `Update`; Create/Import is the separate server-side-apply path |
 
 **Disabled, not hidden.** A greyed-out Terminal tab whose tooltip reads *"Your token
 cannot exec into Pod in nexus"* tells the truth. A missing tab would suggest Kubby

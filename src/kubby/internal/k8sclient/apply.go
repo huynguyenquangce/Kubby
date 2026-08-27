@@ -88,9 +88,10 @@ func applyOne(ctx context.Context, c *Cluster, doc string) (action, ref string, 
 	// Server-side apply: one call that creates or merges, and — unlike a full
 	// object Update — leaves server-defaulted fields (a Service's clusterIP, an
 	// injected sidecar) alone instead of failing on them as immutable.
-	// Force resolves ownership conflicts in Kubby's favour, which is what a user
-	// clicking "Apply" on a manifest is asking for.
-	if _, err := p.ri.Apply(ctx, p.name, p.obj, metav1.ApplyOptions{FieldManager: fieldManager, Force: true}); err != nil {
+	// Do not seize fields owned by another manager. The API server's conflict is
+	// actionable evidence; forcing ownership needs a separate, explicit user
+	// decision that the current Apply confirmation does not ask for.
+	if _, err := p.ri.Apply(ctx, p.name, p.obj, kubbyApplyOptions(false)); err != nil {
 		return "", "", err
 	}
 	return action, p.ref, nil
@@ -289,11 +290,7 @@ func previewOne(ctx context.Context, c *Cluster, index int, doc string, pending 
 		}
 	}
 
-	dry, err := p.ri.Apply(ctx, p.name, p.obj, metav1.ApplyOptions{
-		FieldManager: fieldManager,
-		Force:        true,
-		DryRun:       []string{metav1.DryRunAll},
-	})
+	dry, err := p.ri.Apply(ctx, p.name, p.obj, kubbyApplyOptions(true))
 	if err != nil {
 		return &ApplyDiffDoc{Ref: p.ref, Action: "error", Error: previewError(p, err, pending)}
 	}
@@ -307,6 +304,14 @@ func previewOne(ctx context.Context, c *Cluster, index int, doc string, pending 
 	default:
 		return &ApplyDiffDoc{Ref: p.ref, Action: "update", Current: current, Proposed: proposed}
 	}
+}
+
+func kubbyApplyOptions(dryRun bool) metav1.ApplyOptions {
+	options := metav1.ApplyOptions{FieldManager: fieldManager, Force: false}
+	if dryRun {
+		options.DryRun = []string{metav1.DryRunAll}
+	}
+	return options
 }
 
 // previewError turns the one dry-run failure that is expected rather than wrong

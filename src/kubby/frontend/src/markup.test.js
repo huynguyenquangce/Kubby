@@ -7,6 +7,7 @@ const mainJS = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 const editorJS = readFileSync(new URL('./editor.js', import.meta.url), 'utf8');
 const optionBCSS = readFileSync(new URL('./option-b.css', import.meta.url), 'utf8');
 const incidentCSS = readFileSync(new URL('./incident.css', import.meta.url), 'utf8');
+const appCSS = readFileSync(new URL('./app.css', import.meta.url), 'utf8');
 
 test('namespace scope is searchable without splitting canonical select state', () => {
     for (const id of ['namespace-toggle', 'namespace-search', 'namespace-options', 'namespace-select']) {
@@ -66,6 +67,18 @@ test('all application modals share the structured header, footer, and focus cont
     assert.match(mainJS, /danger && cancelText !== null \? cancelBtn/);
 });
 
+test('late async results are checked against their owning UI surface', () => {
+    assert.match(mainJS, /DeleteResourceOwned[\s\S]*?isCurrentDrawerRequest\(scope\)[\s\S]*?closeDrawer\(\)/);
+    assert.match(mainJS, /SaveIncidentReport[\s\S]*?incidentReport === report/);
+    assert.match(mainJS, /GetAIConfig\(\)[\s\S]*?isCurrentModalRequest\(scope\)[\s\S]*?!settingsDirty/);
+    assert.match(mainJS, /valuesTouched[\s\S]*?your draft was kept/);
+    assert.match(mainJS, /welcomeContextRequestID[\s\S]*?fillContexts\(res, requestID\)/);
+});
+
+test('cluster switcher retains a visible keyboard focus indicator', () => {
+    assert.match(appCSS, /\.cluster-select:focus-visible\s*\{[\s\S]*?outline:\s*2px solid/);
+});
+
 test('Helm repository modal uses aligned source and optional credential sections', () => {
     const opener = mainJS.match(/function openRepoAddModal\(\) \{[\s\S]*?\n\}/)?.[0] ?? '';
     assert.match(opener, /eyebrow: 'Helm repositories'/);
@@ -84,19 +97,36 @@ test('port-forward manager exposes global and drawer lifecycle controls', () => 
     assert.match(mainJS, /CancelPortForwardStart\(pending\.id\)/);
 });
 
-test('terminal uses a PTY emulator instead of a line-mode command input', () => {
+test('terminal uses a PTY emulator with owned clipboard controls instead of a line-mode command input', () => {
     const terminal = indexHTML.match(/<!-- Terminal panel \(Pod\) -->[\s\S]*?<!-- Port Forward panel/)?.[0] ?? '';
-    for (const id of ['term-surface', 'term-container', 'term-shell', 'btn-term-start', 'btn-term-stop', 'btn-term-clear']) {
+    for (const id of ['term-surface', 'term-container', 'term-shell', 'btn-term-start', 'btn-term-stop', 'btn-term-clear', 'btn-term-copy', 'btn-term-paste']) {
         assert.match(terminal, new RegExp(`id="${id}"`));
     }
     assert.doesNotMatch(terminal, /id="term-input"/);
     assert.match(terminal, /<option value="auto">Auto · Bash first<\/option>/);
     assert.doesNotMatch(terminal, />Connect<\/button>/);
-    assert.match(mainJS, /from '@xterm\/xterm'/);
-    assert.match(mainJS, /from '@xterm\/addon-fit'/);
+    assert.doesNotMatch(mainJS, /import\s+\{\s*Terminal\s*\}\s+from '@xterm\/xterm'/);
+    assert.doesNotMatch(mainJS, /import\s+\{\s*FitAddon\s*\}\s+from '@xterm\/addon-fit'/);
+    assert.match(mainJS, /import\('@xterm\/xterm'\)/);
+    assert.match(mainJS, /import\('@xterm\/addon-fit'\)/);
     assert.match(mainJS, /ExecResize/);
     assert.match(mainJS, /requestAnimationFrame\(\(\) => startTerminal\(scope\)\)/);
     assert.match(mainJS, /\.then\(\(resolvedShell\) =>/);
+    assert.match(mainJS, /ClipboardGetText\(\)/);
+    assert.match(mainJS, /CopyToClipboard\(selection\)/);
+    assert.match(mainJS, /attachCustomKeyEventHandler/);
+});
+
+test('Kubby brand is an accessible Overview navigation control', () => {
+    assert.match(indexHTML, /<button id="btn-brand-home"[^>]*aria-label="Go to Overview"/);
+    assert.match(mainJS, /btn-brand-home'\)\.addEventListener\('click', \(\) => selectView\('overview'\)\)/);
+});
+
+test('command palette trigger stays concise and reserves focus treatment for keyboard navigation', () => {
+    assert.match(indexHTML, /id="btn-command-palette"[\s\S]*?aria-label="Search resources, actions, or commands"/);
+    assert.match(indexHTML, /class="command-search-label">Search Kubby…<\/span>/);
+    assert.match(optionBCSS, /\.command-search:focus-visible/);
+    assert.doesNotMatch(optionBCSS, /\.command-search:hover,\s*\n\.command-search:focus\s*\{/);
 });
 
 test('overview uses bundled typography and dashboard-specific table contracts', () => {
@@ -109,6 +139,11 @@ test('overview uses bundled typography and dashboard-specific table contracts', 
     const tables = [...overview.matchAll(/<table([^>]*)>/g)];
     assert.ok(tables.length >= 2);
     for (const table of tables) assert.match(table[1], /class="[^"]*plain[^"]*"/);
+});
+
+test('resource filtering caches normalized row text between keystrokes', () => {
+    assert.match(mainJS, /tr\.dataset\.searchText \?\?= tr\.textContent\.toLowerCase\(\)/);
+    assert.match(mainJS, /searchText\.includes\(term\)/);
 });
 
 test('the shell has one navigation owner and a mode switcher for topology', () => {
@@ -207,6 +242,15 @@ test('drawer lazily loads tabs and shares one Pod container request', () => {
     assert.equal([...mainJS.matchAll(/\bPodContainers\(/g)].length, 1);
 });
 
+test('drawer Details loads through one backend snapshot', () => {
+    assert.match(mainJS, /GetDrawerSnapshotOwned\(connectionID, operationID, ref\.kind, ref\.namespace, ref\.name\)/);
+    assert.match(mainJS, /CancelDrawerSnapshot\(requestScopes\.drawerOwnerKey\(/);
+    assert.match(mainJS, /renderDetailMeta\(snapshot\.detail\)/);
+    assert.match(mainJS, /renderDrawerEvents\(snapshot\.events, snapshot\.sectionErrors\?\.events, scope\)/);
+    assert.match(mainJS, /loadRelations\(scope, snapshot\)/);
+    assert.doesNotMatch(mainJS, /\b(DeploymentTree|ServiceTree|IngressTree|PodsOnNode|NamespaceSummary)\(/);
+});
+
 test('Incident Studio is evidence-first, one-call, owned, and responsive', () => {
     for (const id of ['drawer-tab-investigate', 'dpanel-investigate', 'incident-findings', 'incident-timeline', 'btn-incident-watch', 'btn-incident-export']) {
         assert.match(indexHTML, new RegExp(`id="${id}"`));
@@ -214,7 +258,7 @@ test('Incident Studio is evidence-first, one-call, owned, and responsive', () =>
     assert.match(mainJS, /InvestigateResource\(ref\.kind, ref\.namespace, ref\.name\)/);
     assert.match(mainJS, /stopIncidentWatch\(\)/);
     assert.match(mainJS, /requestScopes\.drawerOwnerKey\(scope\)/);
-    assert.match(mainJS, /SaveIncidentReport\(JSON\.stringify\(incidentReport\)\)/);
+    assert.match(mainJS, /const report = incidentReport;[\s\S]*?SaveIncidentReport\(JSON\.stringify\(report\)\)/);
     assert.match(incidentCSS, /\.incident-two-column/);
     assert.match(incidentCSS, /@media \(max-width: 840px\)/);
     assert.match(incidentCSS, /@media \(prefers-reduced-motion: reduce\)/);
@@ -246,6 +290,13 @@ test('cluster writes cross confirmation and connection-ownership boundaries', ()
 	for (const binding of ['DeleteResourceOwned', 'RestartDeploymentOwned', 'DrainNodeOwned', 'RunCronJobNowOwned', 'HelmUninstallOwned']) {
 		assert.match(mainJS, new RegExp(`${binding}\\(connectionID|${binding}\\(cluster`));
 	}
+});
+
+test('permission gates match the exact Kubernetes request shape', () => {
+	assert.match(mainJS, /btn-yaml-save'\), ownsYAML && allowed\(set, 'update'\)/);
+	assert.doesNotMatch(mainJS, /btn-yaml-save'\)[^\n]*allowed\(set, 'patch'\)/);
+	assert.match(mainJS, /label: 'Scale…', need: 'scale'/);
+	assert.match(mainJS, /btn-scale'\), allowed\(set, 'scale'\)/);
 });
 
 test('create and import YAML apply to the modal-owning connection only', () => {

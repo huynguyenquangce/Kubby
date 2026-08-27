@@ -67,6 +67,11 @@ func probesFor(ak APIKind) []accessProbe {
 			accessProbe{"portforward", "create", "portforward"},
 		)
 	}
+	// Scaling is an update on deployments/scale, which can be granted or denied
+	// independently of updates to the Deployment object itself.
+	if ak.GVR.Group == "apps" && ak.GVR.Resource == "deployments" {
+		probes = append(probes, accessProbe{"scale", "update", "scale"})
+	}
 	return probes
 }
 

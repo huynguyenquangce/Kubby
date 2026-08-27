@@ -77,15 +77,49 @@ type SecretInfo struct {
 	Age       string `json:"age"`
 }
 
-// erroredStatuses are pod statuses treated as errors so the frontend can flag them (FR-3).
+// erroredStatuses are Pod statuses treated as active issues so the frontend can
+// flag them consistently in lists, counts, search, Overview and topology.
 var erroredStatuses = map[string]bool{
 	"CrashLoopBackOff":           true,
 	"ImagePullBackOff":           true,
 	"ErrImagePull":               true,
 	"CreateContainerConfigError": true,
+	"CreateContainerError":       true,
+	"RunContainerError":          true,
+	"ContainerCannotRun":         true,
+	"InvalidImageName":           true,
+	"OOMKilled":                  true,
+	"Unschedulable":              true,
+	"NotReady":                   true,
+	"Pending":                    true,
+	"Unknown":                    true,
 	"Failed":                     true,
 	"Error":                      true,
 	"Evicted":                    true,
+}
+
+// podStatusPrecedence makes the displayed status independent of container
+// ordering. A progress state from one container must never hide a real failure
+// in another container just because it appeared later in status.containerStatuses.
+var podStatusPrecedence = map[string]int{
+	"CrashLoopBackOff":           120,
+	"OOMKilled":                  115,
+	"ImagePullBackOff":           110,
+	"ErrImagePull":               110,
+	"InvalidImageName":           110,
+	"CreateContainerConfigError": 105,
+	"CreateContainerError":       105,
+	"RunContainerError":          105,
+	"ContainerCannotRun":         105,
+	"Error":                      100,
+	"Failed":                     95,
+	"Evicted":                    95,
+	"Unschedulable":              90,
+	"Unknown":                    80,
+	"NotReady":                   60,
+	"ContainerCreating":          40,
+	"PodInitializing":            40,
+	"Pending":                    30,
 }
 
 func ListNamespaces(ctx context.Context, client kubernetes.Interface) ([]NamespaceInfo, error) {
@@ -266,28 +300,67 @@ func podStatus(pod corev1.Pod) (status string, restarts int32, ready string) {
 		return "Terminating", restarts, ready
 	}
 
-	// Init failures prevent every application container from starting and are
-	// therefore more useful than the generic Pending phase.
+	priority := podStatusPrecedence[status]
+	choose := func(candidate string, init bool) {
+		if candidate == "" || candidate == "Completed" {
+			return
+		}
+		candidatePriority := podStatusPrecedence[candidate]
+		if init && candidatePriority >= 90 {
+			candidatePriority++ // a failing init container blocks every app container
+		}
+		display := candidate
+		if init {
+			display = "Init:" + candidate
+		}
+		if candidatePriority > priority || (candidatePriority == priority && display < status) {
+			status = display
+			priority = candidatePriority
+		}
+	}
+
+	// An explicit scheduling denial is more useful than the generic Pending
+	// phase, even when container statuses have not been populated yet.
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse {
+			if condition.Reason == "Unschedulable" {
+				choose("Unschedulable", false)
+			} else {
+				choose("Pending", false)
+			}
+		}
+		if condition.Type == corev1.PodReady && condition.Status != corev1.ConditionTrue && pod.Status.Phase == corev1.PodRunning {
+			choose("NotReady", false)
+		}
+	}
+
 	for _, cs := range pod.Status.InitContainerStatuses {
 		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-			return "Init:" + cs.State.Waiting.Reason, restarts, ready
+			choose(cs.State.Waiting.Reason, true)
 		}
 		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
 			reason := cs.State.Terminated.Reason
-			if reason == "" {
+			if reason == "" || !erroredStatuses[reason] {
 				reason = "Error"
 			}
-			return "Init:" + reason, restarts, ready
+			choose(reason, true)
 		}
 	}
 
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-			status = cs.State.Waiting.Reason
+			choose(cs.State.Waiting.Reason, false)
 		}
-		if cs.State.Terminated != nil && cs.State.Terminated.Reason != "" && cs.State.Terminated.Reason != "Completed" {
-			status = cs.State.Terminated.Reason
+		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
+			reason := cs.State.Terminated.Reason
+			if reason == "" || !erroredStatuses[reason] {
+				reason = "Error"
+			}
+			choose(reason, false)
 		}
+	}
+	if pod.Status.Phase == corev1.PodRunning && (total == 0 || readyCount < total) {
+		choose("NotReady", false)
 	}
 	return status, restarts, ready
 }
