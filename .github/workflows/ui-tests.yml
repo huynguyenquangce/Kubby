@@ -26,6 +26,17 @@ jobs:
         with:
           go-version: '1.26.6'
           cache-dependency-path: src/kubby/go.sum
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/kubby/frontend/package-lock.json
+      - name: Build embedded frontend
+        working-directory: src/kubby/frontend
+        run: |
+          npm ci
+          npm run build
       - name: Check formatting
         shell: bash
         run: |
