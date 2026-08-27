@@ -127,9 +127,34 @@ type CustomObject struct {
 	IsError   bool   `json:"isError"` // Ready=False
 }
 
+type CustomObjectPage struct {
+	Items []CustomObject   `json:"items"`
+	Page  ResourcePageMeta `json:"page"`
+}
+
 // ListCustom lists the objects of a custom kind ("Kind.group"), in the given
 // namespace ("" = all).
 func ListCustom(ctx context.Context, c *Cluster, refKind, namespace string) ([]CustomObject, error) {
+	page, err := ListCustomPage(ctx, c, refKind, namespace, "", 0)
+	if err != nil {
+		return nil, err
+	}
+	out := page.Items
+	for page.Page.Continue != "" {
+		page, err = ListCustomPage(ctx, c, refKind, namespace, page.Page.Continue, 0)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page.Items...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Namespace+"/"+out[i].Name < out[j].Namespace+"/"+out[j].Name
+	})
+	return out, nil
+}
+
+// ListCustomPage lists a bounded page of an arbitrary discovered resource.
+func ListCustomPage(ctx context.Context, c *Cluster, refKind, namespace, continueToken string, limit int64) (*CustomObjectPage, error) {
 	ak, err := c.ResolveKind(refKind)
 	if err != nil {
 		return nil, err
@@ -137,9 +162,9 @@ func ListCustom(ctx context.Context, c *Cluster, refKind, namespace string) ([]C
 	ri := c.Dynamic.Resource(ak.GVR)
 	list, err := func() (*unstructured.UnstructuredList, error) {
 		if !ak.Namespaced {
-			return ri.List(ctx, metav1.ListOptions{})
+			return ri.List(ctx, resourcePageOptions(continueToken, limit))
 		}
-		return ri.Namespace(namespace).List(ctx, metav1.ListOptions{})
+		return ri.Namespace(namespace).List(ctx, resourcePageOptions(continueToken, limit))
 	}()
 	if err != nil {
 		return nil, err
@@ -158,7 +183,10 @@ func ListCustom(ctx context.Context, c *Cluster, refKind, namespace string) ([]C
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Namespace+"/"+out[i].Name < out[j].Namespace+"/"+out[j].Name
 	})
-	return out, nil
+	return &CustomObjectPage{
+		Items: out,
+		Page:  resourcePageMeta(list.GetContinue(), list.GetRemainingItemCount()),
+	}, nil
 }
 
 // readyCondition pulls a human status out of the near-universal

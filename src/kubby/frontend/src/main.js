@@ -23,6 +23,16 @@ import { lineDiff } from './line-diff.js';
 import { confirmedAction, summarizeLineChanges } from './confirmed-action.js';
 import { overviewHealthModel } from './overview-health.js';
 import { createKeyedRequestOwner } from './keyed-request.js';
+import {
+    allTableRows,
+    appendVirtualRows,
+    clearVirtualRows,
+    clearVirtualSelections,
+    filterVirtualRows,
+    setVirtualRows,
+    sortVirtualRows,
+    updateVirtualPaging,
+} from './virtual-table.js';
 
 import {
     PickKubeconfigFile,
@@ -35,7 +45,7 @@ import {
     DisconnectCluster,
     ListNodes,
     ListNamespaces,
-    PodsSnapshot,
+    PodsPage,
     ListDeployments,
     ListServices,
     ListConfigMaps,
@@ -80,6 +90,9 @@ import {
     UpdateYAML,
     ApplyYAMLOwned,
     ApplyPreview,
+    PlanApplyPermissions,
+    PlanDrainPermissions,
+    PlanHelmPermissions,
     CanI,
     Sizing,
     GetDetail,
@@ -94,7 +107,7 @@ import {
     SearchResources,
     SidebarCounts,
     CustomKinds,
-    ListCustom,
+    ListCustomPage,
     NetworkFlows,
     ClusterStructure,
     AskAboutResource,
@@ -807,26 +820,53 @@ function loadCustom(scope) {
     if (!meta) return Promise.resolve();
     $('custom-title').textContent = meta.title;
     $('custom-api').textContent = meta.refKind;
-    return ListCustom(meta.refKind, meta.namespaced ? scope.namespace : '')
-        .then((items) => {
-            if (!isCurrentViewRequest(scope)) return;
+    customPageState = { scope, meta, token: '', loading: false, loaded: 0 };
+    return loadNextCustomPage(true);
+}
+
+let customPageState = null;
+
+function loadNextCustomPage(reset = false) {
+    const state = customPageState;
+    if (!state || state.loading || !isCurrentViewRequest(state.scope)) return Promise.resolve();
+    if (!reset && !state.token) return Promise.resolve();
+    state.loading = true;
+    $('custom-load-more').disabled = true;
+    $('custom-page-status').textContent = reset ? 'Loading first page…' : `Loading after ${state.loaded}…`;
+    return ListCustomPage(state.meta.refKind, state.meta.namespaced ? state.scope.namespace : '', state.token, RESOURCE_PAGE_LIMIT)
+        .then((page) => {
+            if (state !== customPageState || !isCurrentViewRequest(state.scope)) return;
+            const items = page?.items ?? [];
             const body = $('custom-body');
             const table = body.closest('table');
-            body.innerHTML = '';
-            $('custom-empty').hidden = (items?.length ?? 0) > 0;
-            for (const it of items ?? []) {
+            const rows = items.map((it) => {
                 const tr = row(
                     `<td>${esc(it.namespace)}</td><td>${esc(it.name)}</td>`
                     + `<td>${it.status ? badge(it.status, !it.isError) : '<span class="dim">—</span>'}</td>`
                     + `<td>${esc(it.age)}</td>`,
-                    { isError: !!it.isError, ref: { kind: meta.refKind, namespace: it.namespace, name: it.name } },
+                    { isError: !!it.isError, ref: { kind: state.meta.refKind, namespace: it.namespace, name: it.name } },
                 );
                 padRowToHeader(tr, table);
-                body.appendChild(tr);
-            }
+                return tr;
+            });
+            state.loaded += rows.length;
+            state.token = page?.page?.continue ?? '';
+            const options = { hasMore: !!state.token, onNearEnd: () => loadNextCustomPage(false) };
+            if (reset) setVirtualRows(body, rows, options);
+            else appendVirtualRows(body, rows, options);
+            updatePageControls('custom', state.loaded, page?.page);
+            $('custom-empty').hidden = state.loaded > 0;
+            filterCurrentTable();
         })
-        .catch((err) => viewError(scope, err));
+        .catch((err) => viewError(state.scope, err))
+        .finally(() => {
+            if (state !== customPageState) return;
+            state.loading = false;
+            $('custom-load-more').disabled = false;
+        });
 }
+
+$('custom-load-more').addEventListener('click', () => loadNextCustomPage(false));
 
 // Custom-resource views share one DOM section (#view-custom) because there is no
 // per-kind markup to generate — only the kind being listed differs.
@@ -923,7 +963,7 @@ function setViewStatus(state, message) {
 }
 
 function clearRenderedView(view = currentView) {
-    document.querySelectorAll(`#${viewSectionId(view)} tbody`).forEach((body) => { body.innerHTML = ''; });
+    document.querySelectorAll(`#${viewSectionId(view)} tbody`).forEach((body) => clearVirtualRows(body));
     // These dashboard canvases contain actionable buttons rather than table
     // rows. Remove the previous owner immediately so a slow cluster/namespace
     // response cannot leave a clickable topology from the old scope.
@@ -950,7 +990,16 @@ function filterCurrentTable() {
     const body = document.querySelector(`#${viewSectionId(currentView)} tbody`);
     if (!body) { $('view-count').textContent = ''; return; }
     const term = $('view-filter').value.trim().toLowerCase();
-    const rows = body.querySelectorAll('tr');
+    const rows = allTableRows(body);
+    const matchRow = (tr) => {
+        const searchText = tr.dataset.searchText ??= tr.textContent.toLowerCase();
+        return !term || searchText.includes(term);
+    };
+    const virtual = filterVirtualRows(body, term ? matchRow : null);
+    if (virtual) {
+        $('view-count').textContent = term ? `${virtual.shown} / ${virtual.total}` : `${virtual.total}`;
+        return;
+    }
     let shown = 0;
     for (const tr of rows) {
         // Reading textContent walks every descendant. Cache the normalized row
@@ -1117,16 +1166,16 @@ function loadSimple(scope, listFn, viewId, kind, cellsFn) {
             if (!isCurrentViewRequest(scope)) return;
             const body = $(`${viewId}-body`);
             const table = body.closest('table');
-            body.innerHTML = '';
             $(`${viewId}-empty`).hidden = (items?.length ?? 0) > 0;
-            for (const it of items ?? []) {
+            const rows = (items ?? []).map((it) => {
                 const tr = row(cellsFn(it), {
                     isError: !!it.isError,
                     ref: { kind, namespace: it.namespace ?? '', name: it.name },
                 });
                 padRowToHeader(tr, table);
-                body.appendChild(tr);
-            }
+                return tr;
+            });
+            setVirtualRows(body, rows);
         })
         .catch((err) => viewError(scope, err));
 }
@@ -1492,13 +1541,11 @@ function loadNodes(scope) {
         .then((nodes) => {
             if (!isCurrentViewRequest(scope)) return;
             const body = $('nodes-body');
-            body.innerHTML = '';
-            for (const n of nodes ?? []) {
-                body.appendChild(row(
+            const rows = (nodes ?? []).map((n) => row(
                     `<td>${esc(n.name)}</td><td>${badge(n.status, n.ready)}</td><td>${esc(n.role)}</td><td class="mono">${esc(n.version)}</td><td>${esc(n.age)}</td>`,
                     { ref: { kind: 'Node', namespace: '', name: n.name } },
                 ));
-            }
+            setVirtualRows(body, rows);
         })
         .catch((err) => viewError(scope, err));
 }
@@ -1509,42 +1556,79 @@ function loadNamespaces(scope) {
         .then((namespaces) => {
             if (!isCurrentViewRequest(scope)) return;
             const body = $('namespaces-body');
-            body.innerHTML = '';
-            for (const ns of namespaces ?? []) {
-                body.appendChild(row(
+            const rows = (namespaces ?? []).map((ns) => row(
                     `<td>${esc(ns.name)}</td><td>${badge(ns.status, ns.status === 'Active')}</td><td>${esc(ns.age)}</td>`,
                     { ref: { kind: 'Namespace', namespace: '', name: ns.name } },
                 ));
-            }
+            setVirtualRows(body, rows);
         })
         .catch((err) => viewError(scope, err));
 }
 
 // ---- Pods (enriched: live CPU/mem, IP, node, age, per-row actions) ----
 function loadPods(scope) {
-    return PodsSnapshot(scope.namespace)
+    podsPageState = { scope, token: '', loading: false, loaded: 0 };
+    return loadNextPodsPage(true);
+}
+
+const RESOURCE_PAGE_LIMIT = 200;
+let podsPageState = null;
+
+function updatePageControls(prefix, loaded, page) {
+    const box = $(`${prefix}-pagination`);
+    const button = $(`${prefix}-load-more`);
+    const token = page?.continue ?? '';
+    const remaining = Number(page?.remaining ?? -1);
+    box.hidden = loaded === 0;
+    button.hidden = !token;
+    $(`${prefix}-page-status`).textContent = token
+        ? (remaining >= 0 ? `${loaded} loaded · ${remaining} remaining` : `${loaded} loaded · more available`)
+        : `${loaded} loaded · complete`;
+}
+
+function loadNextPodsPage(reset = false) {
+    const state = podsPageState;
+    if (!state || state.loading || !isCurrentViewRequest(state.scope)) return Promise.resolve();
+    if (!reset && !state.token) return Promise.resolve();
+    state.loading = true;
+    $('pods-load-more').disabled = true;
+    $('pods-page-status').textContent = reset ? 'Loading first page…' : `Loading after ${state.loaded}…`;
+    return PodsPage(state.scope.namespace, state.token, RESOURCE_PAGE_LIMIT)
         .then((snapshot) => {
-            if (!isCurrentViewRequest(scope)) return;
+            if (state !== podsPageState || !isCurrentViewRequest(state.scope)) return;
             const pods = snapshot?.pods ?? [];
             const metrics = snapshot?.metrics ?? [];
             const usage = {};
             for (const m of metrics) usage[`${m.namespace}/${m.name}`] = m;
             const body = $('pods-body');
-            body.innerHTML = '';
-            $('pods-empty').hidden = (pods?.length ?? 0) > 0;
-            for (const p of pods) {
+            const rows = pods.map((p) => {
                 const m = usage[`${p.namespace}/${p.name}`];
                 const cpu = m ? `${m.cpuMilli}m` : '–';
                 const mem = m ? `${m.memMi}Mi` : '–';
                 const ref = { kind: 'Pod', namespace: p.namespace, name: p.name, isPod: true };
-                body.appendChild(row(
+                return row(
                     `<td>${esc(p.name)}</td><td>${esc(p.namespace)}</td><td>${esc(p.ready)}</td><td>${badge(p.status, !p.isError)}</td><td>${p.restarts}</td><td class="mono">${cpu}</td><td class="mono">${mem}</td><td class="mono">${esc(p.podIP)}</td><td class="mono">${esc(p.node)}</td><td>${esc(p.age)}</td>`,
                     { isError: p.isError, ref },
-                ));
-            }
+                );
+            });
+            state.loaded += rows.length;
+            state.token = snapshot?.page?.continue ?? '';
+            const options = { hasMore: !!state.token, onNearEnd: () => loadNextPodsPage(false) };
+            if (reset) setVirtualRows(body, rows, options);
+            else appendVirtualRows(body, rows, options);
+            updatePageControls('pods', state.loaded, snapshot?.page);
+            $('pods-empty').hidden = state.loaded > 0;
+            filterCurrentTable();
         })
-        .catch((err) => viewError(scope, err));
+        .catch((err) => viewError(state.scope, err))
+        .finally(() => {
+            if (state !== podsPageState) return;
+            state.loading = false;
+            $('pods-load-more').disabled = false;
+        });
 }
+
+$('pods-load-more').addEventListener('click', () => loadNextPodsPage(false));
 
 // A three-dot actions button + per-row menu, like Lens/Headlamp.
 function actionsBtn(ref = null) {
@@ -1567,14 +1651,12 @@ function loadDeployments(scope) {
         .then((deps) => {
             if (!isCurrentViewRequest(scope)) return;
             const body = $('deployments-body');
-            body.innerHTML = '';
             $('deployments-empty').hidden = (deps?.length ?? 0) > 0;
-            for (const d of deps ?? []) {
-                body.appendChild(row(
+            const rows = (deps ?? []).map((d) => row(
                     `<td>${esc(d.namespace)}</td><td>${esc(d.name)}</td><td>${badge(d.ready, !d.isError)}</td><td>${d.upToDate}</td><td>${d.available}</td><td>${esc(d.age)}</td>`,
                     { isError: d.isError, ref: { kind: 'Deployment', namespace: d.namespace, name: d.name } },
                 ));
-            }
+            setVirtualRows(body, rows);
         })
         .catch((err) => viewError(scope, err));
 }
@@ -1585,14 +1667,12 @@ function loadServices(scope) {
         .then((svcs) => {
             if (!isCurrentViewRequest(scope)) return;
             const body = $('services-body');
-            body.innerHTML = '';
             $('services-empty').hidden = (svcs?.length ?? 0) > 0;
-            for (const s of svcs ?? []) {
-                body.appendChild(row(
+            const rows = (svcs ?? []).map((s) => row(
                     `<td>${esc(s.namespace)}</td><td>${esc(s.name)}</td><td>${esc(s.type)}</td><td class="mono">${esc(s.clusterIP)}</td><td class="mono">${esc(s.ports)}</td><td>${esc(s.age)}</td>`,
                     { ref: { kind: 'Service', namespace: s.namespace, name: s.name } },
                 ));
-            }
+            setVirtualRows(body, rows);
         })
         .catch((err) => viewError(scope, err));
 }
@@ -1603,14 +1683,12 @@ function loadConfigMaps(scope) {
         .then((items) => {
             if (!isCurrentViewRequest(scope)) return;
             const body = $('configmaps-body');
-            body.innerHTML = '';
             $('configmaps-empty').hidden = (items?.length ?? 0) > 0;
-            for (const c of items ?? []) {
-                body.appendChild(row(
+            const rows = (items ?? []).map((c) => row(
                     `<td>${esc(c.namespace)}</td><td>${esc(c.name)}</td><td>${c.keys}</td><td>${esc(c.age)}</td>`,
                     { ref: { kind: 'ConfigMap', namespace: c.namespace, name: c.name } },
                 ));
-            }
+            setVirtualRows(body, rows);
         })
         .catch((err) => viewError(scope, err));
 }
@@ -1621,14 +1699,12 @@ function loadSecrets(scope) {
         .then((items) => {
             if (!isCurrentViewRequest(scope)) return;
             const body = $('secrets-body');
-            body.innerHTML = '';
             $('secrets-empty').hidden = (items?.length ?? 0) > 0;
-            for (const s of items ?? []) {
-                body.appendChild(row(
+            const rows = (items ?? []).map((s) => row(
                     `<td>${esc(s.namespace)}</td><td>${esc(s.name)}</td><td class="mono">${esc(s.type)}</td><td>${s.keys}</td><td>${esc(s.age)}</td>`,
                     { ref: { kind: 'Secret', namespace: s.namespace, name: s.name } },
                 ));
-            }
+            setVirtualRows(body, rows);
         })
         .catch((err) => viewError(scope, err));
 }
@@ -3742,6 +3818,9 @@ function openModal({ title, bodyHtml, okText = 'OK', onOk, onOpen, extraText = '
     if (onExtra) extra.textContent = extraText || 'More';
     $('modal-backdrop').hidden = false;
     modal.hidden = false;
+    $('sidebar').inert = true;
+    document.querySelector('.main').inert = true;
+    if (!$('drawer').hidden) $('drawer').inert = true;
     if (onOpen) onOpen();
     setTimeout(() => {
         if (!isCurrentModalRequest(scope) || modal.contains(document.activeElement)) return;
@@ -3761,6 +3840,11 @@ function closeModal(scope = null) {
     $('modal').hidden = true;
     $('modal').classList.remove('modal-compact', 'modal-wide', 'modal-editor');
     $('modal-backdrop').hidden = true;
+    $('drawer').inert = false;
+    if ($('drawer').hidden && $('palette').hidden) {
+        $('sidebar').inert = false;
+        document.querySelector('.main').inert = false;
+    }
     disposeModalContent();
     $('modal-extra').hidden = true;
     $('modal-extra').disabled = false;
@@ -3942,10 +4026,15 @@ function openYamlApplyModal({ title, okText, value = '', placeholder = '', empty
         onOk: () => {
             const v = modalYaml('modal-yaml').trim();
             if (!v) return Promise.reject(emptyMessage);
-            return ApplyYAMLOwned(connectionID, v).then(applyReport, (err) => {
-                markApplyFailures(err);
-                throw err;
-            });
+            return PlanApplyPermissions(v)
+                .then((plan) => {
+                    ensurePermissionPlan(plan);
+                    return ApplyYAMLOwned(connectionID, v);
+                })
+                .then(applyReport, (err) => {
+                    markApplyFailures(err);
+                    throw err;
+                });
         },
     });
 }
@@ -4001,6 +4090,7 @@ function renderApplyPreview(panel, d) {
         `<p class="pv-summary">${esc(counts.join(' · ') || 'Nothing to apply.')}</p>`,
         `<p class="pv-note">Nothing has been changed yet. This is the cluster's own answer, so it includes
          the defaults it fills in and anything admission would rewrite.</p>`,
+        permissionPlanHTML(d?.permissions),
     ];
     docs.forEach((doc, i) => {
         const badge = { create: 'pv-create', update: 'pv-update', unchanged: 'pv-unchanged' }[doc.action] || 'pv-error';
@@ -4400,6 +4490,40 @@ function denyReason(kind, namespace, verb) {
     return `Your token cannot ${verb} ${String(kind).split('.')[0]}${where}.`;
 }
 
+function deniedPermissionReasons(plan) {
+    return (plan?.requirements ?? [])
+        .filter((requirement) => requirement.checked && !requirement.allowed)
+        .map((requirement) => requirement.reason || `Permission denied: ${requirement.verb} ${requirement.kind}.`);
+}
+
+function ensurePermissionPlan(plan) {
+    const denied = deniedPermissionReasons(plan);
+    if (denied.length > 0 || plan?.permitted === false) {
+        throw new Error(denied.join('\n') || 'The API server explicitly denied a required permission.');
+    }
+    return plan;
+}
+
+function permissionPlanSummary(plan) {
+    const requirements = plan?.requirements?.length ?? 0;
+    const unknown = plan?.unknown ?? 0;
+    if (!requirements) return 'No Kubernetes resource permissions were required.';
+    if (unknown) return `${requirements - unknown} permission checks passed · ${unknown} could not be verified and will be decided by the API server.`;
+    return `${requirements} permission checks passed.`;
+}
+
+function permissionPlanHTML(plan) {
+    if (!plan) return '';
+    const denied = deniedPermissionReasons(plan);
+    const tone = denied.length ? ' permission-plan-denied' : '';
+    const title = denied.length ? `${denied.length} required permission${denied.length === 1 ? '' : 's'} denied` : 'Permission preflight';
+    const details = denied.length ? denied : (plan.warnings ?? []);
+    return `<section class="permission-plan${tone}" aria-label="Permission preflight">
+        <strong>${esc(title)}</strong><p>${esc(permissionPlanSummary(plan))}</p>
+        ${details.length ? `<ul>${details.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>` : ''}
+    </section>`;
+}
+
 // A different cluster means different permissions; the Go-side cache is per
 // connection, so only this one needs clearing.
 function clearAccessCache() {
@@ -4588,12 +4712,19 @@ function nodeSchedule(ref, schedulable) {
 
 function drainRef(ref) {
     const connectionID = $('cluster-select').value;
-    showConfirm(`Drain node “${ref.name}”?\nThis cordons it and evicts its pods (DaemonSet pods are kept).`, { title: 'Drain node', icon: '🚰', okText: 'Drain', danger: true }).then((ok) => {
-        if (!ok) return;
-        DrainNodeOwned(connectionID, ref.name)
-            .then(() => refreshCurrentView())
-            .catch((err) => showError(errMsg(err)));
-    });
+    PlanDrainPermissions(ref.name)
+        .then((plan) => {
+            ensurePermissionPlan(plan);
+            return showConfirm(
+                `Drain node “${ref.name}”?\nThis cordons it and evicts its pods (DaemonSet pods are kept).\n\n${permissionPlanSummary(plan)}`,
+                { title: 'Drain node', icon: '🚰', okText: 'Drain', danger: true },
+            );
+        })
+        .then((ok) => {
+            if (!ok) return;
+            return DrainNodeOwned(connectionID, ref.name).then(() => refreshCurrentView());
+        })
+        .catch((err) => showError(errMsg(err)));
 }
 
 function runCronNow(ref) {
@@ -4707,6 +4838,7 @@ function toggleRowSelection(ref, checked, tr) {
 
 function clearSelection() {
     selectedRows.clear();
+    clearVirtualSelections();
     document.querySelectorAll('.row-check:checked').forEach((cb) => { cb.checked = false; });
     document.querySelectorAll('.select-all:checked').forEach((cb) => { cb.checked = false; });
     document.querySelectorAll('tr.selected').forEach((tr) => tr.classList.remove('selected'));
@@ -4724,7 +4856,8 @@ function updateBulkBar() {
 document.addEventListener('change', (e) => {
     if (!e.target.classList.contains('select-all')) return;
     const checked = e.target.checked;
-    e.target.closest('table').querySelectorAll('tbody .row-check').forEach((cb) => {
+    const body = e.target.closest('table').querySelector('tbody');
+    allTableRows(body).map((row) => row.querySelector('.row-check')).filter(Boolean).forEach((cb) => {
         const tr = cb.closest('tr');
         if (tr.hidden) return;
         cb.checked = checked;
@@ -4770,7 +4903,7 @@ function sortTable(th) {
     const idx = [...headRow.children].indexOf(th);
     const table = th.closest('table');
     const tbody = table.querySelector('tbody');
-    const rows = [...tbody.querySelectorAll('tr')];
+    const rows = allTableRows(tbody);
     const asc = th.getAttribute('data-sort') !== 'asc';
 
     // Reset indicators on sibling headers.
@@ -4787,11 +4920,13 @@ function sortTable(th) {
     ind.textContent = asc ? ' ↑' : ' ↓';
     (th.querySelector('.sort-button') || th).appendChild(ind);
 
-    rows.sort((a, b) => {
+    const compare = (a, b) => {
         const av = cellSortValue(a, idx), bv = cellSortValue(b, idx);
         if (typeof av === 'number' && typeof bv === 'number') return asc ? av - bv : bv - av;
         return asc ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
-    });
+    };
+    if (sortVirtualRows(tbody, compare)) return;
+    rows.sort(compare);
     for (const r of rows) tbody.appendChild(r);
 }
 
@@ -5121,10 +5256,12 @@ function openHelmDetailModal(ref, initialTab = 'resources') {
         const cluster = $('cluster-select').value;
         const clusterName = $('cluster-select').selectedOptions[0]?.textContent ?? cluster;
         try {
+            const plan = await PlanHelmPermissions('test', ref.namespace, ref.name, 0);
+            ensurePermissionPlan(plan);
             await confirmedAction(
                 () => showConfirm(
                     `Run Helm tests for release “${ref.name}” in namespace “${ref.namespace}” on cluster “${clusterName}”?\n`
-                    + 'Test hooks may create or delete cluster resources.',
+                    + `Test hooks may create or delete cluster resources.\n\n${permissionPlanSummary(plan)}`,
                     { title: 'Run Helm tests', icon: '🧪', okText: 'Run tests' },
                 ),
                 async () => {
@@ -5221,10 +5358,18 @@ function loadHelmHistory(ref, scope, historyBox) {
                 });
             });
             box.querySelectorAll('.helm-rollback-btn').forEach((btn) => {
-                btn.addEventListener('click', () => {
+                btn.addEventListener('click', async () => {
                     const rev = parseInt(btn.dataset.rev, 10);
                     const cluster = $('cluster-select').value;
-                    showConfirm(`Rollback release “${ref.name}” to revision ${rev}?`, { title: 'Rollback release', icon: '↩', okText: 'Rollback' }).then((ok) => {
+                    let plan;
+                    try {
+                        plan = await PlanHelmPermissions('rollback', ref.namespace, ref.name, rev);
+                        ensurePermissionPlan(plan);
+                    } catch (err) {
+                        if (isCurrentModalRequest(scope)) showError(errMsg(err));
+                        return;
+                    }
+                    showConfirm(`Rollback release “${ref.name}” to revision ${rev}?\n\n${permissionPlanSummary(plan)}`, { title: 'Rollback release', icon: '↩', okText: 'Rollback' }).then((ok) => {
                         if (!ok || !isCurrentModalRequest(scope)) return;
                         if ($('cluster-select').value !== cluster) {
                             showError('The active cluster changed before rollback started. Reopen the release and try again.');
@@ -5354,10 +5499,17 @@ function openHelmUpgradeModal(ref) {
                     return;
                 }
                 if (!diff.releaseRevision || !diff.valuesDigest) throw new Error('Preview did not return release ownership data.');
+                const denied = deniedPermissionReasons(diff.permissions);
+                renderDiffInto(pre, diff.current, diff.proposed, { collapse: 3 });
+                if (denied.length || diff.permissions?.permitted === false) {
+                    approvedPreview = null;
+                    okButton.disabled = true;
+                    status.textContent = denied.join(' ') || 'A required permission was denied.';
+                    return;
+                }
                 approvedPreview = { values: vals, revision: diff.releaseRevision, valuesDigest: diff.valuesDigest };
                 okButton.disabled = false;
-                renderDiffInto(pre, diff.current, diff.proposed, { collapse: 3 });
-                status.textContent = `Preview approved for revision ${diff.releaseRevision}.`;
+                status.textContent = `Preview approved for revision ${diff.releaseRevision}. ${diff.permissions ? permissionPlanSummary(diff.permissions) : ''}`.trim();
             })
             .catch((err) => {
                 if (isCurrentModalRequest(scope) && reqId === previewReqId) {
@@ -5372,7 +5524,15 @@ function openHelmUpgradeModal(ref) {
 function uninstallHelm(ref, modalScope = null) {
     const cluster = $('cluster-select').value;
     const clusterName = $('cluster-select').selectedOptions[0]?.textContent ?? cluster;
-    showConfirm(`Uninstall Helm release “${ref.name}” in ${ref.namespace} from cluster “${clusterName}”?\nThis removes all its resources.`, { title: 'Uninstall release', icon: '🗑', okText: 'Uninstall', danger: true }).then((ok) => {
+    PlanHelmPermissions('uninstall', ref.namespace, ref.name, 0)
+        .then((plan) => {
+            ensurePermissionPlan(plan);
+            return showConfirm(
+                `Uninstall Helm release “${ref.name}” in ${ref.namespace} from cluster “${clusterName}”?\nThis removes all its resources.\n\n${permissionPlanSummary(plan)}`,
+                { title: 'Uninstall release', icon: '🗑', okText: 'Uninstall', danger: true },
+            );
+        })
+        .then((ok) => {
         if (!ok) return;
         if ($('cluster-select').value !== cluster || (modalScope && !isCurrentModalRequest(modalScope))) {
             showError('The active cluster or release changed before uninstall started. Reopen the release and try again.');
@@ -5382,7 +5542,8 @@ function uninstallHelm(ref, modalScope = null) {
         HelmUninstallOwned(cluster, ref.namespace, ref.name)
             .then(() => { loadSidebarCounts(); refreshCurrentView(); })
             .catch((err) => showError(errMsg(err)));
-    });
+        })
+        .catch((err) => showError(errMsg(err)));
 }
 
 // ---- Catalog (Artifact Hub + configured repositories) + install ----
@@ -5709,10 +5870,17 @@ function openChartInstallModal(chart) {
             .then((diff) => {
                 if (!isCurrentModalRequest(scope) || reqId !== previewReqId) return;
                 if (!diff.chartDigest) throw new Error('Preview did not return a chart digest.');
+                const denied = deniedPermissionReasons(diff.permissions);
+                renderDiffInto(pre, diff.current, diff.proposed);
+                if (denied.length || diff.permissions?.permitted === false) {
+                    approvedPreview = null;
+                    okButton.disabled = true;
+                    statusBox.textContent = denied.join(' ') || 'A required permission was denied.';
+                    return;
+                }
                 approvedPreview = { ...previewInput, digest: diff.chartDigest };
                 okButton.disabled = false;
-                statusBox.textContent = `Previewed exact chart ${diff.chartDigest.slice(0, 19)}…`;
-                renderDiffInto(pre, diff.current, diff.proposed);
+                statusBox.textContent = `Previewed exact chart ${diff.chartDigest.slice(0, 19)}… ${diff.permissions ? permissionPlanSummary(diff.permissions) : ''}`.trim();
             })
             .catch((err) => {
                 if (isCurrentModalRequest(scope) && reqId === previewReqId) {

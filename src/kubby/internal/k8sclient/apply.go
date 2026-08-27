@@ -206,11 +206,12 @@ type ApplyDiffDoc struct {
 // ApplyDiff is the whole bundle's preview. Counts are carried so the UI can
 // summarise without walking the documents.
 type ApplyDiff struct {
-	Docs      []ApplyDiffDoc `json:"docs"`
-	Create    int            `json:"create"`
-	Update    int            `json:"update"`
-	Unchanged int            `json:"unchanged"`
-	Failed    int            `json:"failed"`
+	Docs        []ApplyDiffDoc  `json:"docs"`
+	Create      int             `json:"create"`
+	Update      int             `json:"update"`
+	Unchanged   int             `json:"unchanged"`
+	Failed      int             `json:"failed"`
+	Permissions *PermissionPlan `json:"permissions"`
 }
 
 // ApplyPreview answers "what would this YAML change?" without changing anything,
@@ -262,6 +263,10 @@ func ApplyPreview(ctx context.Context, c *Cluster, yamlText string) (*ApplyDiff,
 	}
 	if len(out.Docs) == 0 {
 		return nil, fmt.Errorf("no YAML content to preview")
+	}
+	out.Permissions, err = PlanApplyPermissions(ctx, c, yamlText)
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

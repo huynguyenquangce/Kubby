@@ -42,8 +42,8 @@ cd ..
 | `frontend/src/log-buffer.test.js` | 5,000-line cap, frame coalescing, incremental append and oldest-chunk trimming |
 | `frontend/src/line-diff.test.js` | diff reconstruction, pathological fallback, and 10,000-line regression budget |
 | `frontend/src/responsive.test.js` | canonical off-canvas navigation, reachable contextual page actions, workspace container breakpoints, viewport-bounded overlays, low-height Terminal compaction, and single-column modal forms/actions |
-| `frontend/e2e/ui.spec.js` | paste/connect workflow, every built-in view, two-axis responsive/zoom matrix, 60-kind Custom Resources navigation, content-owned table scrolling, mobile navigation ownership, Structure filtering, Incident Studio evidence/export/safe hand-off, Pod drawer/YAML with exact snapshot cancellation, stale-delete isolation, Terminal behavior, Settings draft ownership, and Helm detail/install/late-values/repository/destructive-dialog behavior |
-| `frontend/e2e/visual.spec.js` | stable Chromium baselines for the compact command bar, light/dark Overview, Cluster Structure, Incident Studio, and the Pod Terminal; failures retain screenshot, video, and trace evidence |
+| `frontend/e2e/ui.spec.js` | paste/connect workflow, every built-in view, two-axis responsive/zoom matrix, paged/virtualized Pods and Custom Resources, explicit apply-permission denial, content-owned table scrolling, mobile navigation ownership, Structure filtering, Incident Studio evidence/export/safe hand-off, Pod drawer/YAML with exact snapshot cancellation, stale-delete isolation, Terminal behavior, Settings draft ownership, and Helm detail/install/late-values/repository/destructive-dialog behavior |
+| `frontend/e2e/visual.spec.js` | stable Chromium baselines for the compact command bar, light/dark Overview, Cluster Structure, Incident Studio, the Pod Terminal, and narrow light/dark Pods; failures retain screenshot, video, and trace evidence |
 | `internal/k8sclient/exec_test.go` | Bash-first shell selection/fallback/error reporting, initial/coalesced terminal resize, and concurrent unblocking queue close |
 | `internal/k8sclient/logstream_test.go` | rate-limited full batches, quiet-stream timer flush, final flush and cancel semantics |
 | `internal/k8sclient/overview_test.go` | one Node/Pod list, 30-second recent-Event reuse, partial failures, terminating-Pod exclusion, and 10k benchmark |
@@ -55,11 +55,21 @@ cd ..
 | `internal/k8sclient/httpbody_test.go`, `artifacthub_test.go` | exact response-size ceilings, chunked overflow, and bounded Artifact Hub decoding |
 | `internal/k8sclient/drawer_test.go` | one concurrent Details snapshot carries required detail plus best-effort Events/relationship expansions without duplicate API actions |
 | `internal/k8sclient/custom_integration_test.go` | fake discovery and dynamic clients prove group-qualified CRDs flow from sidebar discovery through namespaced listing/status |
+| `internal/k8sclient/permissionplan_test.go` | permission-plan deduplication, explicit deny, unknown-is-allowed, and page-limit/token invariants |
+| `frontend/src/virtual-table.test.js` | virtual table accessibility, paging callback, detached sort and selection contracts |
+| `frontend/e2e/accessibility.spec.js` | narrow light/dark accessible names, duplicate IDs, viewport containment, table row counts, modal inertness and focus trapping |
 
-None of them need a cluster. The Playwright suite needs its pinned Chromium and
-Linux system libraries installed as described in `docs/BUILD.md`. Everything else is still verified through
-`cmd/kubby-cli` against a real one — **that is a gap, not a design choice** — see
-*Worth adding* at the bottom.
+None of the unit/browser tests need a cluster. The Playwright suite needs its
+pinned Chromium and Linux system libraries installed as described in
+`docs/BUILD.md`. Behaviour beyond the disposable smoke below is still verified
+through `cmd/kubby-cli` or the documented native/manual checks; those remaining
+gaps are not treated as proof.
+
+CI additionally creates a disposable kind cluster pinned by image digest and
+runs `scripts/verify-kind.sh`. It applies synthetic Namespace/Pod/CRD fixtures,
+then checks diagnostics, Pods, drawer, CRD discovery, custom-resource listing,
+and apply permission planning through the built `kubby-cli`. The fixture has no
+credentials or Secret data and the cluster is deleted by the script's exit trap.
 
 ## Version & diagnostics
 
@@ -124,6 +134,9 @@ go run ./cmd/kubby-cli list-custom <Kind.group> [-n <ns>]
 go run ./cmd/kubby-cli netflows [-n <ns>]
 go run ./cmd/kubby-cli diff -f <file>                         # dry-run: what would change, writes nothing
 go run ./cmd/kubby-cli can-i <Kind[.group]> [-n <ns>]         # what this token may do
+go run ./cmd/kubby-cli plan-apply -f <file>                    # exact server-side-apply RBAC plan
+go run ./cmd/kubby-cli plan-drain <node>                       # Node/list/per-namespace eviction plan
+go run ./cmd/kubby-cli plan-helm <action> <release> -n <ns>   # uninstall/rollback/test plan
 go run ./cmd/kubby-cli sizing [-n <ns>]                       # requests/limits vs usage
 go run ./cmd/kubby-cli diag <Kind[.group]> <name> -n <ns>     # the exact AI evidence
 go run ./cmd/kubby-cli helm-search <query>

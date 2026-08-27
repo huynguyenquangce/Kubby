@@ -322,6 +322,71 @@ func main() {
 	_ = diffCmd.MarkFlagRequired("file")
 	root.AddCommand(diffCmd)
 
+	// plan-apply — exact per-document RBAC plan used before Import YAML writes.
+	var planApplyFile string
+	planApplyCmd := &cobra.Command{
+		Use:   "plan-apply -f <file>",
+		Short: "Plan the permissions required by server-side apply (read-only)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			data, err := os.ReadFile(planApplyFile)
+			if err != nil {
+				return err
+			}
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			plan, err := k8sclient.PlanApplyPermissions(cmd.Context(), cluster, string(data))
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(plan)
+		},
+	}
+	planApplyCmd.Flags().StringVarP(&planApplyFile, "file", "f", "", "YAML file to inspect")
+	_ = planApplyCmd.MarkFlagRequired("file")
+	root.AddCommand(planApplyCmd)
+
+	planDrainCmd := &cobra.Command{
+		Use:   "plan-drain <node>",
+		Short: "Plan Node patch, Pod list, and per-namespace eviction permissions (read-only)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			plan, err := k8sclient.PlanDrainPermissions(cmd.Context(), cluster, args[0])
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(plan)
+		},
+	}
+	root.AddCommand(planDrainCmd)
+
+	var planHelmNamespace string
+	var planHelmRevision int
+	planHelmCmd := &cobra.Command{
+		Use:   "plan-helm <uninstall|rollback|test> <release>",
+		Short: "Plan a Helm release action's resource and storage permissions (read-only)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			plan, err := k8sclient.PlanHelmAction(cmd.Context(), cluster, args[0], planHelmNamespace, args[1], planHelmRevision)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(plan)
+		},
+	}
+	planHelmCmd.Flags().StringVarP(&planHelmNamespace, "namespace", "n", "default", "release namespace")
+	planHelmCmd.Flags().IntVar(&planHelmRevision, "revision", 0, "rollback target revision")
+	root.AddCommand(planHelmCmd)
+
 	// can-i — what the current token may do to a kind (drives the UI's greying-out).
 	var caniNs string
 	caniCmd := &cobra.Command{

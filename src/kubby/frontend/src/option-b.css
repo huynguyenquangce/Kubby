@@ -775,6 +775,8 @@ tbody tr:hover { background: #f8faff; }
 .view:not(#view-overview):not(#view-structure) tbody tr:nth-child(even) { background: #fcfcfd; }
 tbody tr.clickable:hover { background: #f3f6ff; box-shadow: inset 3px 0 0 var(--blue); }
 tr.error-row { background: #fff8f8; }
+.view:not(#view-overview):not(#view-structure) tbody tr.error-row { background: #fff8f8; }
+.view:not(#view-overview):not(#view-structure) tbody tr.error-row:hover { background: #fff0f0; }
 tr.error-row:hover { background: var(--err-bg); }
 .status-badge { border-radius: 6px; padding: 0.18rem 0.48rem; font-size: 0.7rem; }
 .status-badge::before { width: 6px; height: 6px; }
@@ -849,6 +851,8 @@ tr.error-row:hover { background: var(--err-bg); }
 :root[data-theme="dark"] .command-search:focus-visible { background: var(--surface-raised); border-color: var(--blue); }
 :root[data-theme="dark"] th { background: var(--surface-sunken); color: #91a1b8; }
 :root[data-theme="dark"] .view:not(#view-overview):not(#view-structure) tbody tr:nth-child(even):not(.error-row) { background: rgba(255, 255, 255, 0.018); }
+:root[data-theme="dark"] .view:not(#view-overview):not(#view-structure) tbody tr.error-row { background: rgba(150, 48, 63, 0.24); }
+:root[data-theme="dark"] .view:not(#view-overview):not(#view-structure) tbody tr.error-row:hover { background: rgba(175, 57, 73, 0.3); }
 :root[data-theme="dark"] tbody tr:hover,
 :root[data-theme="dark"] tbody tr.clickable:hover { background: #213049; }
 :root[data-theme="dark"] tr.error-row { background: rgba(150, 48, 63, 0.24); }

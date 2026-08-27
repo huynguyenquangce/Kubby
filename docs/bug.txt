@@ -624,3 +624,17 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   while responsive checks only measured horizontal bounds. Fix: a low-height
   Terminal layout that compacts nonessential chrome while preserving a usable PTY,
   plus two-axis E2E bounds and xterm-size checks across the zoom matrix.
+- [2026-08-27] Large resource views could transfer thousands of Pods/CRs and
+  retain one live `<tr>` plus listeners per object, while Import, Drain and Helm
+  exposed multi-resource writes after checking only a partial or no RBAC shape.
+  Root causes: list bindings had no Kubernetes continuation contract, table
+  state lived only in the DOM, and permission gating modeled one kind/namespace
+  rather than a workflow plan. Fix: real `Limit`/`continue` pages for Pods and
+  Custom Resources, a detached virtual-row owner shared by resource tables, and
+  discovery/manifest-derived permission plans whose explicit denials block but
+  whose unanswered probes remain allowed. A digest-pinned disposable kind CI
+  smoke plus narrow light/dark accessibility and visual tests now guard the new
+  boundaries. Those baselines also exposed an ID-strength zebra selector
+  overriding error rows in both themes; the semantic error selectors now match
+  that specificity.
+  Other typed backend lists remain the documented pagination gap.

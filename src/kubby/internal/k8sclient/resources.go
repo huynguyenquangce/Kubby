@@ -40,6 +40,37 @@ type PodInfo struct {
 	Age       string `json:"age"`
 }
 
+// ResourcePageMeta carries the opaque Kubernetes continuation token for one
+// bounded list response. Remaining is -1 when the API server did not report an
+// exact remainingItemCount.
+type ResourcePageMeta struct {
+	Continue  string `json:"continue"`
+	Remaining int64  `json:"remaining"`
+}
+
+const (
+	defaultResourcePageLimit int64 = 200
+	maxResourcePageLimit     int64 = 500
+)
+
+func resourcePageOptions(continueToken string, limit int64) metav1.ListOptions {
+	if limit <= 0 {
+		limit = defaultResourcePageLimit
+	}
+	if limit > maxResourcePageLimit {
+		limit = maxResourcePageLimit
+	}
+	return metav1.ListOptions{Continue: continueToken, Limit: limit}
+}
+
+func resourcePageMeta(continueToken string, remaining *int64) ResourcePageMeta {
+	count := int64(-1)
+	if remaining != nil {
+		count = *remaining
+	}
+	return ResourcePageMeta{Continue: continueToken, Remaining: count}
+}
+
 // DeploymentInfo is the trimmed-down data the frontend renders.
 type DeploymentInfo struct {
 	Namespace string `json:"namespace"`
@@ -182,8 +213,12 @@ func ListPods(ctx context.Context, client kubernetes.Interface, namespace string
 		return nil, err
 	}
 
-	result := make([]PodInfo, 0, len(list.Items))
-	for _, pod := range list.Items {
+	return podInfos(list.Items), nil
+}
+
+func podInfos(items []corev1.Pod) []PodInfo {
+	result := make([]PodInfo, 0, len(items))
+	for _, pod := range items {
 		status, restarts, ready := podStatus(pod)
 		result = append(result, PodInfo{
 			Namespace: pod.Namespace,
@@ -197,7 +232,7 @@ func ListPods(ctx context.Context, client kubernetes.Interface, namespace string
 			Age:       age(pod.CreationTimestamp),
 		})
 	}
-	return result, nil
+	return result
 }
 
 func ListDeployments(ctx context.Context, client kubernetes.Interface, namespace string) ([]DeploymentInfo, error) {

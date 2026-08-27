@@ -539,11 +539,12 @@ func HelmInstall(ctx context.Context, c *Cluster, namespace, releaseName, repoUR
 // HelmDiff carries the rendered manifest before/after an operation so the UI
 // can show a line diff (helm-diff style) before the user commits.
 type HelmDiff struct {
-	Current         string `json:"current"`         // "" for a fresh install
-	Proposed        string `json:"proposed"`        // rendered manifest that WOULD be applied
-	ChartDigest     string `json:"chartDigest"`     // non-empty for install previews
-	ReleaseRevision int    `json:"releaseRevision"` // current revision bound to an upgrade preview
-	ValuesDigest    string `json:"valuesDigest"`    // exact edited values bound to an upgrade preview
+	Current         string          `json:"current"`         // "" for a fresh install
+	Proposed        string          `json:"proposed"`        // rendered manifest that WOULD be applied
+	ChartDigest     string          `json:"chartDigest"`     // non-empty for install previews
+	ReleaseRevision int             `json:"releaseRevision"` // current revision bound to an upgrade preview
+	ValuesDigest    string          `json:"valuesDigest"`    // exact edited values bound to an upgrade preview
+	Permissions     *PermissionPlan `json:"permissions"`
 }
 
 // HelmInstallPreview renders (dry-run) the manifest a fresh install would create,
@@ -574,7 +575,8 @@ func HelmInstallPreview(ctx context.Context, c *Cluster, namespace, releaseName,
 	if err != nil {
 		return nil, err
 	}
-	return &HelmDiff{Current: "", Proposed: rel.Manifest, ChartDigest: digest}, nil
+	permissions := planHelmManifests(ctx, c, "helm-install", namespace, "", rel.Manifest, rel.Hooks, release.HookPreInstall, release.HookPostInstall)
+	return &HelmDiff{Current: "", Proposed: rel.Manifest, ChartDigest: digest, Permissions: permissions}, nil
 }
 
 // HelmUpgradePreview renders (dry-run) the manifest an upgrade-values would
@@ -603,6 +605,7 @@ func HelmUpgradePreview(ctx context.Context, c *Cluster, namespace, name, values
 	return &HelmDiff{
 		Current: current.Manifest, Proposed: proposed.Manifest,
 		ReleaseRevision: current.Version, ValuesDigest: textDigest(valuesYAML),
+		Permissions: planHelmManifests(ctx, c, "helm-upgrade", namespace, current.Manifest, proposed.Manifest, proposed.Hooks, release.HookPreUpgrade, release.HookPostUpgrade),
 	}, nil
 }
 

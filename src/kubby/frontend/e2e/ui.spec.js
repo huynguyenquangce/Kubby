@@ -84,6 +84,57 @@ test('FR-28/FR-38: compact Command Palette trigger is bounded and uses keyboard-
     await expectViewportBounded(page);
 });
 
+test('NFR-7: Pods uses Kubernetes pages and keeps only a visible row window in the DOM', async ({ page }) => {
+    const pods = Array.from({ length: 200 }, (_, index) => ({
+        namespace: 'payments',
+        name: `pod-${String(index).padStart(3, '0')}`,
+        status: 'Running',
+        ready: '1/1',
+        restarts: 0,
+        podIP: `10.244.1.${index + 1}`,
+        node: 'kubby-worker',
+        age: '1m',
+        isError: false,
+    }));
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await connectDashboard(page, {
+        overrides: { PodsPage: { pods, metrics: [], page: { continue: 'next-page', remaining: 1 } } },
+    });
+    await page.locator('.nav-item[data-view="pods"]').click();
+    await expect(page.locator('#view-pods table')).toHaveAttribute('aria-rowcount', '201');
+    expect(await page.locator('#pods-body tr:not(.virtual-spacer)').count()).toBeLessThan(80);
+    await expect(page.locator('#pods-page-status')).toHaveText('200 loaded · 1 remaining');
+
+    await page.evaluate(() => window.__wailsMock.setResponse('PodsPage', {
+        pods: [{ namespace: 'payments', name: 'pod-last', status: 'Pending', ready: '0/1', restarts: 0, podIP: '', node: '', age: '1m', isError: true }],
+        metrics: [],
+        page: { continue: '', remaining: 0 },
+    }));
+    await page.locator('#pods-load-more').evaluate((button) => button.click());
+    await expect(page.locator('#view-pods table')).toHaveAttribute('aria-rowcount', '202');
+    await expect(page.locator('#pods-page-status')).toHaveText('201 loaded · complete');
+    await page.locator('#view-filter').fill('pod-last');
+    await expect(page.locator('#pods-body tr:not(.virtual-spacer)')).toHaveCount(1);
+    await expect(page.locator('#pods-body')).toContainText('pod-last');
+});
+
+test('FR-35: an explicit multi-resource permission denial blocks Import YAML before dispatch', async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await connectDashboard(page, {
+        overrides: {
+            PlanApplyPermissions: {
+                operation: 'apply-yaml', permitted: false, denied: 1, unknown: 0,
+                requirements: [{ kind: 'Deployment', namespace: 'payments', verb: 'patch', checked: true, allowed: false, reason: 'Your token cannot patch Deployment in namespace payments.' }],
+            },
+        },
+    });
+    await page.locator('#btn-import').click();
+    await page.locator('#modal-yaml .cm-content').fill('apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: denied\n  namespace: payments\n');
+    await page.locator('#modal-ok').click();
+    await expect(page.locator('#modal-error')).toContainText('cannot patch Deployment');
+    expect(await page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'ApplyYAMLOwned').length)).toBe(0);
+});
+
 test('FR-2/FR-13: pasted kubeconfig enters a populated Overview', async ({ page }) => {
     const pageErrors = collectPageErrors(page);
     await connectDashboard(page);

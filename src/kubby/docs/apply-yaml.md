@@ -107,6 +107,10 @@ omits a document is worse than one that says why it cannot show it:
   `kubectl`. This is stated rather than silent: the report names the namespace of
   every object it touched.
 - **A namespace on a cluster-scoped object is cleared**, since the API rejects it.
+- Before dispatch, `PlanApplyPermissions` resolves every document and asks the
+  API server for `patch`, the exact server-side-apply RBAC verb. A checked denial
+  blocks Apply; an unanswered probe remains allowed. Preview includes the same
+  plan so the user can see it before the final modal action.
 
 ## Related: editing YAML in the drawer
 

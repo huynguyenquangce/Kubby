@@ -105,17 +105,29 @@ not the one the label suggests**:
 cannot exec into Pod in nexus"* tells the truth. A missing tab would suggest Kubby
 has no terminal.
 
-### Two things deliberately not gated
+### Multi-resource permission plans
 
-- **Import YAML** — its content can name any kind, so there is nothing specific to
-  check up front. The per-document report already names what failed.
-- **Drain** — it needs `create` on `pods/eviction` in every namespace it touches,
-  which is unknowable from the node's row. It is gated on `patch` on the Node, which
-  is the step drain performs first. Stated here so nobody assumes the check is
-  complete.
+`permissionplan.go` turns workflows that span kinds or namespaces into an
+explicit `PermissionPlan`. The same invariant applies: a checked denial blocks;
+an unanswered probe remains allowed and the API server is final authority.
 
-Helm actions are ungated: a release's permissions are the permissions of every
-object in it plus the Secret holding its state, which is not one question.
+- **Import YAML** resolves every document through discovery and checks `patch`,
+  the actual HTTP/RBAC verb used by server-side apply even when the object does
+  not exist yet.
+- **Drain** checks Node `patch`, the cluster-wide Pod `list`, then lists the
+  node's current non-DaemonSet/non-mirror Pods and checks `create` on
+  `pods/eviction` in each namespace it will touch.
+- **Helm install/upgrade** derive get/create/patch/delete questions from the exact
+  dry-run manifest against the current release. Uninstall and rollback compare
+  the stored current/target manifests; test plans inspect only test hooks. Every
+  Helm plan also includes matching lifecycle hooks (create/get/watch/delete,
+  plus optional Pod-log access) and the release-storage Secret verbs. A CRD and its custom
+  objects in the same chart can be unresolved before install; this is reported
+  as an allowed warning rather than invented as a denial.
+
+The frontend reruns Apply planning immediately before dispatch. Helm preview
+ownership still pins chart/revision/values separately; the permission plan is
+advisory and never replaces those safety boundaries.
 
 ## Verify
 
@@ -123,6 +135,9 @@ object in it plus the Secret holding its state, which is not one question.
 go run ./cmd/kubby-cli can-i Pod -n nexus
 go run ./cmd/kubby-cli can-i Node                                  # cluster-scoped
 go run ./cmd/kubby-cli can-i VirtualService.networking.istio.io -n nexus
+go run ./cmd/kubby-cli plan-apply -f manifest.yaml
+go run ./cmd/kubby-cli plan-drain <node>
+go run ./cmd/kubby-cli plan-helm uninstall <release> -n <namespace>
 ```
 
 As cluster-admin everything answers `yes`, which proves nothing. Make a restricted

@@ -205,9 +205,10 @@ test('overview avoids duplicate node usage and exposes a one-call cluster struct
     assert.match(clear, /resetStructureInspector\(\)/);
 });
 
-test('pods load through one snapshot binding', () => {
+test('pods load through one paged binding', () => {
     const loader = mainJS.match(/function loadPods\(scope\) \{[\s\S]*?\n\}/)?.[0] ?? '';
-    assert.match(loader, /return PodsSnapshot\(scope\.namespace\)/);
+    assert.match(loader, /return loadNextPodsPage\(true\)/);
+    assert.match(mainJS, /PodsPage\(state\.scope\.namespace, state\.token, RESOURCE_PAGE_LIMIT\)/);
     assert.doesNotMatch(loader, /Promise\.all|\bListPods\(|\bPodMetricsList\(/);
 });
 

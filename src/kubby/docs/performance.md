@@ -169,17 +169,37 @@ go test ./internal/k8sclient -run '^$' -bench BenchmarkOverviewSnapshot10kPods -
 go test ./internal/k8sclient -run '^$' -bench BenchmarkNetworkTopologyIndexedJoin1000Services10kPods -benchmem
 ```
 
+## Bounded resource tables
+
+Pods and Custom Resources request 200 objects at a time using the API server's
+opaque continuation token. Their page payload carries `remainingItemCount` when
+the server provides it; the UI exposes both an accessible Load more control and
+near-end loading. Pods still cross the Wails bridge once per page with matching
+metrics filtered to that page.
+
+Every resource table stores its loaded rows outside the DOM and mounts only the
+visible window plus ten rows of overscan once it exceeds 80 rows. Top/bottom
+spacer rows preserve scroll geometry; `aria-rowcount`/`aria-rowindex` preserve
+table position, and filter, sort, bulk selection, refresh cleanup, and keyboard
+focus operate on the detached row state rather than only mounted `<tr>` nodes.
+
 ## Known remaining costs
 
 Not yet addressed — worth knowing before blaming something else:
 
-- **Every list is unbounded.** No `Limit`, no `continue`. A production cluster
-  with thousands of pods transfers all of them.
-- **One `<tr>` per object in the DOM**, each with event listeners.
-- **`filterCurrentTable` still scans every row on every keystroke.** Normalized
-  row text is cached in `dataset.searchText` after the first pass, so it no longer
-  walks every descendant repeatedly; server-side `Limit` or virtualised rendering
-  remains the real fix for very large tables.
+- **Typed lists other than Pods remain unbounded at the Kubernetes API.** Their
+  DOM cost is virtualized, but the backend still transfers the whole typed list.
+- **Pod metrics do not share the Pod list continuation token.** The metrics API
+  is still listed once for the scope and filtered down before the page crosses
+  Wails; Pod objects and frontend payloads are bounded, but metrics-server work
+  can still grow with the namespace.
+- **Loaded-row memory is not yet data-only.** The virtual owner retains one
+  detached row element and its listeners per loaded object even though only the
+  visible window participates in DOM layout. Event delegation plus row factories
+  would be the next memory reduction if users routinely load every page.
+- **Filtering scans every loaded row.** Normalized row text is cached after the
+  first pass, but search is not server-side and does not claim to include pages
+  that have not been loaded yet.
 - **CodeMirror remains eager** because the Welcome screen immediately needs the
   shared editor for pasted kubeconfig content. The terminal runtime is lazy: its
   dynamic xterm/FitAddon chunks load only when a Terminal tab opens, and the

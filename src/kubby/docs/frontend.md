@@ -424,9 +424,12 @@ The frontend side of [performance.md](performance.md):
 - **Ownership scopes** from `request-scope.js` on any connection, view, namespace,
   drawer, or editor response that can be superseded. Feature-local request IDs may
   supplement the scope (for repeated reloads) but cannot replace it.
-- Known unpaid cost: one `<tr>` per object with listeners. Table filtering caches
-  normalized row text after its first pass, but still scans every row on every
-  keystroke; large tables ultimately need pagination or virtualised rendering.
+- `virtual-table.js` owns loaded resource rows outside the DOM, renders a bounded
+  visible window after 80 rows, and keeps filter/sort/bulk selection working on
+  detached rows. Pods and Custom Resources additionally load Kubernetes pages;
+  other typed lists still pay their backend list cost even though their DOM is
+  bounded. Filtering scans the loaded row state and does not imply unseen pages
+  were searched.
 
 ## Verify
 

@@ -218,6 +218,10 @@ export function ListCustom(arg1, arg2) {
   return window['go']['main']['App']['ListCustom'](arg1, arg2);
 }
 
+export function ListCustomPage(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ListCustomPage'](arg1, arg2, arg3, arg4);
+}
+
 export function ListDaemonSets(arg1) {
   return window['go']['main']['App']['ListDaemonSets'](arg1);
 }
@@ -326,6 +330,18 @@ export function PickKubeconfigFile() {
   return window['go']['main']['App']['PickKubeconfigFile']();
 }
 
+export function PlanApplyPermissions(arg1) {
+  return window['go']['main']['App']['PlanApplyPermissions'](arg1);
+}
+
+export function PlanDrainPermissions(arg1) {
+  return window['go']['main']['App']['PlanDrainPermissions'](arg1);
+}
+
+export function PlanHelmPermissions(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['PlanHelmPermissions'](arg1, arg2, arg3, arg4);
+}
+
 export function PodContainers(arg1, arg2) {
   return window['go']['main']['App']['PodContainers'](arg1, arg2);
 }
@@ -340,6 +356,10 @@ export function PodMetricsList(arg1) {
 
 export function PodsOnNode(arg1) {
   return window['go']['main']['App']['PodsOnNode'](arg1);
+}
+
+export function PodsPage(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PodsPage'](arg1, arg2, arg3);
 }
 
 export function PodsSnapshot(arg1) {

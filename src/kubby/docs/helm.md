@@ -59,6 +59,12 @@ maintainer and home links.
 - **Dry-run previews** set `DryRun=true` and return the rendered manifest; the
   frontend diffs it with `lineDiff`. This is what makes an upgrade reviewable
   before it happens, and it is worth keeping for any new mutating action.
+- **Permission plans use those exact manifests.** Install/upgrade compare the
+  dry-run result with current state; uninstall/rollback use stored current/target
+  manifests; test checks only test hooks. The plan includes Helm release-storage
+  Secrets and a missing install namespace. Explicit denials keep the final action
+  disabled; unresolved CRDs/probe failures remain allowed warnings because the
+  API server is still authoritative.
 - **Install preview pins the artifact.** The backend returns the SHA-256 of the
   exact resolved chart archive. Any form edit invalidates that preview, and
   Install re-resolves then compares the archive against the approved digest

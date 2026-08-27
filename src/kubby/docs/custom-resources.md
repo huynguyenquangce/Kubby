@@ -22,7 +22,8 @@ only for hard-coded built-in kinds.
 
 ```go
 func CustomKinds(ctx, c) (*CustomKindList, error)                  // the kinds → sections
-func ListCustom(ctx, c, refKind, namespace) ([]CustomObject, error) // one kind's objects
+func ListCustomPage(ctx, c, refKind, namespace, continue, limit) (*CustomObjectPage, error)
+func ListCustom(ctx, c, refKind, namespace) ([]CustomObject, error) // CLI/full-list compatibility
 ```
 
 **The CRD list is the authority**, not a name heuristic. "Any group that doesn't
@@ -36,6 +37,11 @@ the sidebar label.
 name, age — plus a `Status` read from the near-universal `status.conditions`
 convention (`readyCondition`). Many custom resources, Istio's included, have no
 conditions at all; the column shows "—" rather than inventing something.
+
+The UI consumes `ListCustomPage` in 200-object API-server pages. `ListCustom`
+walks those continuation tokens only for CLI callers that explicitly request a
+complete list. The shared custom table uses the same virtual row owner as typed
+resource tables.
 
 **No counts are fetched.** That would be one list request per CRD on every
 refresh, reintroducing exactly the cost [performance.md](performance.md) removed.

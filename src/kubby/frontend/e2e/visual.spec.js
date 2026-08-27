@@ -24,6 +24,18 @@ test('Overview dark theme visual baseline', async ({ page }) => {
     });
 });
 
+for (const theme of ['light', 'dark']) {
+    test(`Narrow Pods ${theme} visual baseline`, async ({ page }) => {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await connectDashboard(page, { theme });
+        await page.locator('#btn-mobile-nav').click();
+        await page.locator('.nav-item[data-view="pods"]').click();
+        await expect(page.locator('#pods-body tr')).toHaveCount(2);
+        await page.locator('#page-title').hover();
+        await expect(page.locator('#dashboard')).toHaveScreenshot(`pods-narrow-${theme}.png`);
+    });
+}
+
 test('Cluster structure visual baseline', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await connectDashboard(page, { theme: 'light' });

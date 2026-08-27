@@ -111,6 +111,8 @@ export function ListCronJobs(arg1:string):Promise<Array<k8sclient.CronJobInfo>>;
 
 export function ListCustom(arg1:string,arg2:string):Promise<Array<k8sclient.CustomObject>>;
 
+export function ListCustomPage(arg1:string,arg2:string,arg3:string,arg4:number):Promise<k8sclient.CustomObjectPage>;
+
 export function ListDaemonSets(arg1:string):Promise<Array<k8sclient.DaemonSetInfo>>;
 
 export function ListDeployments(arg1:string):Promise<Array<k8sclient.DeploymentInfo>>;
@@ -165,6 +167,12 @@ export function OverviewSnapshot():Promise<k8sclient.OverviewData>;
 
 export function PickKubeconfigFile():Promise<string>;
 
+export function PlanApplyPermissions(arg1:string):Promise<k8sclient.PermissionPlan>;
+
+export function PlanDrainPermissions(arg1:string):Promise<k8sclient.PermissionPlan>;
+
+export function PlanHelmPermissions(arg1:string,arg2:string,arg3:string,arg4:number):Promise<k8sclient.PermissionPlan>;
+
 export function PodContainers(arg1:string,arg2:string):Promise<Array<string>>;
 
 export function PodLogs(arg1:string,arg2:string,arg3:string,arg4:number):Promise<string>;
@@ -172,6 +180,8 @@ export function PodLogs(arg1:string,arg2:string,arg3:string,arg4:number):Promise
 export function PodMetricsList(arg1:string):Promise<Array<k8sclient.PodMetric>>;
 
 export function PodsOnNode(arg1:string):Promise<Array<k8sclient.PodInfo>>;
+
+export function PodsPage(arg1:string,arg2:string,arg3:number):Promise<k8sclient.PodsPage>;
 
 export function PodsSnapshot(arg1:string):Promise<k8sclient.PodsSnapshot>;
 

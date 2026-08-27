@@ -82,9 +82,12 @@ rather than historical retry counts.
 
 Both of the latter follow the rules in [performance.md](performance.md).
 
-The Pods table uses `PodsSnapshot`: one App binding concurrently loads Pod rows
-and optional metrics. Keep list/metrics merging inside that snapshot rather than
-adding a second frontend bridge call.
+The Pods table uses `PodsPage(namespace, continue, limit)`: one App binding loads
+a bounded Pod page and optional metrics filtered to those rows, then returns the
+API server's opaque continuation token. Keep list/metrics merging inside that
+page payload rather than adding a second frontend bridge call. All resource-list
+renderers hand their row objects to `virtual-table.js`; sort/filter/bulk actions
+must use that detached state rather than querying only the mounted row window.
 
 ## Frontend table conventions
 

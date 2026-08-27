@@ -446,6 +446,7 @@
                     <div class="card">
                         <table><thead><tr><th>Name</th><th>Namespace</th><th>Ready</th><th>Status</th><th>Restarts</th><th>CPU</th><th>Memory</th><th>IP</th><th>Node</th><th>Age</th><th class="no-sort col-actions">Actions</th></tr></thead>
                             <tbody id="pods-body"></tbody></table>
+                        <div class="list-pagination" id="pods-pagination" hidden><span id="pods-page-status" aria-live="polite"></span><button id="pods-load-more" class="btn btn-secondary btn-sm" type="button">Load more</button></div>
                         <p class="empty-inline" id="pods-empty" hidden>No pods in this namespace.</p>
                     </div>
                 </section>
@@ -734,6 +735,7 @@
                         <div class="card-head"><h3 id="custom-title">Custom resource</h3><span class="nm-total" id="custom-api"></span></div>
                         <table><thead><tr><th>Namespace</th><th>Name</th><th>Status</th></tr></thead>
                             <tbody id="custom-body"></tbody></table>
+                        <div class="list-pagination" id="custom-pagination" hidden><span id="custom-page-status" aria-live="polite"></span><button id="custom-load-more" class="btn btn-secondary btn-sm" type="button">Load more</button></div>
                         <p class="empty-inline" id="custom-empty" hidden>No objects of this kind.</p>
                     </div>
                 </section>

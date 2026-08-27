@@ -217,6 +217,15 @@ type PodsSnapshot struct {
 	Metrics []PodMetric `json:"metrics"`
 }
 
+// PodsPage is the bounded Pods-screen payload. It keeps rows and their optional
+// metrics behind one bridge call while exposing the API server's continuation
+// token for the next page.
+type PodsPage struct {
+	Pods    []PodInfo        `json:"pods"`
+	Metrics []PodMetric      `json:"metrics"`
+	Page    ResourcePageMeta `json:"page"`
+}
+
 func ListPodsSnapshot(ctx context.Context, c *Cluster, namespace string) (*PodsSnapshot, error) {
 	var pods []PodInfo
 	var metrics []PodMetric
@@ -239,6 +248,37 @@ func ListPodsSnapshot(ctx context.Context, c *Cluster, namespace string) (*PodsS
 		return nil, metricsErr
 	}
 	return &PodsSnapshot{Pods: pods, Metrics: metrics}, nil
+}
+
+func ListPodsPage(ctx context.Context, c *Cluster, namespace, continueToken string, limit int64) (*PodsPage, error) {
+	list, err := c.Clientset.CoreV1().Pods(namespace).List(ctx, resourcePageOptions(continueToken, limit))
+	if err != nil {
+		return nil, err
+	}
+
+	metrics, err := PodMetricsList(ctx, c, namespace)
+	if err != nil {
+		return nil, err
+	}
+	if len(metrics) > 0 {
+		wanted := make(map[string]struct{}, len(list.Items))
+		for i := range list.Items {
+			wanted[list.Items[i].Namespace+"\x00"+list.Items[i].Name] = struct{}{}
+		}
+		filtered := metrics[:0]
+		for _, metric := range metrics {
+			if _, ok := wanted[metric.Namespace+"\x00"+metric.Name]; ok {
+				filtered = append(filtered, metric)
+			}
+		}
+		metrics = filtered
+	}
+
+	return &PodsPage{
+		Pods:    podInfos(list.Items),
+		Metrics: metrics,
+		Page:    resourcePageMeta(list.Continue, list.RemainingItemCount),
+	}, nil
 }
 
 // PodMetricsList returns CPU/mem usage for every pod in a namespace ("" = all).

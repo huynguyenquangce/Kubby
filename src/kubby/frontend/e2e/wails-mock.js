@@ -52,8 +52,11 @@ const DEFAULT_FIXTURES = {
     ],
     ChartDetails: { versions: ['18.2.1', '18.1.0'], readme: '# nginx', homeURL: 'https://nginx.org', maintainers: ['Kubby Test'], links: [] },
     ChartDefaultValues: 'replicaCount: 1\n',
-    HelmInstallPreview: { current: '', proposed: 'apiVersion: v1\nkind: Service\n', chartDigest: 'sha256:test-chart' },
-    HelmUpgradePreview: { current: 'replicaCount: 1\n', proposed: 'replicaCount: 2\n', releaseRevision: 4, valuesDigest: 'sha256:test-values' },
+    HelmInstallPreview: { current: '', proposed: 'apiVersion: v1\nkind: Service\n', chartDigest: 'sha256:test-chart', permissions: { permitted: true, denied: 0, unknown: 0, requirements: [] } },
+    HelmUpgradePreview: { current: 'replicaCount: 1\n', proposed: 'replicaCount: 2\n', releaseRevision: 4, valuesDigest: 'sha256:test-values', permissions: { permitted: true, denied: 0, unknown: 0, requirements: [] } },
+    PlanApplyPermissions: { permitted: true, denied: 0, unknown: 0, requirements: [] },
+    PlanDrainPermissions: { permitted: true, denied: 0, unknown: 0, requirements: [] },
+    PlanHelmPermissions: { permitted: true, denied: 0, unknown: 0, requirements: [] },
     CustomKinds: { kinds: [], overflow: 0, total: 0 },
     CanI: {
         verbs: {
@@ -137,7 +140,7 @@ const DEFAULT_FIXTURES = {
         unexposed: [],
         warnings: [],
     },
-    PodsSnapshot: {
+    PodsPage: {
         pods: [
             { namespace: 'payments', name: 'api-6df7fdd9f8-4zj8g', status: 'Running', ready: '1/1', restarts: 0, podIP: '10.244.1.7', node: 'kubby-worker', age: '12m', isError: false },
             { namespace: 'payments', name: 'checkout-7b8d9f-2kw7p', status: 'CrashLoopBackOff', ready: '0/1', restarts: 7, podIP: '10.244.1.8', node: 'kubby-worker', age: '9m', isError: true },
@@ -146,6 +149,7 @@ const DEFAULT_FIXTURES = {
             { namespace: 'payments', name: 'api-6df7fdd9f8-4zj8g', cpuMilli: 90, memMi: 128 },
             { namespace: 'payments', name: 'checkout-7b8d9f-2kw7p', cpuMilli: 4, memMi: 32 },
         ],
+        page: { continue: '', remaining: 0 },
     },
     ListNodes: [
         { name: 'kubby-control-plane', status: 'Ready', role: 'control-plane', version: 'v1.34.0', age: '3d', isError: false },

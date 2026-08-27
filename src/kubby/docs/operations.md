@@ -29,6 +29,11 @@ Destructive actions use `danger: true`, which turns the OK button red.
 Delete resolves its target through [kind-resolution.md](kind-resolution.md), so it
 works for custom resources too.
 
+Drain runs a read-only permission plan before confirmation: Node `patch`,
+cluster-wide Pod `list`, and `create` on `pods/eviction` for every namespace of a
+current non-DaemonSet/non-mirror Pod on the node. Only explicit denials block;
+the live drain still lets the API server enforce a potentially changed answer.
+
 ## Adding an action
 
 1. `actions.go` — a function taking `(ctx, c, namespace, name, …)`. Use the typed

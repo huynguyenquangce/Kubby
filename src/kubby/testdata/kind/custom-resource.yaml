@@ -1,0 +1,7 @@
+apiVersion: kubby.dev/v1alpha1
+kind: Widget
+metadata:
+  name: sample
+  namespace: kubby-ci
+spec:
+  purpose: real-cluster-smoke

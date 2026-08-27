@@ -364,6 +364,15 @@ func (a *App) PodsSnapshot(namespace string) (*k8sclient.PodsSnapshot, error) {
 	return k8sclient.ListPodsSnapshot(a.ctx, cluster, namespace)
 }
 
+// PodsPage returns one bounded Pods-screen page and its continuation token.
+func (a *App) PodsPage(namespace, continueToken string, limit int64) (*k8sclient.PodsPage, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.ListPodsPage(a.ctx, cluster, namespace, continueToken, limit)
+}
+
 func (a *App) ListDeployments(namespace string) ([]k8sclient.DeploymentInfo, error) {
 	cluster, err := a.requireCluster()
 	if err != nil {
@@ -846,6 +855,15 @@ func (a *App) HelmGetRevision(namespace, name string, revision int) (*k8sclient.
 	defer done()
 	return k8sclient.HelmGetRevision(ctx, cluster, namespace, name, revision)
 }
+
+func (a *App) PlanHelmPermissions(operation, namespace, name string, revision int) (*k8sclient.PermissionPlan, error) {
+	ctx, cluster, done, err := a.beginHelmOperation("")
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	return k8sclient.PlanHelmAction(ctx, cluster, operation, namespace, name, revision)
+}
 func (a *App) HelmReleaseResources(namespace, name string) ([]k8sclient.HelmResource, error) {
 	ctx, cluster, done, err := a.beginHelmOperation("")
 	if err != nil {
@@ -1039,6 +1057,14 @@ func (a *App) ListCustom(refKind, namespace string) ([]k8sclient.CustomObject, e
 		return nil, err
 	}
 	return k8sclient.ListCustom(a.ctx, cluster, refKind, namespace)
+}
+
+func (a *App) ListCustomPage(refKind, namespace, continueToken string, limit int64) (*k8sclient.CustomObjectPage, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.ListCustomPage(a.ctx, cluster, refKind, namespace, continueToken, limit)
 }
 
 func (a *App) NetworkFlows(namespace string) (*k8sclient.NetworkFlows, error) {
@@ -1352,6 +1378,22 @@ func (a *App) ApplyPreview(yamlText string) (*k8sclient.ApplyDiff, error) {
 		return nil, err
 	}
 	return k8sclient.ApplyPreview(a.ctx, cluster, yamlText)
+}
+
+func (a *App) PlanApplyPermissions(yamlText string) (*k8sclient.PermissionPlan, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.PlanApplyPermissions(a.ctx, cluster, yamlText)
+}
+
+func (a *App) PlanDrainPermissions(nodeName string) (*k8sclient.PermissionPlan, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.PlanDrainPermissions(a.ctx, cluster, nodeName)
 }
 
 // Sizing reports declared requests/limits against actual usage for a namespace
