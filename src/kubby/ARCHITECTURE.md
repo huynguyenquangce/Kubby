@@ -110,7 +110,7 @@ src/kubby/
 ├── internal/k8sclient/         # ★ ALL Kubernetes logic (plain Go, shared by app + CLI)
 │   ├── client.go               #   Cluster struct + New()/NewFromContent() + Contexts()          → cluster-clients.md
 │   ├── apiindex.go             #   ResolveKind / ResolveGVK — discovery-backed, cached           → kind-resolution.md
-│   ├── resources*.go           #   Per-kind List functions (4 files, grouped by sidebar section) → resource-browsing.md
+│   ├── resources*.go           #   Per-kind List functions (5 files, grouped by sidebar section) → resource-browsing.md
 │   ├── detail.go               #   gvrByKind, resourceFor(), GetYAML/UpdateYAML, DeleteResource  → resource-browsing.md
 │   ├── describe.go             #   GetDetail (per-kind + genericDetail), ListEvents, age()       → resource-browsing.md
 │   ├── relations.go            #   DeploymentTree/ServiceTree/IngressTree + NodeMetrics/TopPods  → resource-browsing.md
@@ -125,6 +125,10 @@ src/kubby/
 │   ├── actions.go              #   Scale/Restart/Pause/Rollback, cordon/drain, RunCronJobNow     → operations.md
 │   ├── netflow.go              #   NetworkTopology → FlowIngress/FlowService/FlowPod             → traffic-flow.md
 │   ├── istioflow.go            #   Istio Gateway + VirtualService into the same lanes            → traffic-flow.md
+│   ├── netpol.go               #   Compiled policies, CheckTrafficPolicy, Traffic overlay        → traffic-flow.md
+│   ├── netpol_routes.go        #   Routes blocked by policy, evaluated from the entry point Pods → traffic-flow.md
+│   ├── relations_policy.go     #   HPA/PDB/NetworkPolicy relation trees for the drawer           → resource-browsing.md
+│   ├── drainimpact.go          #   DrainImpactFor — refusing PDBs, unmanaged Pods, emptyDir      → operations.md
 │   ├── logstream.go            #   StreamLogs (follow)                                           → streaming.md
 │   ├── portforward.go          #   StartPortForward (SPDY)                                       → streaming.md
 │   ├── exec.go                 #   StartExec (resize-aware PTY)                                  → streaming.md

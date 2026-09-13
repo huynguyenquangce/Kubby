@@ -6,6 +6,31 @@ Bug log — add one line per issue. Resolved items move to the bottom.
 
 ## Fixed
 
+- [2026-09-13] The NetworkPolicy overlay made the Traffic view seconds slow on
+  clusters with policies: on kind with 2,000 Pods and 500 policies one call went
+  from ~90 ms to ~6.5 s, and 10k endpoint rows × 50 policies allocated ~300 MB per
+  live refresh. Root cause: `annotateFlowPolicies` and `CheckTrafficPolicy`
+  re-parsed every policy's label selectors for every Pod row × policy (70% of CPU
+  and 93% of allocations in `metav1.LabelSelectorAsSelector`), re-evaluated a Pod
+  once per Service selecting it, and copied policy names onto every endpoint row
+  (+47% topology allocations). Fix: selectors and CIDRs compiled once per call and
+  bucketed by namespace, the overlay computed once per Pod and sent as
+  `NetworkFlows.PodPolicies`, and the source's egress policies resolved once per
+  check. 100k rows × 50 policies went 5.3 s → 24 ms, a 1,000-Pod × 500-policy
+  check 1.05 s → 41 ms, and topology allocations back to 46 MB/op; a deterministic
+  allocation-budget test and an endpoint-independent request-count test pin it.
+  AI evidence log reads also became concurrent.
+
+- [2026-09-13] Incident Studio offered "Inspect current and previous logs" for
+  crashing Pods, but the Logs tab could only read the current container
+  instance — the one that, in a CrashLoopBackOff, usually has not logged the
+  failure yet. Root cause: `PodLogs` never set `PodLogOptions.Previous` and no UI,
+  CLI or AI evidence path exposed it, so the action's label promised evidence the
+  drawer could not show. Fix: a Previous toggle in Logs (Follow disabled while
+  selected), `kubby-cli logs --previous`, an explanation instead of the kubelet's
+  "previous terminated container not found", and previous-instance logs attached
+  to AI evidence for restarted containers only.
+
 - [2026-08-25] Permission gating and the Wails write surface could address a
   different API request or cluster than the UI implied. Root causes: YAML Save
   was enabled for patch-only tokens although it performs `Update`, Deployment

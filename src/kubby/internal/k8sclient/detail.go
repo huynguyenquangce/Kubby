@@ -3,6 +3,7 @@ package k8sclient
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,6 +31,10 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"Job":                   {Group: "batch", Version: "v1", Resource: "jobs"},
 	"CronJob":               {Group: "batch", Version: "v1", Resource: "cronjobs"},
 	"Ingress":               {Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
+	"NetworkPolicy":         {Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"},
+
+	"HorizontalPodAutoscaler": {Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"},
+	"PodDisruptionBudget":     {Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"},
 
 	"PersistentVolume": {Group: "", Version: "v1", Resource: "persistentvolumes"},
 	"StorageClass":     {Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses"},
@@ -197,16 +202,92 @@ func PodContainers(ctx context.Context, c *Cluster, namespace, name string) ([]s
 	return names, nil
 }
 
-// PodLogs returns the last tailLines lines of a container's logs.
-func PodLogs(ctx context.Context, c *Cluster, namespace, name, container string, tailLines int64) (string, error) {
-	opts := &corev1.PodLogOptions{TailLines: &tailLines}
+// ContainerState is one regular container's runtime state for the Logs and
+// Terminal tabs: enough to say that a container has restarted, how its last
+// instance ended, and whether that instance's logs can be read.
+type ContainerState struct {
+	Name               string `json:"name"`
+	Ready              bool   `json:"ready"`
+	State              string `json:"state"` // "Running", "Waiting: CrashLoopBackOff", "Terminated: Completed"
+	RestartCount       int32  `json:"restartCount"`
+	LastTermination    string `json:"lastTermination"`    // "OOMKilled, exit 137"
+	LastTerminationAge string `json:"lastTerminationAge"` // "3m"
+	HasPrevious        bool   `json:"hasPrevious"`
+}
+
+// PodContainerStates returns every regular container with its current state,
+// in spec order, from one Pod read.
+func PodContainerStates(ctx context.Context, c *Cluster, namespace, name string) ([]ContainerState, error) {
+	pod, err := c.Clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	statuses := map[string]corev1.ContainerStatus{}
+	for _, status := range pod.Status.ContainerStatuses {
+		statuses[status.Name] = status
+	}
+	out := make([]ContainerState, 0, len(pod.Spec.Containers))
+	for _, container := range pod.Spec.Containers {
+		status, known := statuses[container.Name]
+		state := ContainerState{Name: container.Name, Ready: status.Ready, RestartCount: status.RestartCount}
+		switch {
+		case !known:
+			state.State = "Unknown"
+		case status.State.Running != nil:
+			state.State = "Running"
+		case status.State.Waiting != nil:
+			state.State = conditionText("Waiting", status.State.Waiting.Reason)
+		case status.State.Terminated != nil:
+			state.State = conditionText("Terminated", status.State.Terminated.Reason)
+		}
+		// The kubelet keeps the previous instance only once a container has
+		// restarted, and records how that instance ended alongside it.
+		if last := status.LastTerminationState.Terminated; last != nil && status.RestartCount > 0 {
+			state.HasPrevious = true
+			reason := last.Reason
+			if reason == "" {
+				reason = "Terminated"
+			}
+			state.LastTermination = fmt.Sprintf("%s, exit %d", reason, last.ExitCode)
+			if !last.FinishedAt.IsZero() {
+				state.LastTerminationAge = age(last.FinishedAt)
+			}
+		}
+		out = append(out, state)
+	}
+	return out, nil
+}
+
+// PodLogs returns the last tailLines lines of a container's logs. previous
+// reads the instance that ran before the most recent restart — for a
+// CrashLoopBackOff that is where the failure was written, while the current
+// instance may not have logged anything yet.
+func PodLogs(ctx context.Context, c *Cluster, namespace, name, container string, tailLines int64, previous bool) (string, error) {
+	opts := &corev1.PodLogOptions{TailLines: &tailLines, Previous: previous}
 	if container != "" {
 		opts.Container = container
 	}
 	req := c.Clientset.CoreV1().Pods(namespace).GetLogs(name, opts)
 	data, err := req.DoRaw(ctx)
 	if err != nil {
+		if previous {
+			return "", previousLogsError(container, err)
+		}
 		return "", err
 	}
 	return string(data), nil
+}
+
+// previousLogsError replaces the kubelet's "previous terminated container ...
+// not found" with what it means, since that is the ordinary answer for a
+// container that has never restarted rather than a failure.
+func previousLogsError(container string, err error) error {
+	if !strings.Contains(err.Error(), "previous terminated container") {
+		return err
+	}
+	subject := "This container"
+	if container != "" {
+		subject = fmt.Sprintf("Container %q", container)
+	}
+	return fmt.Errorf("%s has no previous instance: it has not restarted, or the kubelet has already discarded the terminated container's logs", subject)
 }

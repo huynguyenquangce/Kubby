@@ -24,7 +24,7 @@ func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error)
 }
 
 func TestNetworkTopologyStartsCoreListsConcurrently(t *testing.T) {
-	started := make(chan string, 4)
+	started := make(chan string, 5)
 	release := make(chan struct{})
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		resource := request.URL.Path[strings.LastIndex(request.URL.Path, "/")+1:]
@@ -38,6 +38,8 @@ func TestNetworkTopologyStartsCoreListsConcurrently(t *testing.T) {
 			apiVersion, kind = "networking.k8s.io/v1", "IngressList"
 		case "endpointslices":
 			apiVersion, kind = "discovery.k8s.io/v1", "EndpointSliceList"
+		case "networkpolicies":
+			apiVersion, kind = "networking.k8s.io/v1", "NetworkPolicyList"
 		}
 		body := fmt.Sprintf(`{"apiVersion":%q,"kind":%q,"items":[]}`, apiVersion, kind)
 		return &http.Response{
@@ -56,24 +58,38 @@ func TestNetworkTopologyStartsCoreListsConcurrently(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	done := make(chan error, 1)
+	type topologyResult struct {
+		flows *NetworkFlows
+		err   error
+	}
+	done := make(chan topologyResult, 1)
 	go func() {
-		_, err := NetworkTopology(context.Background(), &Cluster{Clientset: client}, "")
-		done <- err
+		flows, err := NetworkTopology(context.Background(), &Cluster{Clientset: client}, "")
+		done <- topologyResult{flows, err}
 	}()
 	seen := map[string]bool{}
-	for len(seen) < 4 {
+	for len(seen) < 5 {
 		select {
 		case resource := <-started:
 			seen[resource] = true
 		case <-time.After(time.Second):
 			close(release)
-			t.Fatalf("only %d/4 list calls started before one was released: %v", len(seen), seen)
+			t.Fatalf("only %d/5 list calls started before one was released: %v", len(seen), seen)
 		}
 	}
 	close(release)
-	if err := <-done; err != nil {
-		t.Fatal(err)
+	result := <-done
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	// This client has no discovery, so an Istio warning is expected; an empty
+	// NetworkPolicy list, however, is available overlay data rather than a warning.
+	policyWarning := false
+	for _, warning := range result.flows.Warnings {
+		policyWarning = policyWarning || strings.Contains(warning, "network policies")
+	}
+	if !result.flows.PoliciesAvailable || policyWarning {
+		t.Fatalf("policy overlay available=%v warnings=%v", result.flows.PoliciesAvailable, result.flows.Warnings)
 	}
 }
 

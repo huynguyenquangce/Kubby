@@ -67,6 +67,10 @@ import {
     ListHelmReleases,
     ListResourceQuotas,
     ListLimitRanges,
+    ListHorizontalPodAutoscalers,
+    ListPodDisruptionBudgets,
+    ListNetworkPolicies,
+    CheckTrafficPolicy,
     HelmGet,
     HelmSnapshot,
     HelmHistory,
@@ -92,6 +96,7 @@ import {
     ApplyPreview,
     PlanApplyPermissions,
     PlanDrainPermissions,
+    DrainImpact,
     PlanHelmPermissions,
     CanI,
     Sizing,
@@ -130,7 +135,7 @@ import {
     OverviewSnapshot,
     InvestigateResource,
     SaveIncidentReport,
-    PodContainers,
+    PodContainerStates,
     PodLogs,
     StartLogStream,
     StopLogStream,
@@ -163,6 +168,9 @@ const PAGE_TITLES = {
     jobs: 'Jobs',
     cronjobs: 'CronJobs',
     ingresses: 'Ingresses',
+    networkpolicies: 'NetworkPolicies',
+    hpas: 'HorizontalPodAutoscalers',
+    pdbs: 'PodDisruptionBudgets',
     pvcs: 'PersistentVolumeClaims',
     serviceaccounts: 'ServiceAccounts',
     pvs: 'PersistentVolumes',
@@ -194,6 +202,9 @@ const PAGE_SUBTITLES = {
     jobs: 'Track one-time workloads and completion status.',
     cronjobs: 'Inspect schedules, suspension state, and trigger jobs safely.',
     ingresses: 'Review external routes, hosts, and ingress configuration.',
+    networkpolicies: 'See which Pods are isolated and what traffic each policy admits.',
+    hpas: 'Check that autoscalers can read metrics and scale their targets.',
+    pdbs: 'Find budgets that block evictions before a drain or upgrade stalls.',
     pvcs: 'Inspect namespaced storage claims and their binding state.',
     serviceaccounts: 'Review workload identities in the selected scope.',
     pvs: 'Inspect cluster-wide volumes, claims, and storage classes.',
@@ -212,6 +223,7 @@ const NAMESPACED_VIEWS = new Set([
     'structure',
     'pods', 'deployments', 'services', 'configmaps', 'secrets',
     'statefulsets', 'daemonsets', 'jobs', 'cronjobs', 'ingresses', 'pvcs', 'serviceaccounts',
+    'networkpolicies', 'hpas', 'pdbs',
     'roles', 'rolebindings', 'helm', 'resourcequotas', 'limitranges',
     'sizing',
 ]);
@@ -229,6 +241,9 @@ const VIEW_KIND = {
     jobs: 'Job',
     cronjobs: 'CronJob',
     ingresses: 'Ingress',
+    networkpolicies: 'NetworkPolicy',
+    hpas: 'HorizontalPodAutoscaler',
+    pdbs: 'PodDisruptionBudget',
     pvcs: 'PersistentVolumeClaim',
     serviceaccounts: 'ServiceAccount',
     pvs: 'PersistentVolume',
@@ -1035,6 +1050,12 @@ function doRefresh(scope) {
             (c) => `<td>${esc(c.namespace)}</td><td>${esc(c.name)}</td><td class="mono">${esc(c.schedule)}</td><td>${c.suspend}</td><td>${c.active}</td><td>${esc(c.age)}</td>`);
         case 'ingresses': return loadSimple(scope, ListIngresses, 'ingresses', 'Ingress',
             (i) => `<td>${esc(i.namespace)}</td><td>${esc(i.name)}</td><td>${esc(i.class)}</td><td>${esc(i.hosts)}</td><td>${esc(i.age)}</td>`);
+        case 'networkpolicies': return loadSimple(scope, ListNetworkPolicies, 'networkpolicies', 'NetworkPolicy',
+            (n) => `<td>${esc(n.namespace)}</td><td>${esc(n.name)}</td><td class="mono">${esc(n.podSelector)}</td><td>${esc(n.policyTypes)}</td><td>${esc(n.effect)}</td><td>${esc(n.age)}</td>`);
+        case 'hpas': return loadSimple(scope, ListHorizontalPodAutoscalers, 'hpas', 'HorizontalPodAutoscaler',
+            (h) => `<td>${esc(h.namespace)}</td><td>${esc(h.name)}</td><td class="mono">${esc(h.target)}</td><td>${esc(h.replicas)}</td><td>${esc(h.minMax)}</td><td class="mono">${h.metrics ? esc(h.metrics) : '<span class="dim">—</span>'}</td><td>${badge(h.status, !h.isError)}</td><td>${esc(h.age)}</td>`);
+        case 'pdbs': return loadSimple(scope, ListPodDisruptionBudgets, 'pdbs', 'PodDisruptionBudget',
+            (p) => `<td>${esc(p.namespace)}</td><td>${esc(p.name)}</td><td class="mono">${esc(p.budget)}</td><td>${p.allowedDisruptions}</td><td>${esc(p.healthy)}</td><td>${badge(p.status, !p.isError)}</td><td>${esc(p.age)}</td>`);
         case 'pvcs': return loadSimple(scope, ListPVCs, 'pvcs', 'PersistentVolumeClaim',
             (p) => `<td>${esc(p.namespace)}</td><td>${esc(p.name)}</td><td>${badge(p.status, !p.isError)}</td><td>${esc(p.capacity)}</td><td>${esc(p.storageClass)}</td><td>${esc(p.age)}</td>`);
         case 'serviceaccounts': return loadSimple(scope, ListServiceAccounts, 'serviceaccounts', 'ServiceAccount',
@@ -1780,7 +1801,9 @@ function drawerPodContainers(scope) {
     if (ownerKey !== drawerContainerOwnerKey) return Promise.reject(new Error('The Pod drawer changed.'));
     if (!drawerContainerPromise) {
         const ref = scope.ref;
-        drawerContainerPromise = PodContainers(ref.namespace, ref.name);
+        // One read serves both tabs: Terminal needs the names, Logs also the
+        // restart state that points at the instance that failed.
+        drawerContainerPromise = PodContainerStates(ref.namespace, ref.name);
     }
     return drawerContainerPromise;
 }
@@ -1860,6 +1883,24 @@ $('btn-scale').addEventListener('click', () => { if (drawerRef) scaleRef(drawerR
 function scaleRef(ref) {
 	const connectionID = $('cluster-select').value;
 	const scope = openScaleModal(ref, 1, { loading: true, connectionID });
+	// A Deployment an HPA manages is scaled back at the next sync, so a manual
+	// scale looks successful and then silently reverts. Say so before Scale.
+	ListHorizontalPodAutoscalers(ref.namespace)
+		.then((hpas) => {
+			if (!isCurrentModalRequest(scope)) return;
+			const hpa = (hpas ?? []).find((h) => h.target === `Deployment/${ref.name}`);
+			if (!hpa) return;
+			const note = $('scale-hpa-note');
+			note.innerHTML = `<strong>HorizontalPodAutoscaler ${esc(hpa.name)} manages this Deployment (${esc(hpa.minMax)} replicas).</strong>
+				<span>A manual scale is overwritten at the autoscaler's next sync — change its replica range instead.</span>
+				<button type="button" class="btn btn-secondary btn-sm" id="scale-open-hpa">Open autoscaler</button>`;
+			note.hidden = false;
+			$('scale-open-hpa').addEventListener('click', () => {
+				closeModal();
+				openDrawer({ kind: 'HorizontalPodAutoscaler', namespace: hpa.namespace, name: hpa.name });
+			});
+		})
+		.catch(() => {});
 	GetDetail(ref.kind, ref.namespace, ref.name)
 		.then((d) => {
 			if (!isCurrentModalRequest(scope) || $('cluster-select').value !== connectionID) return;
@@ -1912,6 +1953,7 @@ function openScaleModal(ref, current, { loading = false, connectionID = $('clust
 			<label for="modal-input">Desired replicas</label>
 			<input type="number" id="modal-input" class="modal-number" min="0" max="1000" value="${current}"${loading ? ' disabled' : ''}>
             <p class="modal-hint">Setting this to zero stops every Pod managed by this Deployment.</p>
+            <div id="scale-hpa-note" class="modal-callout modal-callout-warn" role="note" hidden></div>
         </div>`,
 		onOpen: () => { const el = $('modal-input'); el.focus(); el.select(); },
 		onOk: () => {
@@ -2606,14 +2648,27 @@ function applyStructureFilter() {
 // after a newer one would re-render resources that no longer exist (e.g. an
 // Ingress you just deleted reappearing).
 let trafficReqId = 0;
+// The last rendered snapshot, which Check traffic uses to suggest Services and Pods.
+let lastTrafficFlows = null;
+// NetworkPolicy overlay for the snapshot being rendered, keyed "namespace/pod".
+// The backend sends it once per Pod rather than on every endpoint row.
+let trafficPodPolicies = {};
+
+function podPoliciesFor(pod) {
+    return trafficPodPolicies[`${pod.namespace}/${pod.name}`] ?? { ingress: [], egress: [] };
+}
 
 function loadTraffic(scope) {
     const reqId = ++trafficReqId;
+    // Never suggest another cluster's or namespace's Services while this loads.
+    lastTrafficFlows = null;
     const ingBox = $('traffic-ingress');
     const svcBox = $('traffic-services');
     return NetworkFlows(scope.namespace || '')
         .then((flows) => {
             if (reqId !== trafficReqId || !isCurrentViewRequest(scope)) return;
+            lastTrafficFlows = flows;
+            trafficPodPolicies = flows?.podPolicies ?? {};
             const ings = flows?.ingresses ?? [];
             const svcs = flows?.services ?? [];
 			const warnings = flows?.warnings ?? [];
@@ -2632,6 +2687,8 @@ function loadTraffic(scope) {
 
             wireFlowNodes(ingBox);
             wireFlowNodes(svcBox);
+            wireFlowChecks(ingBox);
+            wireFlowChecks(svcBox);
             $('flow-updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
             applyFlowFilter();
         })
@@ -2663,6 +2720,12 @@ function renderFlowSummary(flows, ings, svcs) {
         { n: flows?.endpointCount ?? 0, label: 'Endpoint pods', hint: 'pods behind a Service' },
         { n: flows?.brokenCount ?? 0, label: 'Broken paths', hint: 'traffic that goes nowhere', bad: true },
     ];
+    // Isolation is not breakage — whether traffic passes needs a source — so
+    // policies get their own neutral tile rather than joining Broken paths.
+    if (flows?.policiesAvailable) {
+        const isolated = flows.isolatedPods ?? 0;
+        tiles.push({ n: flows.policyCount ?? 0, label: 'Network policies', hint: `${isolated} endpoint pod${isolated === 1 ? '' : 's'} isolated` });
+    }
     $('flow-summary').innerHTML = tiles.map((t) => `
         <div class="flow-stat${t.bad && t.n > 0 ? ' flow-stat-bad' : ''}">
             <span class="flow-stat-num">${t.n}</span>
@@ -2698,6 +2761,7 @@ function flowIngressCard(ing) {
         </header>
         ${hosts}
         ${ing.warning ? `<p class="flow-warn">${esc(ing.warning)}</p>` : ''}
+        ${ing.entryNote ? `<p class="flow-note">${esc(ing.entryNote)}</p>` : ''}
         <div class="flow-rows">${rows}</div>
     </article>`;
 }
@@ -2745,6 +2809,8 @@ function flowHopRow(svc, { standalone }) {
             </div>
             ${ports ? `<div class="flow-ports">${ports}</div>` : ''}
             ${svc.warning && podCount ? `<p class="flow-warn">${esc(svc.warning)}</p>` : ''}
+            ${flowEntryPolicyHtml(svc)}
+            ${svc.namespace && podCount ? `<button type="button" class="flow-check" data-check-service="${esc(`${svc.namespace}/${svc.name}`)}">Check access</button>` : ''}
         </div>
         <div class="flow-arrow" aria-hidden="true"></div>
         <div class="flow-lane flow-lane-pods">
@@ -2754,14 +2820,36 @@ function flowHopRow(svc, { standalone }) {
     </div>`;
 }
 
+// A blocked or partially blocked hop already carries its policy warning; an
+// admitted hop under policy says which policy lets the entry point through.
+function flowEntryPolicyHtml(svc) {
+    const policy = svc.entryPolicy;
+    if (!policy || policy.verdict !== 'allowed') return '';
+    const names = (policy.policies ?? []).join(', ');
+    return `<p class="flow-policy-ok">NetworkPolicy${names ? ` ${esc(names)}` : ''} admits the ${esc(policy.source)}</p>`;
+}
+
+function wireFlowChecks(box) {
+    box.querySelectorAll('[data-check-service]').forEach((button) => {
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openTrafficCheckModal({ destinationKind: 'Service', destination: button.dataset.checkService });
+        });
+    });
+}
+
 function flowPodPill(p) {
     const state = p.isError ? 'err' : (p.isReady ? 'ok' : 'warn');
+    const { ingress: ingressPolicies = [], egress: egressPolicies = [] } = podPoliciesFor(p);
+    const details = [`${p.status} · ${p.ready}${p.node ? ` · node ${p.node}` : ''}${p.ip ? ` · ${p.ip}` : ''}`];
+    if (ingressPolicies.length) details.push(`Ingress isolated by: ${ingressPolicies.join(', ')}`);
+    if (egressPolicies.length) details.push(`Egress isolated by: ${egressPolicies.join(', ')}`);
     return `<button type="button" class="flow-pod flow-pod-${state}"
                     data-kind="Pod" data-namespace="${esc(p.namespace)}" data-name="${esc(p.name)}"
-                    title="${esc(`${p.status} · ${p.ready}${p.node ? ` · node ${p.node}` : ''}${p.ip ? ` · ${p.ip}` : ''}`)}">
+                    title="${esc(details.join('\n'))}">
         <span class="flow-dot"></span>
         <span class="flow-pod-name">${esc(p.name)}</span>
-        <span class="flow-pod-meta">${esc(p.status)} · ${esc(p.ready)}</span>
+        <span class="flow-pod-meta">${esc(p.status)} · ${esc(p.ready)}${ingressPolicies.length ? '<span class="flow-pod-policy">isolated</span>' : ''}</span>
     </button>`;
 }
 
@@ -2779,7 +2867,10 @@ function flowSearchText(obj) {
     for (const p of obj.ports ?? []) bits.push(p);
     for (const r of obj.routes ?? []) bits.push(r);
     for (const s of obj.services ?? []) bits.push(flowSearchText(s));
-    for (const p of obj.pods ?? []) bits.push(p.name, p.node, p.ip, p.status);
+    for (const p of obj.pods ?? []) {
+        const policies = podPoliciesFor(p);
+        bits.push(p.name, p.node, p.ip, p.status, ...(policies.ingress ?? []), ...(policies.egress ?? []));
+    }
     return bits.filter(Boolean).join(' ').toLowerCase();
 }
 
@@ -2846,6 +2937,156 @@ function applyFlowFilter() {
 
 $('flow-filter').addEventListener('input', applyFlowFilter);
 $('flow-only-problems').addEventListener('change', applyFlowFilter);
+$('btn-traffic-check').addEventListener('click', () => openTrafficCheckModal());
+
+// ---- Check traffic A → B: NetworkPolicy evaluation for one connection ----
+//
+// Check runs as the modal's in-place secondary action, so the verdict, the
+// policies behind it and its limitations stay beside the inputs that produced it.
+
+function parseResourceRef(value, fallbackNamespace) {
+    const text = String(value || '').trim();
+    const slash = text.indexOf('/');
+    return slash > 0
+        ? { namespace: text.slice(0, slash), name: text.slice(slash + 1) }
+        : { namespace: fallbackNamespace, name: text };
+}
+
+function trafficSuggestions(flows) {
+    const services = [...(flows?.ingresses ?? []).flatMap((entry) => entry.services ?? []), ...(flows?.services ?? [])];
+    return {
+        services: [...new Set(services.map((s) => `${s.namespace}/${s.name}`))],
+        pods: new Set(services.flatMap((s) => s.pods ?? []).map((p) => `${p.namespace}/${p.name}`)),
+    };
+}
+
+function openTrafficCheckModal(prefill = {}) {
+    const suggestions = trafficSuggestions(lastTrafficFlows);
+    const fallbackNamespace = currentNamespace || 'default';
+    const options = (values) => [...values].map((value) => `<option value="${esc(value)}"></option>`).join('');
+    const renderDestinationOptions = () => {
+        $('traffic-dst-options').innerHTML = options($('traffic-dst-kind').value === 'Service' ? suggestions.services : suggestions.pods);
+    };
+    let scope;
+    const runCheck = () => {
+        if (!isCurrentModalRequest(scope)) return Promise.resolve();
+        const source = parseResourceRef($('traffic-src').value, fallbackNamespace);
+        const kind = $('traffic-dst-kind').value;
+        const destination = parseResourceRef($('traffic-dst').value, source.namespace);
+        const portText = $('traffic-port').value.trim();
+        const port = portText === '' ? 0 : Number(portText);
+        if (!source.name || !destination.name) return Promise.reject('Enter a source Pod and a destination.');
+        if (!Number.isInteger(port) || port < 0 || port > 65535) {
+            return Promise.reject('Enter a port between 1 and 65535, or leave it empty when the destination declares exactly one.');
+        }
+        const box = $('traffic-check-result');
+        box.innerHTML = '<p class="modal-hint">Evaluating NetworkPolicies…</p>';
+        return CheckTrafficPolicy(source.namespace, source.name, kind, destination.namespace, destination.name, port, $('traffic-protocol').value)
+            .then((result) => { if (isCurrentModalRequest(scope)) renderTrafficCheck(box, result); })
+            .catch((err) => {
+                if (isCurrentModalRequest(scope)) box.innerHTML = '';
+                throw err;
+            });
+    };
+    scope = openModal({
+        title: 'Check traffic A → B',
+        eyebrow: 'Network policy',
+        description: 'Evaluates the NetworkPolicies on both sides of one new connection.',
+        ownerKey: modalOwner('traffic-check', $('cluster-select').value),
+        okText: 'Done',
+        cancelText: null,
+        extraText: 'Check',
+        onExtra: runCheck,
+        bodyHtml: `<div class="modal-form-grid">
+            <label class="field-full">Source Pod
+                <input id="traffic-src" class="pf-input no-enter-submit" list="traffic-src-options" placeholder="namespace/pod" autocomplete="off">
+            </label>
+            <label>Destination kind
+                <select id="traffic-dst-kind" class="pf-input"><option value="Service">Service</option><option value="Pod">Pod</option></select>
+            </label>
+            <label>Destination
+                <input id="traffic-dst" class="pf-input no-enter-submit" list="traffic-dst-options" placeholder="namespace/name" autocomplete="off">
+            </label>
+            <label>Port
+                <input id="traffic-port" class="pf-input no-enter-submit" type="number" min="1" max="65535" placeholder="Service or container port">
+            </label>
+            <label>Protocol
+                <select id="traffic-protocol" class="pf-input"><option value="">TCP</option><option value="UDP">UDP</option><option value="SCTP">SCTP</option></select>
+            </label>
+        </div>
+        <datalist id="traffic-src-options">${options(suggestions.pods)}</datalist>
+        <datalist id="traffic-dst-options"></datalist>
+        <p class="modal-hint">A name without a namespace uses ${esc(fallbackNamespace)}. For a Service, enter the Service port — Kubby maps it to each Pod's target port.</p>
+        <div id="traffic-check-result" class="traffic-check-result" aria-live="polite"></div>`,
+        onOpen: () => {
+            if (prefill.destination) {
+                $('traffic-dst-kind').value = prefill.destinationKind ?? 'Service';
+                $('traffic-dst').value = prefill.destination;
+                requestAnimationFrame(() => $('traffic-src').focus());
+            }
+            renderDestinationOptions();
+            $('traffic-dst-kind').addEventListener('change', renderDestinationOptions);
+            // Enter evaluates in place; the global handler would otherwise treat it
+            // as Done and close the modal.
+            for (const id of ['traffic-src', 'traffic-dst', 'traffic-port']) {
+                $(id).addEventListener('keydown', (event) => {
+                    if (event.key !== 'Enter') return;
+                    event.preventDefault();
+                    $('modal-extra').click();
+                });
+            }
+            // Any Pod in scope can be a source, not only the Service endpoints
+            // the Traffic snapshot already knows.
+            PodsPage(currentNamespace, '', RESOURCE_PAGE_LIMIT)
+                .then((page) => {
+                    if (!isCurrentModalRequest(scope)) return;
+                    for (const pod of page?.pods ?? []) suggestions.pods.add(`${pod.namespace}/${pod.name}`);
+                    $('traffic-src-options').innerHTML = options(suggestions.pods);
+                    if ($('traffic-dst-kind').value === 'Pod') renderDestinationOptions();
+                })
+                .catch(() => {});
+        },
+    });
+}
+
+function renderTrafficCheck(box, result) {
+    const tone = { allowed: 'ok', blocked: 'err', partial: 'warn' }[result.verdict] ?? 'warn';
+    const heading = { allowed: 'Allowed', blocked: 'Blocked', partial: 'Partially allowed' }[result.verdict] ?? 'Cannot tell';
+    const side = (label, verdict) => {
+        const [badgeClass, badgeText] = !verdict.isolated ? ['status-ok', 'Not isolated']
+            : verdict.allowed ? ['status-ok', 'Allowed']
+            : ['status-error', 'Blocked'];
+        // An allowed isolated side is explained by the policies that allow it; a
+        // blocked one by the policies that isolate it.
+        const refs = verdict.isolated && verdict.allowed ? verdict.allowing : verdict.selecting;
+        const policies = (refs ?? []).map((ref) => `<button type="button" class="chip traffic-policy"
+                data-namespace="${esc(ref.namespace)}" data-name="${esc(ref.name)}">${esc(ref.name)}</button>`).join('');
+        return `<div class="traffic-side">
+            <span class="traffic-side-label">${esc(label)}</span>
+            <span><span class="status-badge ${badgeClass}">${badgeText}</span></span>
+            <p>${esc(verdict.reason)}</p>
+            ${policies ? `<div class="traffic-policies">${policies}</div>` : ''}
+        </div>`;
+    };
+    const targets = (result.targets ?? []).map((target) => `<article class="traffic-target">
+        <header class="traffic-target-head">
+            <span class="status-badge ${target.allowed ? 'status-ok' : 'status-error'}">${target.allowed ? 'Allowed' : 'Blocked'}</span>
+            <span class="mono">${esc(target.namespace)}/${esc(target.pod)}</span>
+            <span class="dim mono">${esc([target.ip, target.port].filter(Boolean).join(' · '))}</span>
+        </header>
+        <div class="traffic-sides">${side('Egress from source', target.egress)}${side('Ingress to destination', target.ingress)}</div>
+    </article>`).join('');
+    const limitations = (result.limitations ?? []).map((line) => `<li>${esc(line)}</li>`).join('');
+    box.innerHTML = `<div class="traffic-verdict traffic-verdict-${tone}" role="status"><strong>${heading}</strong><span>${esc(result.summary)}</span></div>
+        ${targets}
+        ${limitations ? `<ul class="traffic-limitations">${limitations}</ul>` : ''}`;
+    box.querySelectorAll('.traffic-policy').forEach((button) => {
+        button.addEventListener('click', () => {
+            closeModal();
+            openDrawer({ kind: 'NetworkPolicy', namespace: button.dataset.namespace, name: button.dataset.name });
+        });
+    });
+}
 
 // Secret data with per-key reveal/hide (values are decoded server-side).
 function loadSecretData(scope) {
@@ -3032,18 +3273,29 @@ function prepareLogs(scope = activeDrawerScope) {
     const select = $('logs-container');
     select.innerHTML = '';
     $('logs-follow').checked = false;
+    $('logs-follow').disabled = false;
+    $('logs-previous').checked = false;
+    $('logs-previous').disabled = false;
+    $('logs-restart-hint').hidden = true;
+    drawerContainerStates = [];
     $('logs-search').value = '';
     logLines.replace(['Loading containers…']);
     renderLogs();
     drawerPodContainers(scope)
         .then((containers) => {
             if (!isCurrentDrawerRequest(scope)) return;
-            for (const c of containers ?? []) {
+            drawerContainerStates = containers ?? [];
+            for (const c of drawerContainerStates) {
                 const opt = document.createElement('option');
-                opt.value = c;
-                opt.textContent = c;
+                opt.value = c.name;
+                opt.textContent = c.restartCount ? `${c.name} · ${c.restartCount} restart${c.restartCount === 1 ? '' : 's'}` : c.name;
                 select.appendChild(opt);
             }
+            // Open on the container most likely to explain a failure: the first
+            // one that has restarted.
+            const restarted = drawerContainerStates.find((c) => c.hasPrevious);
+            if (restarted) select.value = restarted.name;
+            renderLogsRestartHint();
             loadStaticLogs(scope);
         })
         .catch((err) => {
@@ -3056,9 +3308,10 @@ function prepareLogs(scope = activeDrawerScope) {
 function loadStaticLogs(scope = activeDrawerScope) {
     if (!scope || !isCurrentDrawerRequest(scope)) return;
     const ref = scope.ref;
-    logLines.replace(['Loading logs…']);
+    const previous = $('logs-previous').checked;
+    logLines.replace([previous ? 'Loading logs from before the last restart…' : 'Loading logs…']);
     renderLogs();
-    PodLogs(ref.namespace, ref.name, $('logs-container').value, LOG_TAIL_LINES)
+    PodLogs(ref.namespace, ref.name, $('logs-container').value, LOG_TAIL_LINES, previous)
         .then((text) => {
             if (!isCurrentDrawerRequest(scope)) return;
             logLines.replace((text || '').split('\n'));
@@ -3134,6 +3387,75 @@ $('logs-follow').addEventListener('change', (e) => {
     else { stopFollow(); loadStaticLogs(); }
 });
 
+// A terminated instance has nothing to follow, so Previous is a static read and
+// Follow waits until the current instance is selected again.
+$('logs-previous').addEventListener('change', (e) => {
+    if (e.target.checked) stopFollow();
+    $('logs-follow').disabled = e.target.checked;
+    renderLogsRestartHint();
+    loadStaticLogs();
+});
+
+// Container restart state for the open Pod, from the drawer's shared read.
+let drawerContainerStates = [];
+
+function selectedContainerState() {
+    return drawerContainerStates.find((c) => c.name === $('logs-container').value);
+}
+
+// A restarted container's failure is usually written by the instance that
+// ended, not the one now running, so say so and offer that instance's logs.
+function renderLogsRestartHint() {
+    const state = selectedContainerState();
+    const previous = $('logs-previous');
+    const hint = $('logs-restart-hint');
+    previous.disabled = !state?.hasPrevious;
+    previous.closest('label').title = state?.hasPrevious
+        ? 'Logs of the container instance that ran before its last restart — where a crash was written'
+        : 'This container has not restarted, so there is no previous instance to read.';
+    if (!state?.hasPrevious) {
+        hint.hidden = true;
+        return;
+    }
+    const ended = [state.lastTermination, state.lastTerminationAge ? `${state.lastTerminationAge} ago` : ''].filter(Boolean).join(', ');
+    $('logs-restart-text').textContent = previous.checked
+        ? `Showing the instance before the last restart${ended ? ` — it ended ${ended}` : ''}.`
+        : `${state.name} restarted ${state.restartCount} time${state.restartCount === 1 ? '' : 's'}${ended ? ` · last exit ${ended}` : ''}. The failure is usually in the logs from before the restart.`;
+    $('btn-logs-restart-toggle').textContent = previous.checked ? 'Back to current logs' : 'View logs before restart';
+    hint.hidden = false;
+}
+
+$('btn-logs-restart-toggle').addEventListener('click', () => $('logs-previous').click());
+
+$('btn-logs-copy-command').addEventListener('click', () => {
+    const ref = drawerRef;
+    if (!ref) return;
+    const container = $('logs-container').value;
+    const command = ['kubectl', 'logs', ref.name, '-n', ref.namespace, container ? `-c ${container}` : '',
+        `--tail=${LOG_TAIL_LINES}`, $('logs-previous').checked ? '--previous' : '', following ? '-f' : '']
+        .filter(Boolean).join(' ');
+    copyCommand($('btn-logs-copy-command'), command);
+});
+
+// kubectl addresses a custom resource as lower-case "kind.group"; Kubby's
+// reference is "Kind.group", so only the kind is lower-cased.
+function kubectlResource(kind) {
+    const [name, ...group] = String(kind).split('.');
+    return [name.toLowerCase(), ...group].join('.');
+}
+
+function copyCommand(button, command) {
+    Promise.resolve(CopyToClipboard(command))
+        .then(() => terminalButtonFeedback(button, 'Copied'))
+        .catch((err) => showError(errMsg(err)));
+}
+
+$('btn-copy-kubectl').addEventListener('click', () => {
+    const ref = drawerRef;
+    if (!ref) return;
+    copyCommand($('btn-copy-kubectl'), `kubectl describe ${kubectlResource(ref.kind)} ${ref.name}${ref.namespace ? ` -n ${ref.namespace}` : ''}`);
+});
+
 $('logs-search').addEventListener('input', () => {
     logRenderScheduler.cancel();
     renderLogs();
@@ -3145,6 +3467,11 @@ $('btn-logs-reload').addEventListener('click', () => {
 });
 
 $('logs-container').addEventListener('change', () => {
+    if ($('logs-previous').checked && !selectedContainerState()?.hasPrevious) {
+        $('logs-previous').checked = false;
+        $('logs-follow').disabled = false;
+    }
+    renderLogsRestartHint();
     if (following) { StopLogStream(); startFollow(); }
     else loadStaticLogs();
 });
@@ -3152,7 +3479,7 @@ $('logs-container').addEventListener('change', () => {
 $('btn-logs-download').addEventListener('click', () => {
     const ref = drawerRef;
     if (!ref) return;
-    const name = `${ref.name}${$('logs-container').value ? '-' + $('logs-container').value : ''}.log`;
+    const name = `${ref.name}${$('logs-container').value ? '-' + $('logs-container').value : ''}${$('logs-previous').checked ? '-previous' : ''}.log`;
     SaveTextToFile(name, logLines.toArray().join('\n'))
         .catch((err) => showError(errMsg(err)));
 });
@@ -3373,8 +3700,8 @@ function prepareTerminal(scope = activeDrawerScope) {
             if (!isCurrentDrawerRequest(scope)) return;
             for (const c of containers ?? []) {
                 const opt = document.createElement('option');
-                opt.value = c;
-                opt.textContent = c;
+                opt.value = c.name;
+                opt.textContent = c.name;
                 select.appendChild(opt);
             }
             if (!select.options.length) {
@@ -4153,6 +4480,12 @@ function templateFor(kind, ns) {
             return `apiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: my-cronjob${nsLine}\nspec:\n  schedule: "*/5 * * * *"\n  jobTemplate:\n    spec:\n      template:\n        spec:\n          restartPolicy: OnFailure\n          containers:\n            - name: main\n              image: busybox\n              command: ["sh", "-c", "date"]\n`;
         case 'Ingress':
             return `apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: my-ingress${nsLine}\nspec:\n  rules:\n    - host: example.local\n      http:\n        paths:\n          - path: /\n            pathType: Prefix\n            backend:\n              service:\n                name: my-service\n                port:\n                  number: 80\n`;
+        case 'NetworkPolicy':
+            return `apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: allow-from-frontend${nsLine}\nspec:\n  podSelector:\n    matchLabels:\n      app: my-app\n  policyTypes:\n    - Ingress\n  ingress:\n    - from:\n        - podSelector:\n            matchLabels:\n              app: frontend\n      ports:\n        - protocol: TCP\n          port: 8080\n`;
+        case 'HorizontalPodAutoscaler':
+            return `apiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: my-hpa${nsLine}\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: my-deployment\n  minReplicas: 1\n  maxReplicas: 5\n  metrics:\n    - type: Resource\n      resource:\n        name: cpu\n        target:\n          type: Utilization\n          averageUtilization: 70\n`;
+        case 'PodDisruptionBudget':
+            return `apiVersion: policy/v1\nkind: PodDisruptionBudget\nmetadata:\n  name: my-pdb${nsLine}\nspec:\n  maxUnavailable: 1\n  selector:\n    matchLabels:\n      app: my-app\n`;
         case 'PersistentVolume':
             return `apiVersion: v1\nkind: PersistentVolume\nmetadata:\n  name: my-pv\nspec:\n  capacity:\n    storage: 1Gi\n  accessModes:\n    - ReadWriteOnce\n  hostPath:\n    path: /mnt/data\n`;
         case 'StorageClass':
@@ -4712,19 +5045,58 @@ function nodeSchedule(ref, schedulable) {
 
 function drainRef(ref) {
     const connectionID = $('cluster-select').value;
-    PlanDrainPermissions(ref.name)
-        .then((plan) => {
+    Promise.all([
+        PlanDrainPermissions(ref.name),
+        // The preview informs the decision but must never prevent it.
+        DrainImpact(ref.name).catch((err) => ({ error: errMsg(err) })),
+    ])
+        .then(([plan, impact]) => {
             ensurePermissionPlan(plan);
-            return showConfirm(
-                `Drain node “${ref.name}”?\nThis cordons it and evicts its pods (DaemonSet pods are kept).\n\n${permissionPlanSummary(plan)}`,
-                { title: 'Drain node', icon: '🚰', okText: 'Drain', danger: true },
-            );
+            return showConfirm(drainConfirmation(ref, plan, impact),
+                { title: 'Drain node', icon: '🚰', okText: 'Drain', danger: true });
         })
         .then((ok) => {
             if (!ok) return;
             return DrainNodeOwned(connectionID, ref.name).then(() => refreshCurrentView());
         })
         .catch((err) => showError(errMsg(err)));
+}
+
+// Name what kubectl drain would stop and ask about: budgets that will refuse
+// evictions, Pods no controller recreates, and emptyDir data that is deleted.
+function drainConfirmation(ref, plan, impact) {
+    const lines = [`Drain node “${ref.name}”?`];
+    if (!impact || impact.error) {
+        lines.push('This cordons it and evicts its pods (DaemonSet pods are kept).');
+        if (impact?.error) lines.push(`Kubby could not preview the impact: ${impact.error}`);
+    } else {
+        const kept = [
+            impact.daemonSetPods ? countNoun(impact.daemonSetPods, 'DaemonSet pod') : '',
+            impact.mirrorPods ? countNoun(impact.mirrorPods, 'static pod') : '',
+        ].filter(Boolean).join(' and ');
+        const keptTotal = (impact.daemonSetPods ?? 0) + (impact.mirrorPods ?? 0);
+        lines.push(`This cordons it and evicts ${countNoun(impact.evict, 'pod')}${kept ? `; ${kept} ${keptTotal === 1 ? 'stays' : 'stay'}` : ''}.`);
+        for (const budget of impact.blockingBudgets ?? []) {
+            lines.push(`⚠ PodDisruptionBudget ${budget.namespace}/${budget.name} allows ${countNoun(budget.allowedDisruptions, 'disruption')} but covers ${countNoun(budget.podsOnNode, 'pod')} here — the remaining evictions will be refused and the drain will stop partway.`);
+        }
+        if (impact.unmanaged?.length) {
+            lines.push(`⚠ ${countNoun(impact.unmanaged.length, 'pod')} ${impact.unmanaged.length === 1 ? 'has' : 'have'} no controller and will not be recreated: ${listPreview(impact.unmanaged)}.`);
+        }
+        if (impact.emptyDir?.length) {
+            lines.push(`⚠ ${countNoun(impact.emptyDir.length, 'pod')} ${impact.emptyDir.length === 1 ? 'uses' : 'use'} emptyDir; that data is deleted: ${listPreview(impact.emptyDir)}.`);
+        }
+        for (const warning of impact.warnings ?? []) lines.push(`⚠ ${warning}`);
+    }
+    lines.push('', permissionPlanSummary(plan));
+    return lines.join('\n');
+}
+
+function countNoun(count, noun) {
+    return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+function listPreview(items, max = 5) {
+    return items.length > max ? `${items.slice(0, max).join(', ')} and ${items.length - max} more` : items.join(', ');
 }
 
 function runCronNow(ref) {
@@ -6143,6 +6515,7 @@ function renderAIContextChips() {
     const chips = [];
     if (c.events) chips.push(`${c.events} event${c.events === 1 ? '' : 's'}`);
     if (c.logContainers) chips.push(`${c.logLines} log lines from ${c.logContainers} container${c.logContainers === 1 ? '' : 's'}`);
+    if (c.previousLogContainers) chips.push(`pre-restart logs from ${c.previousLogContainers} container${c.previousLogContainers === 1 ? '' : 's'}`);
     if (c.hasYAML) chips.push('manifest YAML');
     if (chips.length === 0) chips.push('metadata only');
     $('ai-context-chips').innerHTML =

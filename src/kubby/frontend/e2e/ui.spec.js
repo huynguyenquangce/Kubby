@@ -716,3 +716,167 @@ test('FR-24: late Helm values keep a draft started while the release loads', asy
     await expect(page.locator('#helm-preview-status')).toContainText('your draft was kept');
     await expect(page.locator('#helm-preview-btn')).toBeEnabled();
 });
+
+test('FR-14: a restarted container points at, and reads, the instance before the restart', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectDashboard(page, {
+        overrides: {
+            PodContainerStates: [
+                { name: 'sidecar', ready: true, state: 'Running', restartCount: 0, lastTermination: '', lastTerminationAge: '', hasPrevious: false },
+                { name: 'api', ready: false, state: 'Waiting: CrashLoopBackOff', restartCount: 7, lastTermination: 'OOMKilled, exit 137', lastTerminationAge: '3m', hasPrevious: true },
+            ],
+        },
+    });
+    await openNavView(page, 'pods');
+    await page.locator('#pods-body tr', { hasText: 'checkout-7b8d9f-2kw7p' }).click();
+    await page.getByRole('tab', { name: 'Logs', exact: true }).click();
+    await expect(page.locator('#logs-view')).toContainText('server listening');
+    // The drawer opens on the container that restarted and says why it matters.
+    await expect(page.locator('#logs-container')).toHaveValue('api');
+    const hint = page.locator('#logs-restart-hint');
+    await expect(hint).toContainText('api restarted 7 times · last exit OOMKilled, exit 137, 3m ago');
+
+    await page.evaluate(() => window.__wailsMock.setResponse('PodLogs', 'panic: runtime error: out of memory\n'));
+    await hint.getByRole('button', { name: 'View logs before restart' }).click();
+    await expect(page.locator('#logs-previous')).toBeChecked();
+    await expect(page.locator('#logs-view')).toContainText('panic: runtime error');
+    await expect(page.locator('#logs-follow')).toBeDisabled();
+    await expect(hint).toContainText('Showing the instance before the last restart');
+    const logCalls = await page.evaluate(() => window.__wailsMock.calls
+        .filter((call) => call.method === 'PodLogs')
+        .map((call) => call.args));
+    expect(logCalls[0]).toEqual(['payments', 'checkout-7b8d9f-2kw7p', 'api', 500, false]);
+    expect(logCalls.at(-1)).toEqual(['payments', 'checkout-7b8d9f-2kw7p', 'api', 500, true]);
+
+    await page.locator('#btn-logs-copy-command').click();
+    const copied = await page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'CopyToClipboard').map((call) => call.args[0]));
+    expect(copied.at(-1)).toBe('kubectl logs checkout-7b8d9f-2kw7p -n payments -c api --tail=500 --previous');
+
+    // A container that never restarted has no previous instance to offer.
+    await page.locator('#logs-container').selectOption('sidecar');
+    await expect(page.locator('#logs-previous')).not.toBeChecked();
+    await expect(page.locator('#logs-previous')).toBeDisabled();
+    await expect(page.locator('#logs-follow')).toBeEnabled();
+    await expect(hint).toBeHidden();
+    expect(pageErrors).toEqual([]);
+});
+
+test('FR-20: Drain names the budgets, unmanaged Pods and emptyDir data it affects before confirming', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectDashboard(page, {
+        overrides: {
+            DrainImpact: {
+                node: 'kubby-worker', evict: 4, daemonSetPods: 1, mirrorPods: 0,
+                unmanaged: ['payments/debug'], emptyDir: ['payments/cache'],
+                blockingBudgets: [{ namespace: 'payments', name: 'checkout', allowedDisruptions: 0, podsOnNode: 2 }],
+                warnings: [],
+            },
+        },
+    });
+    await openNavView(page, 'nodes');
+    await page.getByRole('button', { name: 'Actions for Node kubby-worker' }).click();
+    await page.getByRole('menuitem', { name: /Drain/ }).click();
+    const message = page.locator('#dialog-message');
+    await expect(message).toContainText('evicts 4 pods; 1 DaemonSet pod stays');
+    await expect(message).toContainText('PodDisruptionBudget payments/checkout allows 0 disruptions but covers 2 pods here');
+    await expect(message).toContainText('1 pod has no controller and will not be recreated: payments/debug');
+    await expect(message).toContainText('1 pod uses emptyDir; that data is deleted: payments/cache');
+    await page.locator('#dialog-cancel').click();
+    const drains = await page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'DrainNodeOwned').length);
+    expect(drains).toBe(0);
+    expect(pageErrors).toEqual([]);
+});
+
+test('FR-19: Scale warns that a HorizontalPodAutoscaler will overwrite a manual scale', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectDashboard(page, {
+        overrides: {
+            ListDeployments: [{ namespace: 'payments', name: 'checkout', ready: '2/2', upToDate: 2, available: 2, age: '3d', isError: false }],
+        },
+    });
+    await openNavView(page, 'deployments');
+    await page.locator('#deployments-body tr', { hasText: 'checkout' }).click();
+    await page.locator('#btn-scale').click();
+    const note = page.locator('#scale-hpa-note');
+    await expect(note).toContainText('HorizontalPodAutoscaler checkout manages this Deployment (2–6 replicas)');
+    await note.getByRole('button', { name: 'Open autoscaler' }).click();
+    await expect(page.locator('#modal')).toBeHidden();
+    await expect(page.locator('#drawer-kind')).toHaveText('HorizontalPodAutoscaler');
+    await expect(page.locator('#drawer-name')).toHaveText('checkout');
+    expect(pageErrors).toEqual([]);
+});
+
+test('FR-5: HPA, PDB and NetworkPolicy sections show their own status', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectDashboard(page);
+
+    await openNavView(page, 'hpas');
+    await expect(page.locator('#hpas-body')).toContainText('Deployment/checkout');
+    await expect(page.locator('#hpas-body')).toContainText('cpu 91%/70%');
+    await openNavView(page, 'pdbs');
+    await expect(page.locator('#pdbs-body tr.error-row')).toContainText('drains will block');
+    await openNavView(page, 'networkpolicies');
+    await expect(page.locator('#networkpolicies-body')).toContainText('Denies all ingress');
+    await expect(page.locator('#btn-create')).toBeVisible();
+    expect(pageErrors).toEqual([]);
+});
+
+test('FR-41: Topology marks policy-isolated Pods and checks traffic A → B', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectDashboard(page, {
+        overrides: {
+            NetworkFlows: {
+                ingresses: [],
+                services: [{
+                    name: 'checkout', namespace: 'payments', type: 'ClusterIP', clusterIP: '10.96.0.20', ports: ['80→http'], routes: [], readyPods: 1, warning: '',
+                    entryPolicy: { verdict: 'allowed', source: 'ingress-nginx controller (2 Pods in ingress-nginx)', blocked: 0, total: 1, policies: ['allow-ingress'] },
+                    pods: [{
+                        name: 'checkout-7b8d9f-v5lhn', namespace: 'payments', status: 'Running', ready: '1/1', restarts: 0, node: 'kubby-worker', ip: '10.244.1.9',
+                        ownerKind: 'ReplicaSet', ownerName: 'checkout-7b8d9f', isError: false, isReady: true,
+                    }],
+                }],
+                routedCount: 0, endpointCount: 1, brokenCount: 0, warnings: [],
+                policiesAvailable: true, policyCount: 1, isolatedPods: 1,
+                podPolicies: { 'payments/checkout-7b8d9f-v5lhn': { ingress: ['deny-all'], egress: [] } },
+            },
+        },
+    });
+    await openNavView(page, 'traffic');
+    await expect(page.locator('#flow-summary')).toContainText('Network policies');
+    const pod = page.locator('.flow-pod', { hasText: 'checkout-7b8d9f-v5lhn' });
+    await expect(pod.locator('.flow-pod-policy')).toBeVisible();
+    await expect(pod).toHaveAttribute('title', /Ingress isolated by: deny-all/);
+
+    await expect(page.locator('.flow-policy-ok')).toContainText('NetworkPolicy allow-ingress admits the ingress-nginx controller');
+
+    // Check access starts from the Service it sits on.
+    await page.getByRole('button', { name: 'Check access' }).click();
+    await expect(page.locator('#modal')).toBeVisible();
+    await expect(page.locator('#traffic-dst')).toHaveValue('payments/checkout');
+    await page.locator('#traffic-src').fill('default/web-5cf9d8b8d6-hv2lk');
+    await page.locator('#traffic-port').fill('80');
+    // Enter evaluates in place; it must not close the modal like an OK action.
+    await page.locator('#traffic-port').press('Enter');
+    const result = page.locator('#traffic-check-result');
+    await expect(result).toContainText('Blocked');
+    await expect(result).toContainText('isolated for ingress by deny-all');
+    await expect(page.locator('#modal')).toBeVisible();
+    const checkCalls = await page.evaluate(() => window.__wailsMock.calls
+        .filter((call) => call.method === 'CheckTrafficPolicy')
+        .map((call) => call.args));
+    expect(checkCalls).toEqual([['default', 'web-5cf9d8b8d6-hv2lk', 'Service', 'payments', 'checkout', 80, '']]);
+
+    await result.locator('.traffic-policy', { hasText: 'deny-all' }).click();
+    await expect(page.locator('#modal')).toBeHidden();
+    await expect(page.locator('#drawer-kind')).toHaveText('NetworkPolicy');
+    await expect(page.locator('#drawer-name')).toHaveText('deny-all');
+    await page.locator('#btn-copy-kubectl').click();
+    const copied = await page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'CopyToClipboard').map((call) => call.args[0]));
+    expect(copied.at(-1)).toBe('kubectl describe networkpolicy deny-all -n payments');
+    expect(pageErrors).toEqual([]);
+});

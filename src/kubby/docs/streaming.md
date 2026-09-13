@@ -49,7 +49,24 @@ per-line bridge events, or whole-history repainting for every live batch.
 The drawer's Logs tab adds a container picker, a client-side line filter, and
 download-to-file. Drawer tabs load on first selection rather than fetching every
 hidden tab on open, and Logs/Terminal share the same owned `PodContainers`
-promise. Non-follow reads use `PodLogs(..., tail)`.
+promise. Non-follow reads use `PodLogs(..., tail, previous)`.
+
+**Previous** sets `PodLogOptions.Previous` to read the instance before the last
+restart. It is a static read only — Follow is disabled while it is checked,
+because a terminated instance has nothing to follow. The kubelet's "previous
+terminated container … not found" is mapped to an explanation, since it is the
+normal answer for a container that never restarted. AI evidence attaches previous
+logs automatically, with a smaller character budget, only for containers the
+kubelet reports as restarted with a recorded last termination, fetching all log
+reads concurrently (at most four at a time).
+
+The Logs and Terminal tabs share one `PodContainerStates` drawer request, which
+carries restart count, current state and how the last instance ended. Logs uses
+it to open on the first restarted container, to disable Previous for a container
+with no previous instance, and to show a hint such as "api restarted 7 times ·
+last exit OOMKilled, exit 137, 3m ago" with a one-click switch to the logs from
+before the restart. The state is read once per drawer opening. **Copy kubectl**
+copies the equivalent `kubectl logs` command, including `--previous` and `-f`.
 
 ## Exec (Terminal)
 

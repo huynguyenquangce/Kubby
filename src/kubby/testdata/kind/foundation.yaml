@@ -35,3 +35,123 @@ spec:
     - name: hold
       image: registry.invalid/kubby-ci/never-pulled:1
       command: ["sh", "-c", "sleep 3600"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ci-client
+  namespace: kubby-ci
+  labels:
+    app: kubby-ci-client
+spec:
+  containers:
+    - name: hold
+      image: registry.invalid/kubby-ci/never-pulled:1
+      command: ["sh", "-c", "sleep 3600"]
+---
+# Isolates ci-pod for ingress with no allow rule, so netpol-check from
+# ci-client must report BLOCKED. Evaluation reads the API objects only; it does
+# not depend on the CNI enforcing the policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ci-deny-ingress
+  namespace: kubby-ci
+spec:
+  podSelector:
+    matchLabels:
+      app: kubby-ci
+  policyTypes: ["Ingress"]
+---
+# A stand-in ingress-nginx controller: only its labels matter, because the
+# Traffic view identifies controller Pods from the IngressClass controller.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubby-ci-ingress
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ci-ingress-controller
+  namespace: kubby-ci-ingress
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: controller
+spec:
+  containers:
+    - name: hold
+      image: registry.invalid/kubby-ci/never-pulled:1
+      command: ["sh", "-c", "sleep 3600"]
+---
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: ci-nginx
+spec:
+  controller: k8s.io/ingress-nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ci-web
+  namespace: kubby-ci
+spec:
+  selector:
+    app: kubby-ci
+  ports:
+    - name: web
+      port: 80
+      targetPort: 8080
+---
+# Routed through ci-nginx to ci-pod, which ci-deny-ingress isolates with no
+# allow rule: netflows must report this route as blocked by that policy.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ci-web
+  namespace: kubby-ci
+spec:
+  ingressClassName: ci-nginx
+  rules:
+    - host: ci.kubby.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ci-web
+                port:
+                  number: 80
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ci-pdb
+  namespace: kubby-ci
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: kubby-ci
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ci-hpa
+  namespace: kubby-ci
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ci-missing
+  minReplicas: 1
+  maxReplicas: 2
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80

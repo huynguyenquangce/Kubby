@@ -120,7 +120,8 @@ write workflows still rely on focused tests plus the documented native check.
 go run ./cmd/kubby-cli get pods -n default
 go run ./cmd/kubby-cli yaml <Kind[.group]> <name> -n <ns>
 go run ./cmd/kubby-cli events Pod <name> -n <ns>
-go run ./cmd/kubby-cli logs <pod> -n <ns> --tail 100
+go run ./cmd/kubby-cli logs <pod> -n <ns> --tail 100 [--previous]
+go run ./cmd/kubby-cli get hpas|pdbs|networkpolicies [-n <ns>]
 go run ./cmd/kubby-cli node-pods <node>
 go run ./cmd/kubby-cli ns-summary <namespace>
 go run ./cmd/kubby-cli search <query>
@@ -132,6 +133,9 @@ go run ./cmd/kubby-cli structure [-n <ns>]                   # full debug topolo
 go run ./cmd/kubby-cli custom-kinds
 go run ./cmd/kubby-cli list-custom <Kind.group> [-n <ns>]
 go run ./cmd/kubby-cli netflows [-n <ns>]
+go run ./cmd/kubby-cli netpol-check <pod> Pod|Service/<name> -n <ns> [--to-namespace <ns>] [--port N]  # NetworkPolicy verdict
+go run ./cmd/kubby-cli containers <pod> -n <ns>                 # restart count, last exit, previous logs available
+go run ./cmd/kubby-cli drain-impact <node>                      # refusing PDBs, unmanaged Pods, emptyDir; read-only
 go run ./cmd/kubby-cli diff -f <file>                         # dry-run: what would change, writes nothing
 go run ./cmd/kubby-cli can-i <Kind[.group]> [-n <ns>]         # what this token may do
 go run ./cmd/kubby-cli plan-apply -f <file>                    # exact server-side-apply RBAC plan

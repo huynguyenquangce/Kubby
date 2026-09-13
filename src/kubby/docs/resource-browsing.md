@@ -16,6 +16,13 @@ Four list files, grouped the way the sidebar is:
 | `resources_more.go` | StatefulSet, DaemonSet, Job, CronJob, Ingress, PVC, ServiceAccount |
 | `resources_cluster.go` | PersistentVolume, StorageClass, RBAC (Role/RoleBinding/ClusterRole/ClusterRoleBinding) |
 | `resources_ecosystem.go` | CRDs, Helm releases, ResourceQuotas, LimitRanges |
+| `resources_policy.go` | HorizontalPodAutoscaler, PodDisruptionBudget, NetworkPolicy — plus the status/effect summaries their tables and drawers share |
+
+Built-in kinds are **not** picked up by the Custom Resources group: that group is
+built from the CRD list ([custom-resources.md](custom-resources.md)), so a
+built-in kind the recipe below has not been followed for is addressable (Import
+YAML, discovery resolution) but has no section, badge or search entry. That is
+why HPA, PDB and NetworkPolicy had to be added explicitly.
 
 Each exposes `XxxInfo` + `ListXxx(ctx, client, ns)`. `XxxInfo` is a flat,
 display-shaped struct — the frontend renders it directly, so put formatting
@@ -57,7 +64,10 @@ group-qualified — see [kind-resolution.md](kind-resolution.md).
   own `apiVersion`, so editing a custom resource works.
 - **Relations** (`relations.go`) — `DeploymentTree` / `ServiceTree` /
   `IngressTree` build a `RelationNode` tree whose nodes carry their namespace so
-  they stay clickable. Also here: `NodeMetrics`, `TopPods`, `PodMetricsList`, all
+  they stay clickable. `relations_policy.go` adds `HPATree` (the scaled workload,
+  flagged when it is missing or not ready), `PDBTree` (the protected Pods) and
+  `NetworkPolicyTree` (the selected Pods), so their drawers link out instead of
+  listing names as text. Also here: `NodeMetrics`, `TopPods`, `PodMetricsList`, all
   nil-safe because `Cluster.Metrics` may be absent.
 
 Pod status gives deletion precedence, counts init-container restarts, and uses a
@@ -132,6 +142,7 @@ Grep an existing kind such as `ConfigMap` and copy it.
 
 ```powershell
 go run ./cmd/kubby-cli get pods -n default
+go run ./cmd/kubby-cli get hpas|pdbs|networkpolicies -n <ns>
 go run ./cmd/kubby-cli yaml Deployment <name> -n default
 go run ./cmd/kubby-cli events Pod <name> -n default
 go run ./cmd/kubby-cli ns-summary <namespace>

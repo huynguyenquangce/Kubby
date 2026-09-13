@@ -27,6 +27,8 @@ export function ChartDefaultValues(arg1:string,arg2:string,arg3:string,arg4:stri
 
 export function ChartDetails(arg1:string,arg2:string):Promise<k8sclient.ChartDetail>;
 
+export function CheckTrafficPolicy(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number,arg7:string):Promise<k8sclient.TrafficCheckResult>;
+
 export function ClusterEvents(arg1:number):Promise<Array<k8sclient.EventInfo>>;
 
 export function ClusterStructure(arg1:string):Promise<k8sclient.ClusterStructureData>;
@@ -52,6 +54,8 @@ export function DeploymentTree(arg1:string,arg2:string):Promise<k8sclient.Relati
 export function Diagnostics(arg1:string):Promise<string>;
 
 export function DisconnectCluster(arg1:string):Promise<string>;
+
+export function DrainImpact(arg1:string):Promise<k8sclient.DrainImpact>;
 
 export function DrainNodeOwned(arg1:string,arg2:string):Promise<void>;
 
@@ -123,6 +127,8 @@ export function ListHelmReleases(arg1:string):Promise<Array<k8sclient.HelmReleas
 
 export function ListHelmRepos():Promise<Array<k8sclient.HelmRepo>>;
 
+export function ListHorizontalPodAutoscalers(arg1:string):Promise<Array<k8sclient.HPAInfo>>;
+
 export function ListIngresses(arg1:string):Promise<Array<k8sclient.IngressInfo>>;
 
 export function ListJobs(arg1:string):Promise<Array<k8sclient.JobInfo>>;
@@ -131,11 +137,15 @@ export function ListLimitRanges(arg1:string):Promise<Array<k8sclient.LimitRangeI
 
 export function ListNamespaces():Promise<Array<k8sclient.NamespaceInfo>>;
 
+export function ListNetworkPolicies(arg1:string):Promise<Array<k8sclient.NetworkPolicyInfo>>;
+
 export function ListNodes():Promise<Array<k8sclient.NodeInfo>>;
 
 export function ListPVCs(arg1:string):Promise<Array<k8sclient.PVCInfo>>;
 
 export function ListPersistentVolumes():Promise<Array<k8sclient.PersistentVolumeInfo>>;
+
+export function ListPodDisruptionBudgets(arg1:string):Promise<Array<k8sclient.PDBInfo>>;
 
 export function ListPods(arg1:string):Promise<Array<k8sclient.PodInfo>>;
 
@@ -173,9 +183,11 @@ export function PlanDrainPermissions(arg1:string):Promise<k8sclient.PermissionPl
 
 export function PlanHelmPermissions(arg1:string,arg2:string,arg3:string,arg4:number):Promise<k8sclient.PermissionPlan>;
 
+export function PodContainerStates(arg1:string,arg2:string):Promise<Array<k8sclient.ContainerState>>;
+
 export function PodContainers(arg1:string,arg2:string):Promise<Array<string>>;
 
-export function PodLogs(arg1:string,arg2:string,arg3:string,arg4:number):Promise<string>;
+export function PodLogs(arg1:string,arg2:string,arg3:string,arg4:number,arg5:boolean):Promise<string>;
 
 export function PodMetricsList(arg1:string):Promise<Array<k8sclient.PodMetric>>;
 

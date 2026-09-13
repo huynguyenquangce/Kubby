@@ -92,6 +92,67 @@ at request time:
   rather than the app's. Getting that wrong is the single most common Istio HTTPS
   mistake.
 
+## NetworkPolicy overlay and Check traffic
+
+Owned by `netpol.go`. Routing truth (EndpointSlice) says where a request *can*
+land; NetworkPolicy says whether it is *permitted* to. The two are kept separate.
+
+- **Compile once.** Every selector and CIDR is parsed once per call
+  (`compiledNetworkPolicy`) and policies are bucketed by namespace. Parsing per
+  Pod × policy once made Traffic 25–70× slower with 50 policies and allocated
+  gigabytes per refresh; `TestAnnotateFlowPoliciesAllocationBudget` pins the fix
+  with a deterministic allocation count. See [performance.md](performance.md).
+- **Overlay.** `NetworkTopology` lists NetworkPolicies as a fifth concurrent List
+  scoped like the Pods (a policy selects Pods only in its own namespace) and
+  `annotateFlowPolicies` records which policies isolate each endpoint Pod, once
+  per Pod in `NetworkFlows.PodPolicies` keyed `namespace/name` — not on every
+  row, since one Pod appears under every Service that selects it. A failed List
+  is a warning and leaves `PoliciesAvailable` false, never an empty "not isolated"
+  claim. Cluster structure deliberately does not carry the overlay.
+- **Isolation alone is not a broken hop.** Whether traffic passes depends on the
+  source, so an isolated Pod on an internal Service never counts in `BrokenCount`.
+
+### Routes blocked by policy
+
+`evaluateEntryPolicies` (`netpol_routes.go`) supplies the source routed traffic
+really has — the entry point's own Pods — and so turns isolation into a verdict:
+
+- **Source Pods.** An Istio Gateway uses the gateway Pods its selector already
+  resolved. An Ingress resolves its IngressClass (or the default class) and maps
+  `spec.controller` to Pod labels only for controllers whose official chart
+  labels are known (`k8s.io/ingress-nginx`, `traefik.io/ingress-controller`).
+  Anything else sets `FlowIngress.EntryNote` saying it was **not evaluated** —
+  the controller is never guessed.
+- **Destination and port.** Each Pod behind the hop, on the Service port the route
+  names (resolved to that Pod's numeric or named targetPort); without a routed
+  port every Service port is tried and any passing counts.
+- **Verdict.** `FlowService.EntryPolicy` is `blocked`, `partial` or `allowed`,
+  with the isolating or admitting policy names. Blocked and partial hops gain a
+  warning and count as broken paths; an allowed hop keeps its verdict only when a
+  policy was involved.
+- **Cost.** Skipped entirely when the scope has no NetworkPolicy, so clusters
+  without policies pay nothing. Otherwise: one IngressClass List, one Pod List per
+  recognised controller, and a NetworkPolicy List per controller namespace outside
+  the scope. A consequence is stated here rather than hidden: in a scoped view
+  whose namespace has no policy, egress isolation of the controller's namespace
+  is not evaluated.
+- **`CheckTrafficPolicy` evaluates one new connection** with the specification's
+  semantics: a Pod no policy selects for a direction is non-isolated; an isolated
+  Pod allows the union of its policies' rules; egress on the source and ingress on
+  the destination must both allow. Peers: podSelector alone means the *policy's*
+  namespace; namespaceSelector (+ optional podSelector) reads namespace labels;
+  ipBlock/except is matched against the Pod IP. Ports: protocol defaults to TCP,
+  `endPort` ranges, and named ports are resolved on the destination Pod both ways.
+  `policyTypes` defaults to Ingress, plus Egress when egress rules exist.
+- **A Service is evaluated at its Pods**, because policy sees the connection after
+  the Service address is translated. The Service port maps to each Pod's numeric
+  or named targetPort, and mixed results are reported as `partial` — the
+  intermittent-failure case.
+- **State the limit every time.** The API objects are evaluated, not packets:
+  enforcement depends on the CNI, and CNI-specific policies, AdminNetworkPolicy and
+  mesh authorization are out of scope. Host-network Pods and unreadable namespace
+  labels add their own limitation lines instead of silently changing the verdict.
+
 ## Extending to another ingress implementation
 
 `istioflow.go` is the template. Produce `FlowIngress` values with `Kind` set,
@@ -105,6 +166,7 @@ mark backing Services in the shared `fronted` map so they don't also appear as
 ```powershell
 go run ./cmd/kubby-cli netflows            # all namespaces
 go run ./cmd/kubby-cli netflows -n <ns>    # scoped — check the hedged warnings
+go run ./cmd/kubby-cli netpol-check <source-pod> Service/<name> -n <ns> --to-namespace <ns> --port 80
 ```
 
 Worth re-checking after a change: a Gateway in `istio-system` with its

@@ -38,6 +38,12 @@
             <symbol id="i-helmrepos" viewBox="0 0 24 24"><path d="m21 8-9-5-9 5v8l9 5 9-5V8z"/><path d="m3 8 9 5 9-5M12 13v8M7.5 5.5l9 5"/></symbol>
             <symbol id="i-resourcequotas" viewBox="0 0 24 24"><path d="M4 16a8 8 0 1 1 16 0"/><path d="m12 16 4-4"/><circle cx="12" cy="16" r="1.2"/></symbol>
             <symbol id="i-limitranges" viewBox="0 0 24 24"><rect x="2.5" y="8.5" width="19" height="7" rx="1.5"/><path d="M6.5 8.5v3M10.5 8.5v4M14.5 8.5v3M18.5 8.5v4"/></symbol>
+            <!-- Autoscaler: a frame with an outward diagonal arrow. -->
+            <symbol id="i-hpas" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2.5"/><path d="M8 16 16 8M16 8h-5M16 8v5"/></symbol>
+            <!-- Disruption budget: a shield holding a pause mark. -->
+            <symbol id="i-pdbs" viewBox="0 0 24 24"><path d="M12 3 4 6v5c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V6l-8-3z"/><path d="M10 9.5v5M14 9.5v5"/></symbol>
+            <!-- Network policy: a brick firewall. -->
+            <symbol id="i-networkpolicies" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 14.5h18M9 4v5.5M15 9.5v5M9 14.5V20"/></symbol>
             <!-- Right-sizing: two bars of different length — asked-for vs used. -->
             <symbol id="i-sizing" viewBox="0 0 24 24"><path d="M4 7h15M4 12h9M4 17h12"/><path d="M4 4v16"/></symbol>
             <!-- topbar / ui -->
@@ -176,6 +182,7 @@
                     <div class="nav-items">
                         <button class="nav-item" data-view="services"><svg class="ico"><use href="#i-services"/></svg><span class="nav-label">Services</span></button>
                         <button class="nav-item" data-view="ingresses"><svg class="ico"><use href="#i-ingresses"/></svg><span class="nav-label">Ingresses</span></button>
+                        <button class="nav-item" data-view="networkpolicies"><svg class="ico"><use href="#i-networkpolicies"/></svg><span class="nav-label">NetworkPolicies</span></button>
                         <button class="nav-item" data-view="traffic"><svg class="ico"><use href="#i-traffic"/></svg><span class="nav-label">Topology</span></button>
                     </div>
                 </div>
@@ -184,6 +191,8 @@
                     <div class="nav-items">
                         <button class="nav-item" data-view="configmaps"><svg class="ico"><use href="#i-configmaps"/></svg><span class="nav-label">ConfigMaps</span></button>
                         <button class="nav-item" data-view="secrets"><svg class="ico"><use href="#i-secrets"/></svg><span class="nav-label">Secrets</span></button>
+                        <button class="nav-item" data-view="hpas"><svg class="ico"><use href="#i-hpas"/></svg><span class="nav-label">HPAs</span></button>
+                        <button class="nav-item" data-view="pdbs"><svg class="ico"><use href="#i-pdbs"/></svg><span class="nav-label">PodDisruptionBudgets</span></button>
                     </div>
                 </div>
                 <div class="nav-section collapsed" data-section="storage">
@@ -532,6 +541,33 @@
                     </div>
                 </section>
 
+                <!-- NetworkPolicies -->
+                <section id="view-networkpolicies" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Pod selector</th><th>Types</th><th>Effect</th></tr></thead>
+                            <tbody id="networkpolicies-body"></tbody></table>
+                        <p class="empty-inline" id="networkpolicies-empty" hidden>No network policies in this namespace — its Pods are not isolated by NetworkPolicy.</p>
+                    </div>
+                </section>
+
+                <!-- HorizontalPodAutoscalers -->
+                <section id="view-hpas" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Target</th><th>Replicas</th><th>Range</th><th>Metrics (current/target)</th><th>Status</th></tr></thead>
+                            <tbody id="hpas-body"></tbody></table>
+                        <p class="empty-inline" id="hpas-empty" hidden>No horizontal pod autoscalers in this namespace.</p>
+                    </div>
+                </section>
+
+                <!-- PodDisruptionBudgets -->
+                <section id="view-pdbs" class="view" hidden>
+                    <div class="card">
+                        <table><thead><tr><th>Namespace</th><th>Name</th><th>Budget</th><th>Allowed disruptions</th><th>Healthy</th><th>Status</th></tr></thead>
+                            <tbody id="pdbs-body"></tbody></table>
+                        <p class="empty-inline" id="pdbs-empty" hidden>No pod disruption budgets in this namespace.</p>
+                    </div>
+                </section>
+
                 <!-- PVCs -->
                 <section id="view-pvcs" class="view" hidden>
                     <div class="card">
@@ -628,6 +664,7 @@
                             <input type="checkbox" id="flow-only-problems">
                             <span>Only show broken paths</span>
                         </label>
+                        <button type="button" id="btn-traffic-check" class="btn btn-secondary btn-sm">Check traffic A → B</button>
                         <span class="flow-updated" id="flow-updated"></span>
                     </div>
 
@@ -829,6 +866,7 @@
                 <div class="drawer-head-actions">
                     <button id="btn-scale" class="btn btn-secondary btn-sm" title="Scale" hidden>Scale</button>
                     <button id="btn-restart" class="btn btn-secondary btn-sm" title="Restart" hidden>Restart</button>
+                    <button id="btn-copy-kubectl" class="btn btn-secondary btn-sm" title="Copy the kubectl describe command for this resource">kubectl</button>
                     <button id="btn-delete" class="btn btn-danger btn-sm" title="Delete">Delete</button>
                     <button id="drawer-close" class="icon-btn" title="Close" aria-label="Close the detail panel">✕</button>
                 </div>
@@ -879,9 +917,15 @@
                         <select id="logs-container"></select>
                     </label>
                     <label class="logs-follow-label"><input type="checkbox" id="logs-follow"> Follow</label>
+                    <label class="logs-follow-label" title="Logs of the container instance that ran before its last restart — where a crash was written"><input type="checkbox" id="logs-previous"> Previous</label>
                     <input type="text" id="logs-search" class="logs-search" placeholder="Filter lines…">
                     <button id="btn-logs-reload" class="btn btn-secondary btn-sm">↻ Reload</button>
                     <button id="btn-logs-download" class="btn btn-secondary btn-sm">⬇ Download</button>
+                    <button id="btn-logs-copy-command" class="btn btn-secondary btn-sm" title="Copy the equivalent kubectl logs command">Copy kubectl</button>
+                </div>
+                <div id="logs-restart-hint" class="logs-restart-hint" role="status" hidden>
+                    <span id="logs-restart-text"></span>
+                    <button type="button" id="btn-logs-restart-toggle" class="btn btn-secondary btn-sm"></button>
                 </div>
                 <pre id="logs-view" class="logs-view"></pre>
             </div>

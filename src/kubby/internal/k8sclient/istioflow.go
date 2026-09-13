@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // Istio splits what an Ingress does into two objects: a Gateway says where
@@ -60,6 +61,9 @@ type istioWorkload struct {
 	Pods      int
 	Namespace string
 	Address   string // load-balancer address of the Service fronting those pods
+	// selected is every non-terminating gateway Pod in Namespace — the source
+	// of routed traffic when NetworkPolicy is evaluated (netpol_routes.go).
+	selected []corev1.Pod
 }
 
 // istioFlows returns one FlowIngress per Istio Gateway that is reachable in the
@@ -258,6 +262,7 @@ func (ic *istioContext) flowGateway(
 		warnings = append(warnings, fmt.Sprintf("No Pod matches the selector %s — nothing is listening for this Gateway", fi.Class))
 	default:
 		fi.Address = wl.Address
+		fi.entryPods = wl.selected
 	}
 
 	// The TLS secret is read by the ingress gateway, so it must live in *its*
@@ -303,8 +308,9 @@ func (ic *istioContext) flowVirtualService(
 	vsNs := vs.GetNamespace()
 	vsHosts := nestedStringSlice(vs.Object, "spec", "hosts")
 
-	order := []string{}             // destination host, in first-seen order
-	routes := map[string][]string{} // destination host → route labels
+	order := []string{}                        // destination host, in first-seen order
+	routes := map[string][]string{}            // destination host → route labels
+	ports := map[string][]intstr.IntOrString{} // destination host → Service ports routed to
 	for _, section := range []string{"http", "tcp", "tls"} {
 		rules, _, _ := unstructured.NestedSlice(vs.Object, "spec", section)
 		for _, raw := range rules {
@@ -327,6 +333,9 @@ func (ic *istioContext) flowVirtualService(
 					order = append(order, host)
 				}
 				routes[host] = append(routes[host], istioRouteLabels(hosts, paths, dest)...)
+				if number, found, _ := unstructured.NestedInt64(dest, "destination", "port", "number"); found && number > 0 {
+					ports[host] = append(ports[host], intstr.FromInt32(int32(number)))
+				}
 			}
 		}
 	}
@@ -336,6 +345,7 @@ func (ic *istioContext) flowVirtualService(
 	for _, host := range order {
 		fs := ic.destinationService(host, vsNs, endpoints, fronted)
 		fs.Routes = routes[host]
+		fs.routePorts = ports[host]
 		fs.Via = via
 		fs.ViaKind = istioVSKind
 		fs.ViaName = vs.GetName()
@@ -472,6 +482,11 @@ func (ic *istioContext) ingressWorkload(selector map[string]string) *istioWorklo
 		return wl
 	}
 	wl.Namespace = selectedPods[0].Namespace
+	for i := range selectedPods {
+		if selectedPods[i].Namespace == wl.Namespace {
+			wl.selected = append(wl.selected, selectedPods[i])
+		}
+	}
 
 	// The Gateway selects pods; the address users hit belongs to the Service in
 	// front of those pods, so match back from the pod labels.

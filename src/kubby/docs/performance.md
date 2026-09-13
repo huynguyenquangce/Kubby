@@ -70,7 +70,7 @@ reorder a large transitive model graph. Closing or replacing the drawer cancels
 that operation by its exact owner ID; a canceled response cannot render into a
 later drawer.
 
-Traffic also starts Services, Pods, Ingresses and EndpointSlices concurrently.
+Traffic also starts Services, Pods, Ingresses, EndpointSlices and NetworkPolicies concurrently.
 Its in-memory Service→Pod join first narrows candidates through an exact
 namespace/label index, then verifies the complete selector. A missing optional
 Istio kind is negatively cached for one minute so a cluster without Istio does
@@ -129,6 +129,28 @@ a disabled API) must not fail the whole call. `NamespaceSummary` treats only Pod
 as required, since a namespace whose pods you cannot list is a genuine access
 problem worth surfacing.
 
+## Rule 7 — parse selectors once, not per object
+
+`metav1.LabelSelectorAsSelector` validates every key and value with regular
+expressions. Calling it inside a Pod × policy loop made the Traffic view 25–70×
+slower once policies existed: on kind with 2,000 Pods and 500 NetworkPolicies one
+call went from ~90 ms to ~6.5 s, and 10k endpoint rows × 50 policies allocated
+~300 MB per five-second refresh. The profile put 70% of CPU and 93% of allocated
+bytes in selector parsing.
+
+- Compile selectors and CIDRs once per call (`compiledNetworkPolicy` in
+  `netpol.go`), bucketed by namespace, and match compiled selectors in the loop.
+- Compute a per-object answer once per object, not once per row that shows it —
+  one Pod appears under every Service that selects it.
+- Send per-object data once: the overlay is `NetworkFlows.PodPolicies` keyed by
+  Pod, not a copy on every endpoint row.
+- Guard with a deterministic test, not a timing one:
+  `TestAnnotateFlowPoliciesAllocationBudget` bounds allocations (22.5k for 10k
+  rows × 50 policies, budget 100k; the per-row version made 12.4 million), and
+  `TestCheckTrafficPolicyRequestsDoNotScaleWithEndpoints` pins API requests.
+- Skip evaluation that cannot change the answer: route verdicts
+  (`netpol_routes.go`) are not computed at all when the scope has no policy.
+
 ## Measurements
 
 One-node kind cluster, 308 objects — the gap widens with cluster size, because
@@ -142,6 +164,18 @@ both the throttle and the payload scale with it.
 | Overview bridge calls | 7 independent calls | **1** `OverviewSnapshot` call |
 | Overview processing, synthetic 10,000 Pods | unmeasured | **33 ms/op**, 54.6 MB/op (fake-client benchmark, 3 runs) |
 | Initial production JS (before opening Terminal) | **910.88 kB / 265.44 kB gzip** | **581.55 kB / 182.88 kB gzip**; xterm is a 329.31 kB on-demand chunk |
+| Traffic overlay, 10k endpoint rows × 50 policies (fake client) | **511 ms**, 279 MB/op, 12.4 M allocs | **13.5 ms**, 1.9 MB/op, 22.5 k allocs |
+| Traffic overlay, 100k rows × 500 policies | **53 s** (single run) | **128 ms**, 9.4 MB/op |
+| `NetworkTopology`, 100k rows × 50 policies | **5.4–5.6 s** | **119–141 ms** |
+| `CheckTrafficPolicy`, 1,000 Pods × 500 policies | **0.93–1.18 s**, 520 MB/op | **40–42 ms**, 34 MB/op; always 5 API requests |
+| Topology indexed join, 1000 Services × 10k Pods | 79–84 ms, **67.9 MB/op** (per-row policy fields) | 83–89 ms, **46.2 MB/op** |
+| Initial production JS, September 2026 | 589.14 kB / 185.52 kB gzip | **602.88 kB / 189.55 kB gzip** after the policy kinds, Check traffic, drain preview and log hints |
+
+The September figures were measured on the same Ryzen 5 5600H under WSL2 with
+`-count 3`/`-count 5`. The kind comparison used a one-node cluster seeded with
+3,510 Pods, 1,503 Services, 1,000 NetworkPolicies, 250 HPAs and 250 PDBs, timing
+HEAD and working-tree binaries alternately; sidebar counts on a namespace switch
+rose ~20 ms (17 → 20 lists) and a full refresh did not change measurably.
 
 The 2026-08-14 performance audit additionally measured warmed kind counts at a
 24 ms median, Overview at 20.8 ms/op and 24.30 MB/op for 10,000 synthetic Pods,
@@ -167,6 +201,8 @@ go run ./cmd/kubby-cli counts -n default --cluster=false   # the namespace-switc
 go run ./cmd/kubby-cli overview                            # one Overview snapshot, timed
 go test ./internal/k8sclient -run '^$' -bench BenchmarkOverviewSnapshot10kPods -benchmem
 go test ./internal/k8sclient -run '^$' -bench BenchmarkNetworkTopologyIndexedJoin1000Services10kPods -benchmem
+go test ./internal/k8sclient -run '^$' -bench 'Perf' -benchmem -count 3        # policy overlay, traffic check, request counts
+go test ./internal/k8sclient -run 'AllocationBudget|RequestsDoNotScale' -v      # deterministic guards
 ```
 
 ## Bounded resource tables
@@ -200,6 +236,12 @@ Not yet addressed — worth knowing before blaming something else:
 - **Filtering scans every loaded row.** Normalized row text is cached after the
   first pass, but search is not server-side and does not claim to include pages
   that have not been loaded yet.
+- **The initial bundle has crossed 600 kB** (602.88 kB / 189.55 kB gzip). Most of
+  it is CodeMirror (below); the September feature work added ~14 kB. Splitting
+  the editor is the change that would matter; lazy-loading small modals would not.
+- **Route verdicts add requests when policies exist**: one IngressClass List, one
+  Pod List per recognised ingress controller, and a NetworkPolicy List per
+  controller namespace outside a scoped view, on each Traffic refresh.
 - **CodeMirror remains eager** because the Welcome screen immediately needs the
   shared editor for pasted kubeconfig content. The terminal runtime is lazy: its
   dynamic xterm/FitAddon chunks load only when a Terminal tab opens, and the

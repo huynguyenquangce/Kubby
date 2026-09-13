@@ -209,7 +209,75 @@ func main() {
 		},
 	}
 
-	getCmd.AddCommand(getPods, getNamespaces)
+	var policyNamespace string
+	getHPAs := &cobra.Command{
+		Use:     "hpas",
+		Aliases: []string{"hpa"},
+		Short:   "Liệt kê HorizontalPodAutoscaler",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			items, err := k8sclient.ListHorizontalPodAutoscalers(context.Background(), cluster.Clientset, policyNamespace)
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "NAMESPACE\tNAME\tTARGET\tREPLICAS\tRANGE\tMETRICS\tSTATUS\tAGE")
+			for _, h := range items {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", h.Namespace, h.Name, h.Target, h.Replicas, h.MinMax, h.Metrics, h.Status, h.Age)
+			}
+			return w.Flush()
+		},
+	}
+	getPDBs := &cobra.Command{
+		Use:     "pdbs",
+		Aliases: []string{"pdb"},
+		Short:   "Liệt kê PodDisruptionBudget",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			items, err := k8sclient.ListPodDisruptionBudgets(context.Background(), cluster.Clientset, policyNamespace)
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "NAMESPACE\tNAME\tBUDGET\tALLOWED\tHEALTHY\tSTATUS\tAGE")
+			for _, p := range items {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n", p.Namespace, p.Name, p.Budget, p.AllowedDisruptions, p.Healthy, p.Status, p.Age)
+			}
+			return w.Flush()
+		},
+	}
+	getNetworkPolicies := &cobra.Command{
+		Use:     "networkpolicies",
+		Aliases: []string{"netpol", "netpols"},
+		Short:   "Liệt kê NetworkPolicy",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			items, err := k8sclient.ListNetworkPolicies(context.Background(), cluster.Clientset, policyNamespace)
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "NAMESPACE\tNAME\tPOD-SELECTOR\tTYPES\tEFFECT\tAGE")
+			for _, n := range items {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", n.Namespace, n.Name, n.PodSelector, n.PolicyTypes, n.Effect, n.Age)
+			}
+			return w.Flush()
+		},
+	}
+	for _, command := range []*cobra.Command{getHPAs, getPDBs, getNetworkPolicies} {
+		command.Flags().StringVarP(&policyNamespace, "namespace", "n", "", "namespace (rỗng = tất cả)")
+	}
+
+	getCmd.AddCommand(getPods, getNamespaces, getHPAs, getPDBs, getNetworkPolicies)
 	root.AddCommand(getCmd)
 
 	var yamlNamespace string
@@ -235,6 +303,7 @@ func main() {
 
 	var logsNamespace, logsContainer string
 	var logsTail int
+	var logsPrevious bool
 	logsCmd := &cobra.Command{
 		Use:   "logs <pod>",
 		Short: "In log gần nhất của một pod",
@@ -244,7 +313,7 @@ func main() {
 			if err != nil {
 				return err
 			}
-			out, err := k8sclient.PodLogs(context.Background(), cluster, logsNamespace, args[0], logsContainer, int64(logsTail))
+			out, err := k8sclient.PodLogs(context.Background(), cluster, logsNamespace, args[0], logsContainer, int64(logsTail), logsPrevious)
 			if err != nil {
 				return err
 			}
@@ -255,7 +324,93 @@ func main() {
 	logsCmd.Flags().StringVarP(&logsNamespace, "namespace", "n", "default", "namespace")
 	logsCmd.Flags().StringVarP(&logsContainer, "container", "c", "", "container (mặc định: container đầu)")
 	logsCmd.Flags().IntVar(&logsTail, "tail", 200, "số dòng cuối")
+	logsCmd.Flags().BoolVarP(&logsPrevious, "previous", "p", false, "log của instance trước lần restart gần nhất")
 	root.AddCommand(logsCmd)
+
+	// netpol-check — does NetworkPolicy allow Pod A to reach Pod/Service B?
+	var checkNamespace, checkToNamespace, checkProtocol string
+	var checkPort int
+	netpolCheckCmd := &cobra.Command{
+		Use:   "netpol-check <source-pod> <Pod|Service>/<name>",
+		Short: "Đánh giá NetworkPolicy cho kết nối từ một Pod tới Pod/Service",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kind, name, ok := strings.Cut(args[1], "/")
+			if !ok {
+				return fmt.Errorf("destination must be Pod/<name> or Service/<name>")
+			}
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			result, err := k8sclient.CheckTrafficPolicy(context.Background(), cluster, checkNamespace, args[0], kind, checkToNamespace, name, checkPort, checkProtocol)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s: %s\n", strings.ToUpper(result.Verdict), result.Summary)
+			for _, target := range result.Targets {
+				fmt.Printf("  → Pod %s/%s %s [%s] allowed=%v\n", target.Namespace, target.Pod, target.IP, target.Port, target.Allowed)
+				fmt.Printf("      egress:  %s\n", target.Egress.Reason)
+				fmt.Printf("      ingress: %s\n", target.Ingress.Reason)
+			}
+			for _, limitation := range result.Limitations {
+				fmt.Printf("  note: %s\n", limitation)
+			}
+			return nil
+		},
+	}
+	netpolCheckCmd.Flags().StringVarP(&checkNamespace, "namespace", "n", "default", "namespace của source Pod")
+	netpolCheckCmd.Flags().StringVar(&checkToNamespace, "to-namespace", "", "namespace đích (mặc định: như source)")
+	netpolCheckCmd.Flags().IntVar(&checkPort, "port", 0, "port đích (0 = port duy nhất được khai báo)")
+	netpolCheckCmd.Flags().StringVar(&checkProtocol, "protocol", "", "TCP, UDP hoặc SCTP (mặc định TCP)")
+	root.AddCommand(netpolCheckCmd)
+
+	// containers — restart state per container, as the Logs tab shows it.
+	var containersNamespace string
+	containersCmd := &cobra.Command{
+		Use:   "containers <pod>",
+		Short: "Trạng thái từng container: restart, lần thoát gần nhất, có log trước restart không",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			states, err := k8sclient.PodContainerStates(context.Background(), cluster, containersNamespace, args[0])
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "CONTAINER\tREADY\tSTATE\tRESTARTS\tLAST-EXIT\tAGO\tPREVIOUS-LOGS")
+			for _, s := range states {
+				fmt.Fprintf(w, "%s\t%v\t%s\t%d\t%s\t%s\t%v\n", s.Name, s.Ready, s.State, s.RestartCount, s.LastTermination, s.LastTerminationAge, s.HasPrevious)
+			}
+			return w.Flush()
+		},
+	}
+	containersCmd.Flags().StringVarP(&containersNamespace, "namespace", "n", "default", "namespace")
+	root.AddCommand(containersCmd)
+
+	// drain-impact — what a drain would do, without doing it.
+	drainImpactCmd := &cobra.Command{
+		Use:   "drain-impact <node>",
+		Short: "Xem trước tác động của drain: PDB chặn eviction, Pod không có controller, emptyDir (read-only)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			impact, err := k8sclient.DrainImpactFor(context.Background(), cluster, args[0])
+			if err != nil {
+				return err
+			}
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(impact)
+		},
+	}
+	root.AddCommand(drainImpactCmd)
 
 	var applyFile string
 	applyCmd := &cobra.Command{
@@ -1012,6 +1167,10 @@ func main() {
 				if svc.Warning != "" {
 					fmt.Printf("%s    ! %s\n", indent, svc.Warning)
 				}
+				if svc.EntryPolicy != nil {
+					fmt.Printf("%s    policy: %s from %s — %d/%d Pods blocked %v\n", indent, svc.EntryPolicy.Verdict, svc.EntryPolicy.Source,
+						svc.EntryPolicy.Blocked, svc.EntryPolicy.Total, svc.EntryPolicy.Policies)
+				}
 				for _, pod := range svc.Pods {
 					fmt.Printf("%s    → Pod %s [%s %s] on %s\n", indent, pod.Name, pod.Status, pod.Ready, pod.Node)
 				}
@@ -1019,6 +1178,9 @@ func main() {
 			for _, ing := range flows.Ingresses {
 				fmt.Printf("%s %s/%s class=%q hosts=%v ports=%v tls=%v addr=%q\n",
 					ing.Kind, ing.Namespace, ing.Name, ing.Class, ing.Hosts, ing.Ports, ing.TLS, ing.Address)
+				if ing.EntryNote != "" {
+					fmt.Printf("  note: %s\n", ing.EntryNote)
+				}
 				if ing.Warning != "" {
 					fmt.Printf("  ! %s\n", ing.Warning)
 				}

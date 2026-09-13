@@ -174,7 +174,8 @@ const DEFAULT_FIXTURES = {
     },
     GetYAML: 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: api-6df7fdd9f8-4zj8g\n  namespace: payments\nspec:\n  containers:\n    - name: api\n      image: example.invalid/api:v1\n',
     ListEvents: [{ type: 'Normal', reason: 'Started', age: '12m', message: 'Started container api', count: 1 }],
-    PodContainers: ['api'],
+    PodContainerStates: [{ name: 'api', ready: true, state: 'Running', restartCount: 0, lastTermination: '', lastTerminationAge: '', hasPrevious: false }],
+    DrainImpact: { node: 'kubby-worker', evict: 3, daemonSetPods: 1, mirrorPods: 0, unmanaged: [], emptyDir: [], blockingBudgets: [], warnings: [] },
     PodLogs: '2026-08-12T03:20:01Z server listening on :8080\n',
     GetAIConfig: { provider: '', endpoint: '', model: '', language: 'auto', hasApiKey: false },
     GetAIStatus: { configured: false, provider: '', model: '' },
@@ -203,6 +204,26 @@ const DEFAULT_FIXTURES = {
     SaveIncidentReport: '/tmp/kubby-incident-pod-checkout.md',
     AppVersion: 'Kubby 0.2.0-test linux/amd64',
     NetworkFlows: { ingresses: [], services: [], routedCount: 0, endpointCount: 0, brokenCount: 0 },
+    ListHorizontalPodAutoscalers: [
+        { namespace: 'payments', name: 'checkout', target: 'Deployment/checkout', replicas: '2 → 3', minMax: '2–6', metrics: 'cpu 91%/70%', status: 'Scaling', isError: false, age: '3d' },
+    ],
+    ListPodDisruptionBudgets: [
+        { namespace: 'payments', name: 'checkout', budget: 'minAvailable 2', allowedDisruptions: 0, healthy: '2/2', status: 'Allows no disruptions — drains will block', isError: true, age: '3d' },
+    ],
+    ListNetworkPolicies: [
+        { namespace: 'payments', name: 'deny-all', podSelector: 'all Pods', policyTypes: 'Ingress', effect: 'Denies all ingress', age: '1d' },
+    ],
+    CheckTrafficPolicy: {
+        sourceNamespace: 'default', sourcePod: 'web-5cf9d8b8d6-hv2lk',
+        destinationKind: 'Service', destinationNamespace: 'payments', destinationName: 'checkout',
+        verdict: 'blocked', summary: 'NetworkPolicy blocks default/web-5cf9d8b8d6-hv2lk from reaching Service payments/checkout.',
+        targets: [{
+            pod: 'checkout-7b8d9f-v5lhn', namespace: 'payments', ip: '10.244.1.9', port: 'http (8080)/TCP', allowed: false,
+            egress: { isolated: false, allowed: true, selecting: [], allowing: [], reason: 'No NetworkPolicy selects web-5cf9d8b8d6-hv2lk for egress, so it is not isolated.' },
+            ingress: { isolated: true, allowed: false, selecting: [{ namespace: 'payments', name: 'deny-all' }], allowing: [], reason: 'checkout-7b8d9f-v5lhn is isolated for ingress by deny-all, and no rule permits from default/web-5cf9d8b8d6-hv2lk on http (8080)/TCP.' },
+        }],
+        limitations: ["Kubby evaluates NetworkPolicy objects; whether they are enforced depends on the cluster's CNI plugin."],
+    },
     Sizing: {
         totals: { pods: 0, containers: 0, cpuRequest: 0, cpuUsage: 0, memRequest: 0, memUsage: 0 },
         nodes: 2, allocCpu: 8000, allocMem: 16384, cpuReservedPct: 0, memReservedPct: 0,

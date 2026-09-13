@@ -56,6 +56,12 @@ func GetDrawerSnapshot(ctx context.Context, c *Cluster, kind, namespace, name st
 		relationTask = func() (*RelationNode, error) { return ServiceTree(ctx, c, namespace, name) }
 	case "Ingress":
 		relationTask = func() (*RelationNode, error) { return IngressTree(ctx, c, namespace, name) }
+	case "HorizontalPodAutoscaler":
+		relationTask = func() (*RelationNode, error) { return HPATree(ctx, c, namespace, name) }
+	case "PodDisruptionBudget":
+		relationTask = func() (*RelationNode, error) { return PDBTree(ctx, c, namespace, name) }
+	case "NetworkPolicy":
+		relationTask = func() (*RelationNode, error) { return NetworkPolicyTree(ctx, c, namespace, name) }
 	}
 	if relationTask != nil {
 		run("relations", func() error {

@@ -12,6 +12,7 @@ import (
 	netv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // The Traffic view answers one question: "if a request arrives, where does it
@@ -34,6 +35,12 @@ type FlowPod struct {
 	IsReady   bool   `json:"isReady"` // all containers ready — i.e. actually serving
 }
 
+// FlowPodPolicies names the NetworkPolicies that isolate one endpoint Pod.
+type FlowPodPolicies struct {
+	Ingress []string `json:"ingress"`
+	Egress  []string `json:"egress"`
+}
+
 // FlowService is a Service together with the pods its selector matches.
 type FlowService struct {
 	Name      string    `json:"name"`
@@ -45,6 +52,14 @@ type FlowService struct {
 	Pods      []FlowPod `json:"pods"`
 	ReadyPods int       `json:"readyPods"`
 	Warning   string    `json:"warning"` // "" when the hop is healthy
+
+	// EntryPolicy is the NetworkPolicy verdict for traffic from the entry
+	// point's own Pods (ingress controller or Istio gateway) to this hop's Pods;
+	// nil when it was not evaluated (netpol_routes.go).
+	EntryPolicy *FlowEntryPolicy `json:"entryPolicy"`
+	// routePorts are the Service ports the routes target, when the route names
+	// them; not serialized.
+	routePorts []intstr.IntOrString
 
 	// Via names the object that created these routes when it is not the entry
 	// point itself — an Istio VirtualService sits between Gateway and Service.
@@ -68,6 +83,23 @@ type FlowIngress struct {
 	TLS       bool          `json:"tls"`
 	Services  []FlowService `json:"services"`
 	Warning   string        `json:"warning"`
+	// EntryNote says why NetworkPolicy on this entry point's routes was not
+	// evaluated, e.g. an ingress controller Kubby cannot map to its Pods.
+	EntryNote string `json:"entryNote"`
+
+	// entryPods are the Istio gateway Pods that forward this entry point's
+	// traffic, when known; not serialized.
+	entryPods []corev1.Pod
+}
+
+// FlowEntryPolicy is the NetworkPolicy verdict for one routed hop, evaluated
+// from the entry point's Pods to the hop's Pods on the routed port.
+type FlowEntryPolicy struct {
+	Verdict  string   `json:"verdict"`  // allowed | blocked | partial
+	Source   string   `json:"source"`   // "ingress-nginx controller (2 Pods in ingress-nginx)"
+	Blocked  int      `json:"blocked"`  // destination Pods no entry Pod may reach
+	Total    int      `json:"total"`    // destination Pods evaluated
+	Policies []string `json:"policies"` // isolating policies behind a block, or admitting policies when allowed
 }
 
 // NetworkFlows is the whole Traffic view payload.
@@ -79,6 +111,13 @@ type NetworkFlows struct {
 	BrokenCount   int           `json:"brokenCount"` // hops with a warning
 	Scope         string        `json:"scope"`       // "" = all namespaces
 	Warnings      []string      `json:"warnings"`
+
+	PoliciesAvailable bool `json:"policiesAvailable"` // NetworkPolicies were listed for the overlay
+	PolicyCount       int  `json:"policyCount"`
+	IsolatedPods      int  `json:"isolatedPods"` // endpoint Pods selected by an ingress policy
+	// PodPolicies holds the overlay once per isolated endpoint Pod, keyed
+	// "namespace/name" (netpol.go). A Pod absent from it is not isolated.
+	PodPolicies map[string]FlowPodPolicies `json:"podPolicies"`
 }
 
 type serviceEndpointReadiness struct {
@@ -204,7 +243,8 @@ func NetworkTopology(ctx context.Context, c *Cluster, namespace string) (*Networ
 	var podList *corev1.PodList
 	var ingList *netv1.IngressList
 	var endpointSlices *discoveryv1.EndpointSliceList
-	errs := make([]error, 4)
+	var policyList *netv1.NetworkPolicyList
+	errs := make([]error, 5)
 	var wg sync.WaitGroup
 	tasks := []func(){
 		func() { svcList, errs[0] = c.Clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{}) },
@@ -214,6 +254,11 @@ func NetworkTopology(ctx context.Context, c *Cluster, namespace string) (*Networ
 		},
 		func() {
 			endpointSlices, errs[3] = c.Clientset.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{})
+		},
+		// A policy selects Pods only in its own namespace, so the view's scope
+		// bounds this List exactly like the Pods it annotates.
+		func() {
+			policyList, errs[4] = c.Clientset.NetworkingV1().NetworkPolicies(namespace).List(ctx, metav1.ListOptions{})
 		},
 	}
 	for _, task := range tasks {
@@ -232,6 +277,12 @@ func NetworkTopology(ctx context.Context, c *Cluster, namespace string) (*Networ
 	out := networkTopologyFromLists(ctx, c, namespace, svcList, podList, ingList, endpointSlices, errs[3] == nil)
 	if errs[3] != nil {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("endpoint slices: %v; falling back to PodReady conditions", errs[3]))
+	}
+	if errs[4] != nil {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("network policies: %v; the policy overlay is unavailable", errs[4]))
+	} else {
+		annotateFlowPolicies(out, podList.Items, policyList.Items)
+		evaluateEntryPolicies(ctx, c, namespace, out, podList.Items, svcList.Items, policyList.Items)
 	}
 	return out, nil
 }
@@ -358,6 +409,7 @@ func flowIngress(
 	// paths appears once with all three routes listed under it.
 	order := []string{}
 	routes := map[string][]string{}
+	routePorts := map[string][]intstr.IntOrString{} // backend Service ports, for policy evaluation
 	addRoute := func(svcName, host, path, port string) {
 		if _, seen := routes[svcName]; !seen {
 			order = append(order, svcName)
@@ -386,10 +438,12 @@ func flowIngress(
 				continue
 			}
 			addRoute(p.Backend.Service.Name, rule.Host, p.Path, backendPort(p.Backend.Service.Port))
+			routePorts[p.Backend.Service.Name] = append(routePorts[p.Backend.Service.Name], serviceBackendPortRef(p.Backend.Service.Port))
 		}
 	}
 	if ing.Spec.DefaultBackend != nil && ing.Spec.DefaultBackend.Service != nil {
 		addRoute(ing.Spec.DefaultBackend.Service.Name, "", "(default backend)", backendPort(ing.Spec.DefaultBackend.Service.Port))
+		routePorts[ing.Spec.DefaultBackend.Service.Name] = append(routePorts[ing.Spec.DefaultBackend.Service.Name], serviceBackendPortRef(ing.Spec.DefaultBackend.Service.Port))
 	}
 
 	for _, svcName := range order {
@@ -405,6 +459,7 @@ func flowIngress(
 		}
 		fs := flowService(svc, podLabels.candidates(svc, podsByNs[svc.Namespace]), endpointReadiness, endpoints)
 		fs.Routes = routes[svcName]
+		fs.routePorts = routePorts[svcName]
 		fi.Services = append(fi.Services, fs)
 	}
 

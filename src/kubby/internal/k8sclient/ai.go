@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 )
 
@@ -18,14 +21,22 @@ type AIContext struct {
 	Events        int    `json:"events"`
 	LogContainers int    `json:"logContainers"`
 	LogLines      int    `json:"logLines"`
-	HasYAML       bool   `json:"hasYAML"`
-	Chars         int    `json:"chars"`
+	// PreviousLogContainers counts restarted containers whose pre-restart logs
+	// were attached; their lines are included in LogLines.
+	PreviousLogContainers int  `json:"previousLogContainers"`
+	HasYAML               bool `json:"hasYAML"`
+	Chars                 int  `json:"chars"`
 }
 
 const (
 	diagLogTail   = 60
 	diagLogChars  = 3000
 	diagYAMLChars = 6000
+	// Previous-instance logs get a smaller budget so a restarted multi-container
+	// Pod stays inside the 32 KiB evidence limit App.AskAboutResource enforces.
+	diagPreviousLogChars = 2000
+	// diagLogConcurrency bounds concurrent log reads for one Pod's evidence.
+	diagLogConcurrency = 4
 )
 
 var (
@@ -57,18 +68,28 @@ func DiagnosticContext(ctx context.Context, c *Cluster, kind, namespace, name st
 		b.WriteString("\n")
 	}
 
-	// For pods, include recent logs from each container.
+	// For pods, include recent logs from each container — and, for a container
+	// that has restarted, the instance before the restart, which is where a
+	// crash was written while the current instance may still be silent.
 	if kind == "Pod" {
-		if containers, err := PodContainers(ctx, c, namespace, name); err == nil {
-			for _, ct := range containers {
-				logs, err := PodLogs(ctx, c, namespace, name, ct, diagLogTail)
-				if err != nil || strings.TrimSpace(logs) == "" {
+		if pod, err := c.Clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			requests := diagnosticLogRequests(pod)
+			fetchDiagnosticLogs(ctx, c, namespace, name, requests)
+			for _, request := range requests {
+				if strings.TrimSpace(request.text) == "" {
 					continue
 				}
-				trimmed := tailStr(redactSensitiveText(logs), diagLogChars)
+				if request.previous {
+					trimmed := tailStr(redactSensitiveText(request.text), diagPreviousLogChars)
+					out.PreviousLogContainers++
+					out.LogLines += strings.Count(strings.TrimRight(trimmed, "\n"), "\n") + 1
+					fmt.Fprintf(&b, "## Logs — container %s (previous instance, before restart %d)\n```\n%s\n```\n\n", request.container, request.restarts, trimmed)
+					continue
+				}
+				trimmed := tailStr(redactSensitiveText(request.text), diagLogChars)
 				out.LogContainers++
 				out.LogLines += strings.Count(strings.TrimRight(trimmed, "\n"), "\n") + 1
-				fmt.Fprintf(&b, "## Logs — container %s (recent)\n```\n%s\n```\n\n", ct, trimmed)
+				fmt.Fprintf(&b, "## Logs — container %s (recent)\n```\n%s\n```\n\n", request.container, trimmed)
 			}
 		}
 	}
@@ -82,6 +103,54 @@ func DiagnosticContext(ctx context.Context, c *Cluster, kind, namespace, name st
 	out.Text = b.String()
 	out.Chars = len(out.Text)
 	return out, nil
+}
+
+// diagnosticLogRequest is one log read for AI evidence; text is filled by
+// fetchDiagnosticLogs and stays empty when the read fails.
+type diagnosticLogRequest struct {
+	container string
+	previous  bool
+	restarts  int32
+	text      string
+}
+
+// diagnosticLogRequests lists the current logs of every container and, for a
+// container the kubelet reports as having terminated before its last restart,
+// that previous instance — the only case in which previous logs exist.
+func diagnosticLogRequests(pod *corev1.Pod) []*diagnosticLogRequest {
+	statuses := map[string]corev1.ContainerStatus{}
+	for _, status := range pod.Status.ContainerStatuses {
+		statuses[status.Name] = status
+	}
+	requests := []*diagnosticLogRequest{}
+	for _, container := range pod.Spec.Containers {
+		requests = append(requests, &diagnosticLogRequest{container: container.Name})
+		status := statuses[container.Name]
+		if status.RestartCount > 0 && status.LastTerminationState.Terminated != nil {
+			requests = append(requests, &diagnosticLogRequest{container: container.Name, previous: true, restarts: status.RestartCount})
+		}
+	}
+	return requests
+}
+
+// fetchDiagnosticLogs reads the requests concurrently under a small bound, so a
+// multi-container Pod that has restarted does not pay one round-trip after
+// another. Each goroutine writes only its own request.
+func fetchDiagnosticLogs(ctx context.Context, c *Cluster, namespace, name string, requests []*diagnosticLogRequest) {
+	semaphore := make(chan struct{}, diagLogConcurrency)
+	var wg sync.WaitGroup
+	for _, request := range requests {
+		wg.Add(1)
+		go func(request *diagnosticLogRequest) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			if text, err := PodLogs(ctx, c, namespace, name, request.container, diagLogTail, request.previous); err == nil {
+				request.text = text
+			}
+		}(request)
+	}
+	wg.Wait()
 }
 
 func redactSensitiveText(text string) string {

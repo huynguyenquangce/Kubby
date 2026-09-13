@@ -5,6 +5,7 @@ export namespace k8sclient {
 	    events: number;
 	    logContainers: number;
 	    logLines: number;
+	    previousLogContainers: number;
 	    hasYAML: boolean;
 	    chars: number;
 	
@@ -18,6 +19,7 @@ export namespace k8sclient {
 	        this.events = source["events"];
 	        this.logContainers = source["logContainers"];
 	        this.logLines = source["logLines"];
+	        this.previousLogContainers = source["previousLogContainers"];
 	        this.hasYAML = source["hasYAML"];
 	        this.chars = source["chars"];
 	    }
@@ -586,6 +588,30 @@ export namespace k8sclient {
 	        this.severity = source["severity"];
 	    }
 	}
+	export class ContainerState {
+	    name: string;
+	    ready: boolean;
+	    state: string;
+	    restartCount: number;
+	    lastTermination: string;
+	    lastTerminationAge: string;
+	    hasPrevious: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ContainerState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.ready = source["ready"];
+	        this.state = source["state"];
+	        this.restartCount = source["restartCount"];
+	        this.lastTermination = source["lastTermination"];
+	        this.lastTerminationAge = source["lastTerminationAge"];
+	        this.hasPrevious = source["hasPrevious"];
+	    }
+	}
 	export class CronJobInfo {
 	    namespace: string;
 	    name: string;
@@ -792,6 +818,68 @@ export namespace k8sclient {
 	        this.value = source["value"];
 	    }
 	}
+	export class DrainBudget {
+	    namespace: string;
+	    name: string;
+	    allowedDisruptions: number;
+	    podsOnNode: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DrainBudget(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.allowedDisruptions = source["allowedDisruptions"];
+	        this.podsOnNode = source["podsOnNode"];
+	    }
+	}
+	export class DrainImpact {
+	    node: string;
+	    evict: number;
+	    daemonSetPods: number;
+	    mirrorPods: number;
+	    unmanaged: string[];
+	    emptyDir: string[];
+	    blockingBudgets: DrainBudget[];
+	    warnings: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DrainImpact(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.node = source["node"];
+	        this.evict = source["evict"];
+	        this.daemonSetPods = source["daemonSetPods"];
+	        this.mirrorPods = source["mirrorPods"];
+	        this.unmanaged = source["unmanaged"];
+	        this.emptyDir = source["emptyDir"];
+	        this.blockingBudgets = this.convertValues(source["blockingBudgets"], DrainBudget);
+	        this.warnings = source["warnings"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class EventInfo {
 	    type: string;
 	    reason: string;
@@ -814,6 +902,26 @@ export namespace k8sclient {
 	        this.age = source["age"];
 	        this.isWarn = source["isWarn"];
 	        this.object = source["object"];
+	    }
+	}
+	export class FlowEntryPolicy {
+	    verdict: string;
+	    source: string;
+	    blocked: number;
+	    total: number;
+	    policies: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new FlowEntryPolicy(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.verdict = source["verdict"];
+	        this.source = source["source"];
+	        this.blocked = source["blocked"];
+	        this.total = source["total"];
+	        this.policies = source["policies"];
 	    }
 	}
 	export class FlowPod {
@@ -858,6 +966,7 @@ export namespace k8sclient {
 	    pods: FlowPod[];
 	    readyPods: number;
 	    warning: string;
+	    entryPolicy?: FlowEntryPolicy;
 	    via: string;
 	    viaKind: string;
 	    viaName: string;
@@ -878,6 +987,7 @@ export namespace k8sclient {
 	        this.pods = this.convertValues(source["pods"], FlowPod);
 	        this.readyPods = source["readyPods"];
 	        this.warning = source["warning"];
+	        this.entryPolicy = this.convertValues(source["entryPolicy"], FlowEntryPolicy);
 	        this.via = source["via"];
 	        this.viaKind = source["viaKind"];
 	        this.viaName = source["viaName"];
@@ -914,6 +1024,7 @@ export namespace k8sclient {
 	    tls: boolean;
 	    services: FlowService[];
 	    warning: string;
+	    entryNote: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new FlowIngress(source);
@@ -932,6 +1043,7 @@ export namespace k8sclient {
 	        this.tls = source["tls"];
 	        this.services = this.convertValues(source["services"], FlowService);
 	        this.warning = source["warning"];
+	        this.entryNote = source["entryNote"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -953,7 +1065,49 @@ export namespace k8sclient {
 		}
 	}
 	
+	export class FlowPodPolicies {
+	    ingress: string[];
+	    egress: string[];
 	
+	    static createFrom(source: any = {}) {
+	        return new FlowPodPolicies(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ingress = source["ingress"];
+	        this.egress = source["egress"];
+	    }
+	}
+	
+	export class HPAInfo {
+	    namespace: string;
+	    name: string;
+	    target: string;
+	    replicas: string;
+	    minMax: string;
+	    metrics: string;
+	    status: string;
+	    isError: boolean;
+	    age: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HPAInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.target = source["target"];
+	        this.replicas = source["replicas"];
+	        this.minMax = source["minMax"];
+	        this.metrics = source["metrics"];
+	        this.status = source["status"];
+	        this.isError = source["isError"];
+	        this.age = source["age"];
+	    }
+	}
 	export class HelmDiff {
 	    current: string;
 	    proposed: string;
@@ -1327,6 +1481,10 @@ export namespace k8sclient {
 	    brokenCount: number;
 	    scope: string;
 	    warnings: string[];
+	    policiesAvailable: boolean;
+	    policyCount: number;
+	    isolatedPods: number;
+	    podPolicies: Record<string, FlowPodPolicies>;
 	
 	    static createFrom(source: any = {}) {
 	        return new NetworkFlows(source);
@@ -1341,6 +1499,10 @@ export namespace k8sclient {
 	        this.brokenCount = source["brokenCount"];
 	        this.scope = source["scope"];
 	        this.warnings = source["warnings"];
+	        this.policiesAvailable = source["policiesAvailable"];
+	        this.policyCount = source["policyCount"];
+	        this.isolatedPods = source["isolatedPods"];
+	        this.podPolicies = this.convertValues(source["podPolicies"], FlowPodPolicies, true);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1360,6 +1522,28 @@ export namespace k8sclient {
 		    }
 		    return a;
 		}
+	}
+	export class NetworkPolicyInfo {
+	    namespace: string;
+	    name: string;
+	    podSelector: string;
+	    policyTypes: string;
+	    effect: string;
+	    age: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new NetworkPolicyInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.podSelector = source["podSelector"];
+	        this.policyTypes = source["policyTypes"];
+	        this.effect = source["effect"];
+	        this.age = source["age"];
+	    }
 	}
 	export class NodeInfo {
 	    name: string;
@@ -1557,6 +1741,32 @@ export namespace k8sclient {
 	}
 	
 	
+	export class PDBInfo {
+	    namespace: string;
+	    name: string;
+	    budget: string;
+	    allowedDisruptions: number;
+	    healthy: string;
+	    status: string;
+	    isError: boolean;
+	    age: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PDBInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.budget = source["budget"];
+	        this.allowedDisruptions = source["allowedDisruptions"];
+	        this.healthy = source["healthy"];
+	        this.status = source["status"];
+	        this.isError = source["isError"];
+	        this.age = source["age"];
+	    }
+	}
 	export class PVCInfo {
 	    namespace: string;
 	    name: string;
@@ -2039,6 +2249,149 @@ export namespace k8sclient {
 	}
 	
 	
+	
+	
+	
+	export class TrafficPolicyRef {
+	    namespace: string;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrafficPolicyRef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	    }
+	}
+	export class TrafficDirectionVerdict {
+	    isolated: boolean;
+	    allowed: boolean;
+	    selecting: TrafficPolicyRef[];
+	    allowing: TrafficPolicyRef[];
+	    reason: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrafficDirectionVerdict(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.isolated = source["isolated"];
+	        this.allowed = source["allowed"];
+	        this.selecting = this.convertValues(source["selecting"], TrafficPolicyRef);
+	        this.allowing = this.convertValues(source["allowing"], TrafficPolicyRef);
+	        this.reason = source["reason"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class TrafficCheckTarget {
+	    pod: string;
+	    namespace: string;
+	    ip: string;
+	    port: string;
+	    egress: TrafficDirectionVerdict;
+	    ingress: TrafficDirectionVerdict;
+	    allowed: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrafficCheckTarget(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pod = source["pod"];
+	        this.namespace = source["namespace"];
+	        this.ip = source["ip"];
+	        this.port = source["port"];
+	        this.egress = this.convertValues(source["egress"], TrafficDirectionVerdict);
+	        this.ingress = this.convertValues(source["ingress"], TrafficDirectionVerdict);
+	        this.allowed = source["allowed"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class TrafficCheckResult {
+	    sourceNamespace: string;
+	    sourcePod: string;
+	    destinationKind: string;
+	    destinationNamespace: string;
+	    destinationName: string;
+	    verdict: string;
+	    summary: string;
+	    targets: TrafficCheckTarget[];
+	    limitations: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TrafficCheckResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sourceNamespace = source["sourceNamespace"];
+	        this.sourcePod = source["sourcePod"];
+	        this.destinationKind = source["destinationKind"];
+	        this.destinationNamespace = source["destinationNamespace"];
+	        this.destinationName = source["destinationName"];
+	        this.verdict = source["verdict"];
+	        this.summary = source["summary"];
+	        this.targets = this.convertValues(source["targets"], TrafficCheckTarget);
+	        this.limitations = source["limitations"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	
 

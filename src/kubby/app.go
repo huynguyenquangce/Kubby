@@ -913,6 +913,50 @@ func (a *App) ListLimitRanges(ns string) ([]k8sclient.LimitRangeInfo, error) {
 	return k8sclient.ListLimitRanges(a.ctx, cluster.Clientset, ns)
 }
 
+// ---- Scaling, disruption and network policy ----
+
+func (a *App) ListHorizontalPodAutoscalers(ns string) ([]k8sclient.HPAInfo, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.ListHorizontalPodAutoscalers(a.ctx, cluster.Clientset, ns)
+}
+func (a *App) ListPodDisruptionBudgets(ns string) ([]k8sclient.PDBInfo, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.ListPodDisruptionBudgets(a.ctx, cluster.Clientset, ns)
+}
+func (a *App) ListNetworkPolicies(ns string) ([]k8sclient.NetworkPolicyInfo, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.ListNetworkPolicies(a.ctx, cluster.Clientset, ns)
+}
+
+// CheckTrafficPolicy answers "does NetworkPolicy let this Pod reach that Pod or
+// Service on this port?" for the Topology view. Read-only.
+func (a *App) CheckTrafficPolicy(sourceNamespace, sourcePod, destinationKind, destinationNamespace, destinationName string, port int, protocol string) (*k8sclient.TrafficCheckResult, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.CheckTrafficPolicy(a.ctx, cluster, sourceNamespace, sourcePod, destinationKind, destinationNamespace, destinationName, port, protocol)
+}
+
+// DrainImpact previews what draining a Node would do — refusing budgets,
+// unmanaged Pods, emptyDir data — for the Drain confirmation. Read-only.
+func (a *App) DrainImpact(nodeName string) (*k8sclient.DrainImpact, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.DrainImpactFor(a.ctx, cluster, nodeName)
+}
+
 // ---- Feature 4: relations + metrics ----
 
 // OverviewSnapshot returns the complete dashboard payload in one bound call;
@@ -1425,13 +1469,24 @@ func (a *App) PodContainers(namespace, name string) ([]string, error) {
 	return k8sclient.PodContainers(a.ctx, cluster, namespace, name)
 }
 
-// PodLogs returns the last `tailLines` log lines for a pod container.
-func (a *App) PodLogs(namespace, name, container string, tailLines int) (string, error) {
+// PodContainerStates lists a pod's containers with restart and last-exit state,
+// shared by the Logs and Terminal tabs through one drawer request.
+func (a *App) PodContainerStates(namespace, name string) ([]k8sclient.ContainerState, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.PodContainerStates(a.ctx, cluster, namespace, name)
+}
+
+// PodLogs returns the last `tailLines` log lines for a pod container; previous
+// reads the container instance from before its last restart.
+func (a *App) PodLogs(namespace, name, container string, tailLines int, previous bool) (string, error) {
 	cluster, err := a.requireCluster()
 	if err != nil {
 		return "", err
 	}
-	return k8sclient.PodLogs(a.ctx, cluster, namespace, name, container, int64(tailLines))
+	return k8sclient.PodLogs(a.ctx, cluster, namespace, name, container, int64(tailLines), previous)
 }
 
 // ---- Port-forward ----

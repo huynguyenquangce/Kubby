@@ -45,6 +45,25 @@ pods="$(run_cli get pods -n kubby-ci)"
 objects="$(run_cli list-custom Widget.kubby.dev -n kubby-ci)"
 drawer="$(run_cli drawer Pod ci-pod -n kubby-ci)"
 permission_plan="$(run_cli plan-apply -f testdata/kind/custom-resource.yaml)"
+network_policies="$(run_cli get networkpolicies -n kubby-ci)"
+disruption_budgets="$(run_cli get pdbs -n kubby-ci)"
+autoscalers="$(run_cli get hpas -n kubby-ci)"
+traffic_check="$(run_cli netpol-check ci-client Pod/ci-pod -n kubby-ci --port 8080)"
+routes="$(run_cli netflows -n kubby-ci)"
+containers="$(run_cli containers ci-pod -n kubby-ci)"
+# The smoke cluster has one node, which schedules every fixture Pod.
+drain_impact="$(run_cli drain-impact "${cluster_name}-control-plane")"
+
+[[ "$routes" == *"policy: blocked from ingress-nginx controller"* ]]
+[[ "$routes" == *"ci-deny-ingress"* ]]
+[[ "$containers" == *"PREVIOUS-LOGS"*"hold"* ]]
+[[ "$drain_impact" == *'"name": "ci-pdb"'* ]]
+
+[[ "$network_policies" == *"ci-deny-ingress"*"Denies all ingress"* ]]
+[[ "$disruption_budgets" == *"ci-pdb"* ]]
+[[ "$autoscalers" == *"ci-hpa"*"Deployment/ci-missing"* ]]
+[[ "$traffic_check" == BLOCKED:* ]]
+[[ "$traffic_check" == *"ci-deny-ingress"* ]]
 
 [[ "$diagnostics" =~ reachable[[:space:]]+true ]]
 [[ "$pods" == *"ci-pod"* ]]
@@ -53,4 +72,4 @@ permission_plan="$(run_cli plan-apply -f testdata/kind/custom-resource.yaml)"
 [[ "$permission_plan" == *'"operation":"apply-yaml"'* ]]
 [[ "$permission_plan" == *'"verb":"patch"'* ]]
 
-printf 'kind smoke passed: diagnostics, Pods, drawer, CRD discovery, custom-resource listing, and permission planning\n'
+printf 'kind smoke passed: diagnostics, Pods, drawer, CRD discovery, custom-resource listing, permission planning, policy kinds, NetworkPolicy evaluation, blocked-route verdicts, container state, and drain preview\n'

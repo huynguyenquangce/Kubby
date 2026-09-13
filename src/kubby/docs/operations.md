@@ -16,12 +16,12 @@ Destructive actions use `danger: true`, which turns the OK button red.
 
 | Action | Kinds | Notes |
 |---|---|---|
-| Scale | Deployment | Modal prefilled with the current replica count |
+| Scale | Deployment | Modal prefilled with the current replica count; warns when a HorizontalPodAutoscaler targets the Deployment, because the HPA overwrites a manual scale at its next sync |
 | Restart (rolling) | Deployment, StatefulSet, DaemonSet | Patches `kubectl.kubernetes.io/restartedAt`, the same mechanism `kubectl rollout restart` uses |
 | Pause / resume rollout | Deployment | |
 | Rollout history + rollback | Deployment | History from the owned ReplicaSets |
 | Cordon / uncordon | Node | |
-| Drain | Node | Evicts non-DaemonSet pods and reports every partial eviction failure |
+| Drain | Node | Evicts non-DaemonSet pods and reports every partial eviction failure; the confirmation previews the impact first |
 | Trigger now | CronJob | Creates a Job with server-side `generateName` uniqueness |
 | Delete | any kind | Single row, or bulk via checkbox selection |
 | Edit YAML | any kind | See [apply-yaml.md](apply-yaml.md) |
@@ -33,6 +33,20 @@ Drain runs a read-only permission plan before confirmation: Node `patch`,
 cluster-wide Pod `list`, and `create` on `pods/eviction` for every namespace of a
 current non-DaemonSet/non-mirror Pod on the node. Only explicit denials block;
 the live drain still lets the API server enforce a potentially changed answer.
+
+Beside the permission plan, `DrainImpactFor` (`drainimpact.go`) previews what
+`kubectl drain` would stop and ask about, and the confirmation names each item:
+
+- **Refusing budgets** — a PodDisruptionBudget covering more of the node's Pods
+  than its current `disruptionsAllowed`. Evictions are issued one after another,
+  so the rest are refused and the drain stops partway. The allowance is read at
+  preview time; replacements becoming healthy can raise it during the drain.
+- **Unmanaged Pods** — no controller owner, so an eviction deletes them for good.
+  Finished (Succeeded/Failed) Pods are not listed.
+- **emptyDir data** — deleted with the Pod.
+
+The preview is advisory: a failure to compute it is stated in the dialog and never
+prevents the drain. One Pod list plus one PDB list per affected namespace.
 
 ## Adding an action
 
@@ -74,4 +88,5 @@ go run ./cmd/kubby-cli scale <deployment> -n <ns> --replicas N
 go run ./cmd/kubby-cli restart <deployment> -n <ns>
 go run ./cmd/kubby-cli rollout <deployment> -n <ns>
 go run ./cmd/kubby-cli cordon <node>   /   uncordon <node>
+go run ./cmd/kubby-cli drain-impact <node>   # read-only: refusing PDBs, unmanaged Pods, emptyDir
 ```

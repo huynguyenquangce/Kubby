@@ -54,6 +54,7 @@ var metaCountKinds = []metaCountKind{
 	{"limitranges", schema.GroupVersionResource{Version: "v1", Resource: "limitranges"}, true},
 	{"cronjobs", schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}, true},
 	{"ingresses", schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}, true},
+	{"networkpolicies", schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}, true},
 	{"storageclasses", schema.GroupVersionResource{Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses"}, false},
 	{"roles", schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}, true},
 	{"rolebindings", schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"}, true},
@@ -121,6 +122,16 @@ func SidebarCounts(ctx context.Context, c *Cluster, namespace string, includeClu
 	go1(func() {
 		if x, err := ListPVCs(ctx, c.Clientset, namespace); err == nil {
 			add(NavCount{"pvcs", len(x), countErrors(len(x), func(i int) bool { return x[i].IsError })})
+		}
+	})
+	go1(func() {
+		if x, err := ListHorizontalPodAutoscalers(ctx, c.Clientset, namespace); err == nil {
+			add(NavCount{"hpas", len(x), countErrors(len(x), func(i int) bool { return x[i].IsError })})
+		}
+	})
+	go1(func() {
+		if x, err := ListPodDisruptionBudgets(ctx, c.Clientset, namespace); err == nil {
+			add(NavCount{"pdbs", len(x), countErrors(len(x), func(i int) bool { return x[i].IsError })})
 		}
 	})
 	// Helm reads and decodes release Secrets through the Helm SDK — by far the

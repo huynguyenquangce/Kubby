@@ -240,7 +240,7 @@ test('drawer lazily loads tabs and shares one Pod container request', () => {
 
     const tabSetter = mainJS.match(/function setDrawerTab\(name\) \{[\s\S]*?\n\}/)?.[0] ?? '';
     assert.match(tabSetter, /ensureDrawerTabLoaded\(name\)/);
-    assert.equal([...mainJS.matchAll(/\bPodContainers\(/g)].length, 1);
+    assert.equal([...mainJS.matchAll(/\bPodContainerStates\(/g)].length, 1);
 });
 
 test('drawer Details loads through one backend snapshot', () => {

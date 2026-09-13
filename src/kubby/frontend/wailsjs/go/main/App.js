@@ -50,6 +50,10 @@ export function ChartDetails(arg1, arg2) {
   return window['go']['main']['App']['ChartDetails'](arg1, arg2);
 }
 
+export function CheckTrafficPolicy(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['CheckTrafficPolicy'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
 export function ClusterEvents(arg1) {
   return window['go']['main']['App']['ClusterEvents'](arg1);
 }
@@ -100,6 +104,10 @@ export function Diagnostics(arg1) {
 
 export function DisconnectCluster(arg1) {
   return window['go']['main']['App']['DisconnectCluster'](arg1);
+}
+
+export function DrainImpact(arg1) {
+  return window['go']['main']['App']['DrainImpact'](arg1);
 }
 
 export function DrainNodeOwned(arg1, arg2) {
@@ -242,6 +250,10 @@ export function ListHelmRepos() {
   return window['go']['main']['App']['ListHelmRepos']();
 }
 
+export function ListHorizontalPodAutoscalers(arg1) {
+  return window['go']['main']['App']['ListHorizontalPodAutoscalers'](arg1);
+}
+
 export function ListIngresses(arg1) {
   return window['go']['main']['App']['ListIngresses'](arg1);
 }
@@ -258,6 +270,10 @@ export function ListNamespaces() {
   return window['go']['main']['App']['ListNamespaces']();
 }
 
+export function ListNetworkPolicies(arg1) {
+  return window['go']['main']['App']['ListNetworkPolicies'](arg1);
+}
+
 export function ListNodes() {
   return window['go']['main']['App']['ListNodes']();
 }
@@ -268,6 +284,10 @@ export function ListPVCs(arg1) {
 
 export function ListPersistentVolumes() {
   return window['go']['main']['App']['ListPersistentVolumes']();
+}
+
+export function ListPodDisruptionBudgets(arg1) {
+  return window['go']['main']['App']['ListPodDisruptionBudgets'](arg1);
 }
 
 export function ListPods(arg1) {
@@ -342,12 +362,16 @@ export function PlanHelmPermissions(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['PlanHelmPermissions'](arg1, arg2, arg3, arg4);
 }
 
+export function PodContainerStates(arg1, arg2) {
+  return window['go']['main']['App']['PodContainerStates'](arg1, arg2);
+}
+
 export function PodContainers(arg1, arg2) {
   return window['go']['main']['App']['PodContainers'](arg1, arg2);
 }
 
-export function PodLogs(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['PodLogs'](arg1, arg2, arg3, arg4);
+export function PodLogs(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['PodLogs'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function PodMetricsList(arg1) {

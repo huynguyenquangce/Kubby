@@ -393,6 +393,68 @@ func GetDetail(ctx context.Context, c *Cluster, kind, namespace, name string) (*
 			{"Plural", plural},
 			{"Scope", scope},
 		}
+	case "HorizontalPodAutoscaler":
+		hpa, err := c.Clientset.AutoscalingV2().HorizontalPodAutoscalers(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		fillMeta(d, hpa.ObjectMeta)
+		status, _ := hpaStatus(hpa)
+		d.Info = []DetailField{
+			{"Target", hpa.Spec.ScaleTargetRef.Kind + "/" + hpa.Spec.ScaleTargetRef.Name},
+			{"Replicas", fmt.Sprintf("current %d · desired %d · range %d–%d", hpa.Status.CurrentReplicas, hpa.Status.DesiredReplicas, hpaMinReplicas(hpa), hpa.Spec.MaxReplicas)},
+			{"Status", status},
+		}
+		for _, line := range hpaMetricLines(hpa) {
+			d.Info = append(d.Info, DetailField{"Metric (current/target)", line})
+		}
+		if hpa.Status.LastScaleTime != nil {
+			d.Info = append(d.Info, DetailField{"Last scaled", age(*hpa.Status.LastScaleTime) + " ago"})
+		}
+		for _, condition := range hpa.Status.Conditions {
+			d.Info = append(d.Info, DetailField{"Condition " + string(condition.Type),
+				strings.TrimSpace(fmt.Sprintf("%s %s — %s", condition.Status, condition.Reason, condition.Message))})
+		}
+	case "PodDisruptionBudget":
+		pdb, err := c.Clientset.PolicyV1().PodDisruptionBudgets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		fillMeta(d, pdb.ObjectMeta)
+		status, _ := pdbStatus(pdb)
+		d.Info = []DetailField{
+			{"Budget", pdbBudget(pdb)},
+			{"Selector", labelSelectorText(pdb.Spec.Selector)},
+			{"Allowed disruptions", fmt.Sprintf("%d", pdb.Status.DisruptionsAllowed)},
+			{"Healthy", fmt.Sprintf("current %d · desired %d · expected Pods %d", pdb.Status.CurrentHealthy, pdb.Status.DesiredHealthy, pdb.Status.ExpectedPods)},
+			{"Status", status},
+		}
+		if pdb.Spec.UnhealthyPodEvictionPolicy != nil {
+			d.Info = append(d.Info, DetailField{"Unhealthy Pod eviction", string(*pdb.Spec.UnhealthyPodEvictionPolicy)})
+		}
+		// The protected Pods are the drawer's relation tree (PDBTree), where
+		// each one opens its own drawer.
+	case "NetworkPolicy":
+		policy, err := c.Clientset.NetworkingV1().NetworkPolicies(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		fillMeta(d, policy.ObjectMeta)
+		ingress, egress := networkPolicyTypes(policy)
+		types := []string{}
+		if ingress {
+			types = append(types, "Ingress")
+		}
+		if egress {
+			types = append(types, "Egress")
+		}
+		d.Info = []DetailField{
+			{"Pod selector", podSelectorText(policy.Spec.PodSelector)},
+			{"Policy types", strings.Join(types, ", ")},
+			{"Effect", networkPolicyEffect(policy)},
+		}
+		// The selected Pods are the drawer's relation tree (NetworkPolicyTree).
+		d.Info = append(d.Info, networkPolicyRuleLines(policy)...)
 	default:
 		// Anything the cluster serves but this switch has no bespoke view for —
 		// every custom resource, in practice. There is no schema to read, so the
