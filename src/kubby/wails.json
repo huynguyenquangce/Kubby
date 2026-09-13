@@ -13,7 +13,7 @@
   "info": {
     "companyName": "HuyNQ263",
     "productName": "Kubby",
-    "productVersion": "0.3.0",
+    "productVersion": "0.4.0",
     "copyright": "Copyright (c) 2026 HuyNQ263",
     "comments": "Personal Kubernetes cluster manager - load a kubeconfig and operate the cluster from a GUI."
   }
