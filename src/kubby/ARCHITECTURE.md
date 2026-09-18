@@ -46,7 +46,12 @@ Four rules that hold everywhere:
    the Go `App` struct, which Wails binds into async JS functions (generated into
    `frontend/wailsjs/go/main/App.js` on every `wails build` / `wails dev`).
 2. **`App` (`app.go`) is a thin layer** — it checks a cluster is connected, then
-   delegates. Logic does not live here.
+   delegates. Logic does not live here. That check belongs to one of four
+   helpers (`withCluster`, `withClusterErr`, `withOwnedCluster`,
+   `withOwnedClusterErr`), so a new binding cannot forget it and the context a
+   call receives can change in one place. Only a method owning its own lifecycle
+   — streaming under `transitionMu`, Helm operations, the drawer snapshot —
+   acquires the cluster itself.
 3. **All Kubernetes logic lives in `internal/k8sclient`** — plain Go, no Wails
    dependency — which is what lets `cmd/kubby-cli` reuse it. That reuse is not a
    nicety; it is the only way this app gets verified (see

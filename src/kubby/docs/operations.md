@@ -53,9 +53,10 @@ prevents the drain. One Pod list plus one PDB list per affected namespace.
 1. `actions.go` — a function taking `(ctx, c, namespace, name, …)`. Use the typed
    client where a typed API exists (scale has a subresource; a rolling restart is a
    patch), the dynamic client otherwise.
-2. `app.go` — a thin `*Owned` bound method after
-   `a.requireExpectedCluster(connectionID)`; the expected identity is part of the
-   write contract, not only a frontend guard. Do not retain a second exported
+2. `app.go` — a thin `*Owned` bound method wrapping the call in
+   `withOwnedClusterErr(a, connectionID, …)` (or `withOwnedCluster` when it
+   returns a value); the expected identity is part of the write contract, not
+   only a frontend guard. Do not retain a second exported
    active-cluster write method: every exported `App` method becomes callable from
    the WebView, even when normal UI code does not import its generated wrapper.
 3. `main.js` — a button in the drawer or an entry in `wireRowActions`, wrapped in
