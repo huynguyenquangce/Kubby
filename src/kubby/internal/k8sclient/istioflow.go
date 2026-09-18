@@ -85,14 +85,14 @@ func istioFlows(
 	fronted map[string]bool,
 	endpoints map[string]bool,
 ) ([]FlowIngress, []string) {
-	gwKind, installed, err := optionalIstioKind(c, istioGatewayKind)
+	gwKind, installed, err := optionalKind(c, istioGatewayKind)
 	if err != nil {
 		return nil, []string{fmt.Sprintf("Istio discovery: %v", err)}
 	}
 	if !installed {
 		return nil, nil
 	}
-	vsKind, installed, err := optionalIstioKind(c, istioVSKind)
+	vsKind, installed, err := optionalKind(c, istioVSKind)
 	if err != nil {
 		return nil, []string{fmt.Sprintf("Istio discovery: %v", err)}
 	}
@@ -166,9 +166,9 @@ func istioFlows(
 	return out, ic.warnings
 }
 
-// optionalIstioKind distinguishes a genuinely absent CRD from a discovery
+// optionalKind distinguishes a genuinely absent CRD from a discovery
 // failure. The former is normal; the latter must be visible to the operator.
-func optionalIstioKind(c *Cluster, ref string) (APIKind, bool, error) {
+func optionalKind(c *Cluster, ref string) (APIKind, bool, error) {
 	name, group := splitKindGroup(ref)
 	now := time.Now()
 	c.optionalMu.Lock()

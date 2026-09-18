@@ -412,6 +412,57 @@ func main() {
 	}
 	root.AddCommand(drainImpactCmd)
 
+	// checks — admission webhooks, certificates and stuck deletions.
+	var checksNamespace string
+	checksCmd := &cobra.Command{
+		Use:   "checks",
+		Short: "Health checks: webhook backend, chứng chỉ sắp hết hạn, object kẹt Terminating (read-only)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			report, err := k8sclient.ClusterChecks(context.Background(), cluster, checksNamespace)
+			if err != nil {
+				return err
+			}
+			printFindings := func(findings []k8sclient.CheckFinding) {
+				for _, finding := range findings {
+					fmt.Printf("    [%s] %s — %s\n", finding.Severity, finding.Title, finding.Detail)
+				}
+			}
+			fmt.Printf("== Admission webhooks: %d critical, %d warning\n", report.Webhooks.Critical, report.Webhooks.Warning)
+			for _, hook := range report.Webhooks.Webhooks {
+				fmt.Printf("%-8s %s %s / %s → %s (failurePolicy %s, ready endpoints %d, scope: %s)\n",
+					hook.Severity, hook.ConfigKind, hook.Configuration, hook.Webhook, hook.Target, hook.FailurePolicy, hook.ReadyEndpoints, hook.Scope)
+				printFindings(hook.Findings)
+			}
+			fmt.Printf("== Certificates: %d critical, %d warning (cert-manager installed: %v)\n",
+				report.Certificates.Critical, report.Certificates.Warning, report.Certificates.CertManagerInstalled)
+			for _, cert := range report.Certificates.Certificates {
+				fmt.Printf("%-8s %s %s/%s subject=%q expires=%s used-by=%v\n",
+					cert.Severity, cert.Source, cert.Namespace, cert.Name, cert.Subject, cert.Expires, cert.UsedBy)
+				printFindings(cert.Findings)
+			}
+			fmt.Printf("== Stuck deletions: %d critical, %d warning (%d resource types scanned, %d failed)\n",
+				report.Stuck.Critical, report.Stuck.Warning, report.Stuck.Scanned, report.Stuck.Failed)
+			for _, object := range report.Stuck.Objects {
+				fmt.Printf("%-8s %s %s/%s terminating %s finalizers=%v\n",
+					object.Severity, object.Kind, object.Namespace, object.Name, object.Terminating, object.Finalizers)
+				printFindings(object.Findings)
+				if object.Command != "" {
+					fmt.Printf("    command: %s\n", object.Command)
+				}
+			}
+			for _, warning := range append(append(report.Webhooks.Warnings, report.Certificates.Warnings...), report.Stuck.Warnings...) {
+				fmt.Printf("note: %s\n", warning)
+			}
+			return nil
+		},
+	}
+	checksCmd.Flags().StringVarP(&checksNamespace, "namespace", "n", "", "namespace (rỗng = toàn cluster)")
+	root.AddCommand(checksCmd)
+
 	var applyFile string
 	applyCmd := &cobra.Command{
 		Use:   "apply -f <file>",

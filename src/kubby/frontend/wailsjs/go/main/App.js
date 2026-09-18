@@ -54,6 +54,10 @@ export function CheckTrafficPolicy(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['main']['App']['CheckTrafficPolicy'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
+export function ClusterChecks(arg1) {
+  return window['go']['main']['App']['ClusterChecks'](arg1);
+}
+
 export function ClusterEvents(arg1) {
   return window['go']['main']['App']['ClusterEvents'](arg1);
 }

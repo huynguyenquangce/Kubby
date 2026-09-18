@@ -29,6 +29,8 @@ export function ChartDetails(arg1:string,arg2:string):Promise<k8sclient.ChartDet
 
 export function CheckTrafficPolicy(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number,arg7:string):Promise<k8sclient.TrafficCheckResult>;
 
+export function ClusterChecks(arg1:string):Promise<k8sclient.ClusterChecksReport>;
+
 export function ClusterEvents(arg1:number):Promise<Array<k8sclient.EventInfo>>;
 
 export function ClusterStructure(arg1:string):Promise<k8sclient.ClusterStructureData>;

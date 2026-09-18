@@ -100,6 +100,7 @@ import {
     PlanHelmPermissions,
     CanI,
     Sizing,
+    ClusterChecks,
     GetDetail,
     GetDrawerSnapshotOwned,
     CancelDrawerSnapshot,
@@ -157,6 +158,7 @@ const PAGE_TITLES = {
     nodes: 'Nodes',
     namespaces: 'Namespaces',
     sizing: 'Right-sizing',
+    checks: 'Health checks',
     pods: 'Pods',
     deployments: 'Deployments',
     services: 'Services',
@@ -191,6 +193,7 @@ const PAGE_SUBTITLES = {
     nodes: 'Inspect cluster machines, readiness, versions, and scheduled workloads.',
     namespaces: 'Browse logical scopes and the resources running inside them.',
     sizing: 'Compare requested resources with live usage and find waste or risk.',
+    checks: 'Find broken admission webhooks, expiring certificates and deletions stuck on finalizers.',
     pods: 'Monitor workload health, resource usage, logs, terminals, and events.',
     deployments: 'Review rollout health and safely scale, restart, pause, or roll back.',
     services: 'Inspect stable network endpoints and the workloads behind them.',
@@ -225,7 +228,7 @@ const NAMESPACED_VIEWS = new Set([
     'statefulsets', 'daemonsets', 'jobs', 'cronjobs', 'ingresses', 'pvcs', 'serviceaccounts',
     'networkpolicies', 'hpas', 'pdbs',
     'roles', 'rolebindings', 'helm', 'resourcequotas', 'limitranges',
-    'sizing',
+    'sizing', 'checks',
 ]);
 
 // Maps a view to the resource kind it creates (views omitted here get no Create button).
@@ -932,7 +935,7 @@ function selectView(view) {
         });
     }
     // The instant filter applies to table views only (not the dashboard-style views).
-    const hasTable = view !== 'overview' && view !== 'structure' && view !== 'traffic' && view !== 'sizing' && view !== 'helm';
+    const hasTable = view !== 'overview' && view !== 'structure' && view !== 'traffic' && view !== 'sizing' && view !== 'helm' && view !== 'checks';
     $('view-search').hidden = !hasTable;
     $('view-filter').value = '';
     updateNsScope();
@@ -1035,6 +1038,7 @@ function doRefresh(scope) {
         case 'nodes': return loadNodes(scope);
         case 'namespaces': return loadNamespaces(scope);
         case 'sizing': return loadSizing(scope);
+        case 'checks': return loadChecks(scope);
         case 'pods': return loadPods(scope);
         case 'deployments': return loadDeployments(scope);
         case 'services': return loadServices(scope);
@@ -4551,6 +4555,206 @@ document.addEventListener('keydown', (e) => {
         submitModal();
     }
 });
+
+// ============ Health checks: webhooks, certificates, stuck deletions ============
+//
+// One read-only snapshot (ClusterChecks) behind three tabs. Problems sort first
+// in every list, objects open their drawer, and a stuck deletion offers the
+// kubectl command that would force it — Kubby never runs it.
+
+const CHECK_TABS = {
+    webhooks: { label: 'Admission webhooks', noun: 'webhook', empty: 'No admission webhooks are configured.' },
+    certificates: { label: 'Certificates', noun: 'certificate', empty: 'No certificates were found in this scope.' },
+    stuck: { label: 'Stuck deletions', noun: 'terminating object', empty: 'Nothing is being deleted in this scope.' },
+};
+let checksReport = null;
+let checksTab = 'webhooks';
+
+function loadChecks(scope) {
+    return ClusterChecks(scope.namespace)
+        .then((report) => {
+            if (!isCurrentViewRequest(scope)) return;
+            checksReport = report;
+            renderChecks();
+        })
+        .catch((err) => {
+            if (!isCurrentViewRequest(scope)) return;
+            checksReport = null;
+            $('checks-summary').innerHTML = '';
+            for (const tab of Object.keys(CHECK_TABS)) $(`checks-${tab}-list`).innerHTML = '';
+            showDashError(err);
+        });
+}
+
+function checkSections(report) {
+    return {
+        webhooks: { section: report?.webhooks ?? {}, items: report?.webhooks?.webhooks ?? [], render: webhookCheckHtml },
+        certificates: { section: report?.certificates ?? {}, items: report?.certificates?.certificates ?? [], render: certificateCheckHtml },
+        stuck: { section: report?.stuck ?? {}, items: report?.stuck?.objects ?? [], render: stuckObjectHtml },
+    };
+}
+
+function renderChecks() {
+    const report = checksReport;
+    const sections = checkSections(report);
+    $('checks-summary').innerHTML = Object.entries(CHECK_TABS).map(([tab, meta]) => {
+        const { section, items } = sections[tab];
+        const critical = section.critical ?? 0;
+        const warning = section.warning ?? 0;
+        return `<button type="button" class="flow-stat checks-stat${critical ? ' flow-stat-bad' : ''}" data-check-tab="${tab}">
+            <span class="flow-stat-num">${critical + warning}</span>
+            <span class="flow-stat-label">${esc(meta.label)}</span>
+            <span class="flow-stat-hint">${critical} critical · ${warning} warning · ${esc(countNoun(items.length, meta.noun))}</span>
+        </button>`;
+    }).join('');
+    $('checks-summary').querySelectorAll('[data-check-tab]').forEach((tile) => {
+        tile.addEventListener('click', () => setChecksTab(tile.dataset.checkTab));
+    });
+
+    for (const [tab, meta] of Object.entries(CHECK_TABS)) {
+        const { section, items, render } = sections[tab];
+        const problems = (section.critical ?? 0) + (section.warning ?? 0);
+        $(`checks-tab-${tab}`).textContent = problems ? `${meta.label} (${problems})` : meta.label;
+        const list = $(`checks-${tab}-list`);
+        list.innerHTML = items.map(render).join('');
+        list.querySelectorAll('[data-open-kind]').forEach((button) => {
+            button.addEventListener('click', () => openDrawer({
+                kind: button.dataset.openKind,
+                namespace: button.dataset.openNamespace || '',
+                name: button.dataset.openName,
+                isPod: button.dataset.openKind === 'Pod',
+            }));
+        });
+        list.querySelectorAll('[data-copy-command]').forEach((button) => {
+            button.addEventListener('click', () => copyCommand(button, button.dataset.copyCommand));
+        });
+    }
+
+    const stuck = report?.stuck;
+    $('checks-stuck-scanned').textContent = stuck
+        ? `${countNoun(stuck.scanned ?? 0, 'resource type')} scanned${stuck.failed ? ` · ${stuck.failed} could not be listed` : ''}`
+        : '';
+    const warnings = [...(report?.webhooks?.warnings ?? []), ...(report?.certificates?.warnings ?? []), ...(report?.stuck?.warnings ?? [])];
+    $('checks-warnings').textContent = warnings.join(' · ');
+    $('checks-warnings').hidden = warnings.length === 0;
+    $('checks-updated').textContent = report?.checkedAt ? `Checked ${new Date(report.checkedAt).toLocaleTimeString()}` : '';
+    setChecksTab(checksTab);
+}
+
+function setChecksTab(tab) {
+    if (!CHECK_TABS[tab]) return;
+    checksTab = tab;
+    for (const name of Object.keys(CHECK_TABS)) {
+        const active = name === tab;
+        const button = $(`checks-tab-${name}`);
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+        button.tabIndex = active ? 0 : -1;
+        $(`checks-panel-${name}`).hidden = !active;
+    }
+    applyChecksFilter();
+}
+
+function applyChecksFilter() {
+    const onlyProblems = $('checks-only-problems').checked;
+    for (const [tab, meta] of Object.entries(CHECK_TABS)) {
+        const items = [...$(`checks-${tab}-list`).querySelectorAll('.checks-item')];
+        let shown = 0;
+        for (const item of items) {
+            item.hidden = onlyProblems && item.dataset.problem !== '1';
+            if (!item.hidden) shown++;
+        }
+        const empty = $(`checks-${tab}-empty`);
+        empty.textContent = items.length === 0 ? meta.empty : 'No problems found — every item passed its checks.';
+        empty.hidden = shown > 0 || !checksReport;
+    }
+}
+
+document.querySelectorAll('[role="tab"][data-check-tab]').forEach((tab) => {
+    tab.addEventListener('click', () => setChecksTab(tab.dataset.checkTab));
+    tab.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault();
+        const tabs = Object.keys(CHECK_TABS);
+        const next = tabs[(tabs.indexOf(checksTab) + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+        setChecksTab(next);
+        $(`checks-tab-${next}`).focus();
+    });
+});
+$('checks-only-problems').addEventListener('change', applyChecksFilter);
+
+function checkSeverityBadge(severity) {
+    const tone = { critical: 'status-error', warning: 'status-warn', info: 'status-info', ok: 'status-ok' }[severity] ?? 'status-info';
+    const label = { critical: 'Critical', warning: 'Warning', info: 'Info', ok: 'OK' }[severity] ?? severity;
+    return `<span class="status-badge ${tone}">${esc(label)}</span>`;
+}
+
+function checkFindingsHtml(findings) {
+    if (!findings?.length) return '';
+    return `<ul class="checks-findings">${findings.map((finding) => `<li class="checks-finding checks-finding-${esc(finding.severity)}">
+        <strong>${esc(finding.title)}</strong>${finding.detail ? `<span>${esc(finding.detail)}</span>` : ''}
+    </li>`).join('')}</ul>`;
+}
+
+function checkObjectButton(kind, namespace, name, label) {
+    if (!kind || !name) return `<span class="checks-object-text">${esc(label)}</span>`;
+    return `<button type="button" class="checks-object" data-open-kind="${esc(kind)}" data-open-namespace="${esc(namespace ?? '')}" data-open-name="${esc(name)}">${esc(label)}</button>`;
+}
+
+function checkChips(values) {
+    return values.filter(Boolean).map((value) => `<span class="chip">${esc(value)}</span>`).join('');
+}
+
+function checkItem(severity, headHtml, bodyHtml) {
+    const problem = severity === 'critical' || severity === 'warning';
+    return `<article class="checks-item checks-item-${esc(severity)}" data-problem="${problem ? '1' : '0'}">
+        <header class="checks-item-head">${checkSeverityBadge(severity)}${headHtml}</header>
+        ${bodyHtml}
+    </article>`;
+}
+
+function webhookCheckHtml(hook) {
+    const target = hook.serviceName
+        ? checkObjectButton('Service', hook.serviceNamespace, hook.serviceName, hook.target)
+        : `<span>${esc(hook.target || '—')}</span>`;
+    return checkItem(hook.severity,
+        `${checkObjectButton(hook.configKind, '', hook.configuration, hook.configuration)}<span class="checks-item-sub mono">${esc(hook.webhook)}</span>`,
+        `<div class="checks-meta">${checkChips([
+            `failurePolicy ${hook.failurePolicy}`, `timeout ${hook.timeoutSeconds}s`, hook.scope,
+            hook.readyEndpoints >= 0 ? countNoun(hook.readyEndpoints, 'ready endpoint') : '',
+        ])}</div>
+        <p class="checks-line"><span class="checks-label">Target</span>${target}</p>
+        <p class="checks-line"><span class="checks-label">Rules</span><span class="mono">${esc(hook.rules)}</span></p>
+        ${checkFindingsHtml(hook.findings)}`);
+}
+
+function certificateCheckHtml(cert) {
+    const where = cert.namespace ? `${cert.namespace}/${cert.name}` : cert.name;
+    return checkItem(cert.severity,
+        `${checkObjectButton(cert.kind, cert.namespace, cert.name, where || cert.source)}<span class="checks-item-sub">${esc(cert.source)}</span>`,
+        `<div class="checks-meta">${checkChips([
+            cert.hasCertificate ? `expires ${cert.expires}` : '',
+            cert.subject ? `CN ${cert.subject}` : '',
+            cert.issuer && cert.issuer !== cert.subject ? `issuer ${cert.issuer}` : '',
+            cert.managedBy,
+        ])}</div>
+        ${cert.dnsNames?.length ? `<p class="checks-line"><span class="checks-label">DNS names</span><span class="mono">${esc(cert.dnsNames.join(', '))}</span></p>` : ''}
+        ${cert.usedBy?.length ? `<p class="checks-line"><span class="checks-label">Used by</span><span>${esc(cert.usedBy.join(', '))}</span></p>` : ''}
+        ${cert.notAfter ? `<p class="checks-line"><span class="checks-label">Not after</span><span class="mono">${esc(cert.notAfter)}</span></p>` : ''}
+        ${checkFindingsHtml(cert.findings)}`);
+}
+
+function stuckObjectHtml(object) {
+    const where = object.namespace ? `${object.namespace}/${object.name}` : object.name;
+    return checkItem(object.severity,
+        `${checkObjectButton(object.refKind, object.namespace, object.name, where)}<span class="checks-item-sub">${esc(object.kind)}</span>`,
+        `<div class="checks-meta">${checkChips([`${object.stuck ? 'Terminating' : 'Deleting'} for ${object.terminating}`])}${
+            (object.finalizers ?? []).map((finalizer) => `<span class="chip mono">${esc(finalizer)}</span>`).join('')}</div>
+        ${checkFindingsHtml(object.findings)}
+        ${object.command ? `<div class="checks-command"><code class="mono">${esc(object.command)}</code>
+            <button type="button" class="btn btn-secondary btn-sm" data-copy-command="${esc(object.command)}">Copy</button></div>` : ''}
+        ${object.commandNote ? `<p class="checks-note">${esc(object.commandNote)}</p>` : ''}`);
+}
 
 // ============ Right-sizing: requested vs actually used ============
 //

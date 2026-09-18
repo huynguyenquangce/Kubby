@@ -880,3 +880,40 @@ test('FR-41: Topology marks policy-isolated Pods and checks traffic A → B', as
     expect(copied.at(-1)).toBe('kubectl describe networkpolicy deny-all -n payments');
     expect(pageErrors).toEqual([]);
 });
+
+test('FR-42: Health checks explain broken webhooks, expiring certificates and stuck deletions', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectDashboard(page);
+    await openNavView(page, 'checks');
+
+    await expect(page.locator('#checks-summary')).toContainText('1 critical · 0 warning · 2 webhooks');
+    await expect(page.locator('#checks-tab-webhooks')).toHaveText('Admission webhooks (1)');
+    const webhooks = page.locator('#checks-webhooks-list');
+    await expect(webhooks.locator('.checks-item').first()).toContainText('No ready endpoints behind the Service');
+
+    // Only problems hides the healthy webhook and the informational certificate.
+    await page.locator('#checks-only-problems').check();
+    await expect(webhooks.locator('.checks-item', { hasText: 'inject.mesh.dev' })).toBeHidden();
+    await page.getByRole('tab', { name: /Certificates/ }).click();
+    await expect(page.locator('#checks-panel-certificates')).toBeVisible();
+    await expect(page.locator('#checks-certificates-list')).toContainText('Expired 2d ago');
+    await expect(page.locator('#checks-certificates-list .checks-item', { hasText: 'kubernetes-admin' })).toBeHidden();
+
+    // Summary tiles switch tabs too.
+    await page.locator('#checks-summary [data-check-tab="stuck"]').click();
+    await expect(page.locator('#checks-tab-stuck')).toHaveAttribute('aria-selected', 'true');
+    const stuck = page.locator('#checks-stuck-list');
+    await expect(stuck).toContainText('example.com/cleanup');
+    await expect(page.locator('#checks-stuck-scanned')).toHaveText('58 resource types scanned');
+    await stuck.getByRole('button', { name: 'Copy' }).click();
+    const copied = await page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'CopyToClipboard').map((call) => call.args[0]));
+    expect(copied.at(-1)).toBe(`kubectl patch configmap legacy-config -n payments --type=merge -p '{"metadata":{"finalizers":null}}'`);
+    const checkCalls = await page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'ClusterChecks').map((call) => call.args));
+    expect(checkCalls[0]).toEqual(['']);
+
+    await stuck.getByRole('button', { name: 'payments/legacy-config' }).click();
+    await expect(page.locator('#drawer-kind')).toHaveText('ConfigMap');
+    await expect(page.locator('#drawer-name')).toHaveText('legacy-config');
+    expect(pageErrors).toEqual([]);
+});

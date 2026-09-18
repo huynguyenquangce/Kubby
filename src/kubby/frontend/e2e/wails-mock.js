@@ -176,6 +176,56 @@ const DEFAULT_FIXTURES = {
     ListEvents: [{ type: 'Normal', reason: 'Started', age: '12m', message: 'Started container api', count: 1 }],
     PodContainerStates: [{ name: 'api', ready: true, state: 'Running', restartCount: 0, lastTermination: '', lastTerminationAge: '', hasPrevious: false }],
     DrainImpact: { node: 'kubby-worker', evict: 3, daemonSetPods: 1, mirrorPods: 0, unmanaged: [], emptyDir: [], blockingBudgets: [], warnings: [] },
+    ClusterChecks: {
+        scope: '', checkedAt: '2026-09-17T05:00:00Z',
+        webhooks: {
+            critical: 1, warning: 0, warnings: [],
+            webhooks: [
+                {
+                    configKind: 'ValidatingWebhookConfiguration', configuration: 'policy', webhook: 'validate.policy.dev',
+                    failurePolicy: 'Fail', timeoutSeconds: 10, target: 'Service policy-system/policy-webhook:443',
+                    serviceNamespace: 'policy-system', serviceName: 'policy-webhook', readyEndpoints: 0,
+                    rules: 'CREATE pods', scope: 'all namespaces', affectedNamespaces: 2, severity: 'critical',
+                    findings: [{ severity: 'critical', title: 'No ready endpoints behind the Service', detail: 'The API server rejects every matching request (CREATE pods) in all namespaces.' }],
+                },
+                {
+                    configKind: 'MutatingWebhookConfiguration', configuration: 'injector', webhook: 'inject.mesh.dev',
+                    failurePolicy: 'Ignore', timeoutSeconds: 10, target: 'Service mesh/injector:443',
+                    serviceNamespace: 'mesh', serviceName: 'injector', readyEndpoints: 2,
+                    rules: 'CREATE pods', scope: 'namespace payments', affectedNamespaces: 1, severity: 'ok', findings: [],
+                },
+            ],
+        },
+        certificates: {
+            critical: 1, warning: 0, certManagerInstalled: false, warnings: [],
+            certificates: [
+                {
+                    source: 'TLS Secret', kind: 'Secret', namespace: 'payments', name: 'checkout-tls', hasCertificate: true,
+                    subject: 'checkout.shop.test', dnsNames: ['checkout.shop.test'], issuer: 'checkout.shop.test',
+                    notAfter: '2026-09-15T00:00:00Z', daysLeft: -3, expires: '2d ago', usedBy: ['Ingress payments/shop'], managedBy: '',
+                    severity: 'critical', findings: [{ severity: 'critical', title: 'Expired 2d ago', detail: 'Clients that verify it refuse the connection.' }],
+                },
+                {
+                    source: 'Kubeconfig client certificate', kind: '', namespace: '', name: 'kubernetes-admin', hasCertificate: true,
+                    subject: 'kubernetes-admin', dnsNames: [], issuer: 'kubernetes', notAfter: '2027-08-01T00:00:00Z', daysLeft: 318,
+                    expires: 'in 318d', usedBy: [], managedBy: '', severity: 'info',
+                    findings: [{ severity: 'info', title: 'Used by this connection', detail: 'When it expires, Kubby and kubectl with this kubeconfig can no longer authenticate.' }],
+                },
+            ],
+        },
+        stuck: {
+            critical: 0, warning: 1, scanned: 58, failed: 0, warnings: [],
+            objects: [
+                {
+                    kind: 'ConfigMap', refKind: 'ConfigMap', apiVersion: 'v1', namespace: 'payments', name: 'legacy-config',
+                    deletedAt: '2026-09-16T05:00:00Z', terminating: '24h', stuck: true, finalizers: ['example.com/cleanup'], severity: 'warning',
+                    findings: [{ severity: 'info', title: 'Finalizer example.com/cleanup', detail: 'It is removed by the controller that added it.' }],
+                    command: `kubectl patch configmap legacy-config -n payments --type=merge -p '{"metadata":{"finalizers":null}}'`,
+                    commandNote: 'Removing finalizers skips the cleanup their controllers would do.',
+                },
+            ],
+        },
+    },
     PodLogs: '2026-08-12T03:20:01Z server listening on :8080\n',
     GetAIConfig: { provider: '', endpoint: '', model: '', language: 'auto', hasApiKey: false },
     GetAIStatus: { configured: false, provider: '', model: '' },

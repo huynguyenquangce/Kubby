@@ -59,6 +59,18 @@ drain_impact="$(run_cli drain-impact "${cluster_name}-control-plane")"
 [[ "$containers" == *"PREVIOUS-LOGS"*"hold"* ]]
 [[ "$drain_impact" == *'"name": "ci-pdb"'* ]]
 
+# Delete the finalizer-held ConfigMap without waiting: it stays Terminating.
+# kubectl comes from the kind node image, so the smoke needs none on the host.
+docker exec "${cluster_name}-control-plane" kubectl --kubeconfig /etc/kubernetes/admin.conf \
+    delete configmap ci-stuck -n kubby-ci --wait=false >/dev/null
+checks="$(run_cli checks)"
+
+[[ "$checks" == *"critical ValidatingWebhookConfiguration ci-broken-webhook / broken.kubby.dev"* ]]
+[[ "$checks" == *"Service kubby-ci-webhook/missing-webhook does not exist"* ]]
+[[ "$checks" == *"critical TLS Secret kubby-ci/ci-expired-tls"* ]]
+[[ "$checks" == *"ConfigMap kubby-ci/ci-stuck terminating"* ]]
+[[ "$checks" == *"kubby.dev/ci-hold"* ]]
+
 [[ "$network_policies" == *"ci-deny-ingress"*"Denies all ingress"* ]]
 [[ "$disruption_budgets" == *"ci-pdb"* ]]
 [[ "$autoscalers" == *"ci-hpa"*"Deployment/ci-missing"* ]]
@@ -72,4 +84,4 @@ drain_impact="$(run_cli drain-impact "${cluster_name}-control-plane")"
 [[ "$permission_plan" == *'"operation":"apply-yaml"'* ]]
 [[ "$permission_plan" == *'"verb":"patch"'* ]]
 
-printf 'kind smoke passed: diagnostics, Pods, drawer, CRD discovery, custom-resource listing, permission planning, policy kinds, NetworkPolicy evaluation, blocked-route verdicts, container state, and drain preview\n'
+printf 'kind smoke passed: diagnostics, Pods, drawer, CRD discovery, custom-resource listing, permission planning, policy kinds, NetworkPolicy evaluation, blocked-route verdicts, container state, drain preview, and health checks\n'

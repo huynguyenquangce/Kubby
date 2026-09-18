@@ -88,6 +88,7 @@ These are load-bearing everywhere. Each is explained in the branch that owns it.
 | [docs/streaming.md](docs/streaming.md) | Log follow, exec terminal, port-forward — the three long-lived connections | touching anything that streams |
 | [docs/ai-assistant.md](docs/ai-assistant.md) | The Ask AI tab, evidence collection, providers, what leaves the machine | changing AI behaviour or its data handling |
 | [docs/incident-studio.md](docs/incident-studio.md) | Deterministic findings, causal timeline, safe next actions, recovery watch and incident export | changing the Investigate workflow |
+| [docs/health-checks.md](docs/health-checks.md) | Admission webhook backends, certificate expiry, deletions stuck on finalizers | changing the Health checks view or adding a check |
 | [docs/helm.md](docs/helm.md) | Releases, repositories, Artifact Hub, dry-run previews | working on Helm |
 | [docs/frontend.md](docs/frontend.md) | View system, drawer, theme tokens, command palette, dialogs, CSS conventions | writing any UI |
 | [docs/performance.md](docs/performance.md) | The performance contract and how it was measured | adding anything that lists resources |
@@ -129,6 +130,10 @@ src/kubby/
 │   ├── netpol_routes.go        #   Routes blocked by policy, evaluated from the entry point Pods → traffic-flow.md
 │   ├── relations_policy.go     #   HPA/PDB/NetworkPolicy relation trees for the drawer           → resource-browsing.md
 │   ├── drainimpact.go          #   DrainImpactFor — refusing PDBs, unmanaged Pods, emptyDir      → operations.md
+│   ├── healthchecks.go         #   ClusterChecks — one cached call behind the Health checks view → health-checks.md
+│   ├── webhookcheck.go         #   Webhook Doctor: backend, scope, self-dependency, caBundle      → health-checks.md
+│   ├── certcheck.go            #   Certificate expiry: TLS Secrets, cert-manager, kubeconfig, API → health-checks.md
+│   ├── stuckcheck.go           #   Terminating objects, the finalizers holding them, why          → health-checks.md
 │   ├── logstream.go            #   StreamLogs (follow)                                           → streaming.md
 │   ├── portforward.go          #   StartPortForward (SPDY)                                       → streaming.md
 │   ├── exec.go                 #   StartExec (resize-aware PTY)                                  → streaming.md

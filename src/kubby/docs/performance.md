@@ -239,6 +239,11 @@ Not yet addressed — worth knowing before blaming something else:
 - **The initial bundle has crossed 600 kB** (602.88 kB / 189.55 kB gzip). Most of
   it is CodeMirror (below); the September feature work added ~14 kB. Splitting
   the editor is the change that would matter; lazy-loading small modals would not.
+- **Health checks list every resource type** for the stuck-deletion scan
+  (metadata only, bounded concurrency), so the whole report is cached for 15 s per
+  connection and scope and live refresh cannot repeat it every five seconds. The
+  API server certificate handshake is cached for 10 minutes. See
+  [health-checks.md](health-checks.md).
 - **Route verdicts add requests when policies exist**: one IngressClass List, one
   Pod List per recognised ingress controller, and a NetworkPolicy List per
   controller namespace outside a scoped view, on each Traffic refresh.

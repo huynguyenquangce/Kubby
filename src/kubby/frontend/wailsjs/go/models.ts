@@ -189,6 +189,118 @@ export namespace k8sclient {
 	        this.age = source["age"];
 	    }
 	}
+	export class CheckFinding {
+	    severity: string;
+	    title: string;
+	    detail: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CheckFinding(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.severity = source["severity"];
+	        this.title = source["title"];
+	        this.detail = source["detail"];
+	    }
+	}
+	export class CertificateCheck {
+	    source: string;
+	    kind: string;
+	    namespace: string;
+	    name: string;
+	    hasCertificate: boolean;
+	    subject: string;
+	    dnsNames: string[];
+	    issuer: string;
+	    notAfter: string;
+	    daysLeft: number;
+	    expires: string;
+	    usedBy: string[];
+	    managedBy: string;
+	    severity: string;
+	    findings: CheckFinding[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CertificateCheck(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source = source["source"];
+	        this.kind = source["kind"];
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.hasCertificate = source["hasCertificate"];
+	        this.subject = source["subject"];
+	        this.dnsNames = source["dnsNames"];
+	        this.issuer = source["issuer"];
+	        this.notAfter = source["notAfter"];
+	        this.daysLeft = source["daysLeft"];
+	        this.expires = source["expires"];
+	        this.usedBy = source["usedBy"];
+	        this.managedBy = source["managedBy"];
+	        this.severity = source["severity"];
+	        this.findings = this.convertValues(source["findings"], CheckFinding);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class CertificateReport {
+	    certificates: CertificateCheck[];
+	    critical: number;
+	    warning: number;
+	    certManagerInstalled: boolean;
+	    warnings: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CertificateReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.certificates = this.convertValues(source["certificates"], CertificateCheck);
+	        this.critical = source["critical"];
+	        this.warning = source["warning"];
+	        this.certManagerInstalled = source["certManagerInstalled"];
+	        this.warnings = source["warnings"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ChartLink {
 	    name: string;
 	    url: string;
@@ -287,6 +399,231 @@ export namespace k8sclient {
 	        this.stars = source["stars"];
 	        this.versions = source["versions"];
 	    }
+	}
+	
+	export class StuckObject {
+	    kind: string;
+	    refKind: string;
+	    apiVersion: string;
+	    namespace: string;
+	    name: string;
+	    deletedAt: string;
+	    terminating: string;
+	    stuck: boolean;
+	    finalizers: string[];
+	    severity: string;
+	    findings: CheckFinding[];
+	    command: string;
+	    commandNote: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new StuckObject(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.refKind = source["refKind"];
+	        this.apiVersion = source["apiVersion"];
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.deletedAt = source["deletedAt"];
+	        this.terminating = source["terminating"];
+	        this.stuck = source["stuck"];
+	        this.finalizers = source["finalizers"];
+	        this.severity = source["severity"];
+	        this.findings = this.convertValues(source["findings"], CheckFinding);
+	        this.command = source["command"];
+	        this.commandNote = source["commandNote"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class StuckReport {
+	    objects: StuckObject[];
+	    scanned: number;
+	    failed: number;
+	    critical: number;
+	    warning: number;
+	    warnings: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new StuckReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.objects = this.convertValues(source["objects"], StuckObject);
+	        this.scanned = source["scanned"];
+	        this.failed = source["failed"];
+	        this.critical = source["critical"];
+	        this.warning = source["warning"];
+	        this.warnings = source["warnings"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class WebhookCheck {
+	    configKind: string;
+	    configuration: string;
+	    webhook: string;
+	    failurePolicy: string;
+	    timeoutSeconds: number;
+	    target: string;
+	    serviceNamespace: string;
+	    serviceName: string;
+	    readyEndpoints: number;
+	    rules: string;
+	    scope: string;
+	    affectedNamespaces: number;
+	    severity: string;
+	    findings: CheckFinding[];
+	
+	    static createFrom(source: any = {}) {
+	        return new WebhookCheck(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.configKind = source["configKind"];
+	        this.configuration = source["configuration"];
+	        this.webhook = source["webhook"];
+	        this.failurePolicy = source["failurePolicy"];
+	        this.timeoutSeconds = source["timeoutSeconds"];
+	        this.target = source["target"];
+	        this.serviceNamespace = source["serviceNamespace"];
+	        this.serviceName = source["serviceName"];
+	        this.readyEndpoints = source["readyEndpoints"];
+	        this.rules = source["rules"];
+	        this.scope = source["scope"];
+	        this.affectedNamespaces = source["affectedNamespaces"];
+	        this.severity = source["severity"];
+	        this.findings = this.convertValues(source["findings"], CheckFinding);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class WebhookReport {
+	    webhooks: WebhookCheck[];
+	    critical: number;
+	    warning: number;
+	    warnings: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new WebhookReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.webhooks = this.convertValues(source["webhooks"], WebhookCheck);
+	        this.critical = source["critical"];
+	        this.warning = source["warning"];
+	        this.warnings = source["warnings"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ClusterChecksReport {
+	    scope: string;
+	    checkedAt: string;
+	    webhooks: WebhookReport;
+	    certificates: CertificateReport;
+	    stuck: StuckReport;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClusterChecksReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.scope = source["scope"];
+	        this.checkedAt = source["checkedAt"];
+	        this.webhooks = this.convertValues(source["webhooks"], WebhookReport);
+	        this.certificates = this.convertValues(source["certificates"], CertificateReport);
+	        this.stuck = this.convertValues(source["stuck"], StuckReport);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ClusterRoleBindingInfo {
 	    name: string;
@@ -2252,6 +2589,8 @@ export namespace k8sclient {
 	
 	
 	
+	
+	
 	export class TrafficPolicyRef {
 	    namespace: string;
 	    name: string;
@@ -2392,6 +2731,8 @@ export namespace k8sclient {
 		    return a;
 		}
 	}
+	
+	
 	
 	
 

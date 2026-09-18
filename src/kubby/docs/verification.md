@@ -136,6 +136,7 @@ go run ./cmd/kubby-cli netflows [-n <ns>]
 go run ./cmd/kubby-cli netpol-check <pod> Pod|Service/<name> -n <ns> [--to-namespace <ns>] [--port N]  # NetworkPolicy verdict
 go run ./cmd/kubby-cli containers <pod> -n <ns>                 # restart count, last exit, previous logs available
 go run ./cmd/kubby-cli drain-impact <node>                      # refusing PDBs, unmanaged Pods, emptyDir; read-only
+go run ./cmd/kubby-cli checks [-n <ns>]                          # webhooks, certificates, stuck deletions; read-only
 go run ./cmd/kubby-cli diff -f <file>                         # dry-run: what would change, writes nothing
 go run ./cmd/kubby-cli can-i <Kind[.group]> [-n <ns>]         # what this token may do
 go run ./cmd/kubby-cli plan-apply -f <file>                    # exact server-side-apply RBAC plan

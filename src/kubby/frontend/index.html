@@ -46,6 +46,8 @@
             <symbol id="i-networkpolicies" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 14.5h18M9 4v5.5M15 9.5v5M9 14.5V20"/></symbol>
             <!-- Right-sizing: two bars of different length — asked-for vs used. -->
             <symbol id="i-sizing" viewBox="0 0 24 24"><path d="M4 7h15M4 12h9M4 17h12"/><path d="M4 4v16"/></symbol>
+            <!-- Health checks: a shield with a check mark. -->
+            <symbol id="i-checks" viewBox="0 0 24 24"><path d="M12 3 4 6v5c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V6l-8-3z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></symbol>
             <!-- topbar / ui -->
             <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
             <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V3M7.5 7.5 12 3l4.5 4.5"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></symbol>
@@ -164,6 +166,7 @@
                         <button class="nav-item" data-view="nodes"><svg class="ico"><use href="#i-nodes"/></svg><span class="nav-label">Nodes</span></button>
                         <button class="nav-item" data-view="namespaces"><svg class="ico"><use href="#i-namespaces"/></svg><span class="nav-label">Namespaces</span></button>
                         <button class="nav-item" data-view="sizing"><svg class="ico"><use href="#i-sizing"/></svg><span class="nav-label">Right-sizing</span></button>
+                        <button class="nav-item" data-view="checks"><svg class="ico"><use href="#i-checks"/></svg><span class="nav-label">Health checks</span></button>
                     </div>
                 </div>
                 <div class="nav-section" data-section="workloads">
@@ -695,6 +698,41 @@
                             Every Service here is already fronted by an Ingress above, or the namespace has none.
                         </p>
                     </section>
+                </section>
+
+                <!-- Health checks — admission webhooks, certificates and deletions stuck
+                     on finalizers (healthchecks.go). One read-only snapshot, three tabs. -->
+                <section id="view-checks" class="view checks-view" hidden>
+                    <p id="checks-warnings" class="structure-warning" hidden></p>
+                    <div class="flow-summary checks-summary" id="checks-summary"></div>
+                    <div class="checks-toolbar">
+                        <div class="helm-workspace-tabs" role="tablist" aria-label="Health checks">
+                            <button id="checks-tab-webhooks" class="helm-workspace-tab active" type="button" role="tab" aria-selected="true" aria-controls="checks-panel-webhooks" data-check-tab="webhooks">Admission webhooks</button>
+                            <button id="checks-tab-certificates" class="helm-workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="checks-panel-certificates" data-check-tab="certificates" tabindex="-1">Certificates</button>
+                            <button id="checks-tab-stuck" class="helm-workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="checks-panel-stuck" data-check-tab="stuck" tabindex="-1">Stuck deletions</button>
+                        </div>
+                        <label class="flow-toggle">
+                            <input type="checkbox" id="checks-only-problems">
+                            <span>Only show problems</span>
+                        </label>
+                        <span class="flow-updated" id="checks-updated"></span>
+                    </div>
+                    <div id="checks-panel-webhooks" class="checks-panel" role="tabpanel" aria-labelledby="checks-tab-webhooks">
+                        <p class="checks-intro">A webhook whose backend is down rejects every request it matches when its failurePolicy is Fail — including the Pods that would bring it back.</p>
+                        <div id="checks-webhooks-list" class="checks-list"></div>
+                        <p class="empty-inline" id="checks-webhooks-empty" hidden></p>
+                    </div>
+                    <div id="checks-panel-certificates" class="checks-panel" role="tabpanel" aria-labelledby="checks-tab-certificates" hidden>
+                        <p class="checks-intro">TLS Secrets, cert-manager Certificates, this kubeconfig's client certificate, the API server certificate and webhook CA bundles. Critical within 7 days of expiry, warning within 30.</p>
+                        <div id="checks-certificates-list" class="checks-list"></div>
+                        <p class="empty-inline" id="checks-certificates-empty" hidden></p>
+                    </div>
+                    <div id="checks-panel-stuck" class="checks-panel" role="tabpanel" aria-labelledby="checks-tab-stuck" hidden>
+                        <p class="checks-intro">Objects that are being deleted; after 5 minutes they count as stuck. Kubby never removes finalizers or force-deletes — read why an object is held before copying the command.</p>
+                        <p class="checks-note" id="checks-stuck-scanned"></p>
+                        <div id="checks-stuck-list" class="checks-list"></div>
+                        <p class="empty-inline" id="checks-stuck-empty" hidden></p>
+                    </div>
                 </section>
 
                 <!-- Right-sizing — what containers asked for vs what they use.

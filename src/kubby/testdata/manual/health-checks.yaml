@@ -1,0 +1,148 @@
+# Manual test scenarios for Kubby's Health checks view.
+#
+# Apply to a disposable cluster only (kind, minikube):
+#   kubectl apply -f testdata/manual/health-checks.yaml
+# Everything lives in namespaces named kubby-demo-*, and the webhooks match only
+# namespaces labelled kubby.dev/health-demo=true, so nothing else is affected.
+# Clean-up steps are in src/kubby/docs/health-checks.md ("Manual test").
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubby-demo-checks
+  labels:
+    kubby.dev/health-demo: "true"
+---
+# Scenario 1 — CRITICAL: failurePolicy Fail, backend Service does not exist.
+# While it exists, creating a Pod in kubby-demo-checks is rejected.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: kubby-demo-broken-fail
+webhooks:
+  - name: broken-fail.kubby.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    namespaceSelector:
+      matchLabels:
+        kubby.dev/health-demo: "true"
+    rules:
+      - operations: ["CREATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+    clientConfig:
+      service:
+        namespace: kubby-demo-checks
+        name: webhook-that-does-not-exist
+---
+# Scenario 2 — WARNING: failurePolicy Ignore, Service exists but no Pod backs it,
+# and the timeout is longer than the 10s default.
+apiVersion: v1
+kind: Service
+metadata:
+  name: idle-webhook
+  namespace: kubby-demo-checks
+spec:
+  selector:
+    app: nothing-matches-this
+  ports:
+    - port: 443
+      targetPort: 8443
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: kubby-demo-ignored
+webhooks:
+  - name: ignored.kubby.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Ignore
+    timeoutSeconds: 20
+    namespaceSelector:
+      matchLabels:
+        kubby.dev/health-demo: "true"
+    rules:
+      - operations: ["CREATE"]
+        apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        resources: ["deployments"]
+    clientConfig:
+      service:
+        namespace: kubby-demo-checks
+        name: idle-webhook
+---
+# Scenario 3 — CRITICAL: a TLS Secret whose certificate expired on 2021-01-02.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: expired-tls
+  namespace: kubby-demo-checks
+type: kubernetes.io/tls
+data:
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJTekNCODZBREFnRUNBZ1FCTkdHMk1Bb0dDQ3FHU000OUJBTUNNQjB4R3pBWkJnTlZCQU1URW1WNGNHbHkKWldRdWEzVmlZbmt1ZEdWemREQWVGdzB5TURBeE1ERXdNREF3TURCYUZ3MHlNVEF4TURJd01EQXdNREJhTUIweApHekFaQmdOVkJBTVRFbVY0Y0dseVpXUXVhM1ZpWW5rdWRHVnpkREJaTUJNR0J5cUdTTTQ5QWdFR0NDcUdTTTQ5CkF3RUhBMElBQkpEa1duWXBuMTI5c3MyN1B1NHhDdmJ5U3RzL2Fyc0Q0d1ZoRnlRL2h0ZEFuUkZTejhIa1VQcEYKc2lsZ3VFWkxWWk1qUDN6ZEJFSWVLWFhQVW5TSmF6YWpJVEFmTUIwR0ExVWRFUVFXTUJTQ0VtVjRjR2x5WldRdQphM1ZpWW5rdWRHVnpkREFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUFJWklMclh6UVVLZlBQdEtzcDNtdlBEaXJ4CmxoU3VqaTNvN3VxV1JTaFEyd0lnU2EvOU54S1R3aU9MWUtHQ0VFT1ErUkpya0Y0aEtjVEQ2ejRxYlNQY1hlOD0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+  tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSU1UZ2E5WG5IbktQY0didVN5V3V6OURVa1FJYks3L05nOVhnMTV2Tkl6RHZvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFa09SYWRpbWZYYjJ5emJzKzdqRUs5dkpLMno5cXV3UGpCV0VYSkQrRzEwQ2RFVkxQd2VSUQora1d5S1dDNFJrdFZreU0vZk4wRVFoNHBkYzlTZElsck5nPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+---
+# Scenario 4 — WARNING: an Ingress that uses expired-tls, and one whose TLS
+# Secret does not exist at all.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: expired-site
+  namespace: kubby-demo-checks
+spec:
+  tls:
+    - hosts: ["expired.kubby.test"]
+      secretName: expired-tls
+  defaultBackend:
+    service:
+      name: idle-webhook
+      port:
+        number: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: missing-secret-site
+  namespace: kubby-demo-checks
+spec:
+  tls:
+    - hosts: ["missing.kubby.test"]
+      secretName: secret-that-does-not-exist
+  defaultBackend:
+    service:
+      name: idle-webhook
+      port:
+        number: 443
+---
+# Scenario 5 — stuck deletion: nothing removes this finalizer. Delete it with
+#   kubectl delete configmap held-by-finalizer -n kubby-demo-checks --wait=false
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: held-by-finalizer
+  namespace: kubby-demo-checks
+  finalizers:
+    - kubby.dev/demo-hold
+data:
+  note: "Stuck Terminating once deleted"
+---
+# Scenario 6 — stuck namespace: its content is held by a finalizer. Delete it with
+#   kubectl delete namespace kubby-demo-stuck-ns --wait=false
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubby-demo-stuck-ns
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blocks-namespace
+  namespace: kubby-demo-stuck-ns
+  finalizers:
+    - kubby.dev/demo-hold
+data:
+  note: "Keeps its namespace Terminating"

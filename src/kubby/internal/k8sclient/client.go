@@ -1,6 +1,7 @@
 package k8sclient
 
 import (
+	"crypto/x509"
 	"fmt"
 	"sort"
 	"sync"
@@ -67,6 +68,16 @@ type Cluster struct {
 	searchMu           sync.Mutex
 	searchIndex        []searchIndexGroup
 	searchIndexExpires time.Time
+
+	// Health checks list every resource type for the stuck-deletion scan, so
+	// their report is cached briefly per scope; the API server certificate is
+	// read by a TLS handshake cached for longer. See healthchecks.go.
+	checksMu       sync.Mutex
+	checksCache    map[string]checksCacheEntry
+	apiCertMu      sync.Mutex
+	apiCert        *x509.Certificate
+	apiCertErr     error
+	apiCertExpires time.Time
 }
 
 // New builds a Cluster from a kubeconfig file path + chosen context.

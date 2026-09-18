@@ -947,6 +947,16 @@ func (a *App) CheckTrafficPolicy(sourceNamespace, sourcePod, destinationKind, de
 	return k8sclient.CheckTrafficPolicy(a.ctx, cluster, sourceNamespace, sourcePod, destinationKind, destinationNamespace, destinationName, port, protocol)
 }
 
+// ClusterChecks runs the Health checks screen — admission webhooks,
+// certificates and stuck deletions — in one read-only call.
+func (a *App) ClusterChecks(namespace string) (*k8sclient.ClusterChecksReport, error) {
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return nil, err
+	}
+	return k8sclient.ClusterChecks(a.ctx, cluster, namespace)
+}
+
 // DrainImpact previews what draining a Node would do — refusing budgets,
 // unmanaged Pods, emptyDir data — for the Drain confirmation. Read-only.
 func (a *App) DrainImpact(nodeName string) (*k8sclient.DrainImpact, error) {

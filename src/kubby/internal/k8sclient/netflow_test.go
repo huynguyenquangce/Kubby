@@ -95,10 +95,10 @@ func TestNetworkTopologyStartsCoreListsConcurrently(t *testing.T) {
 
 func TestOptionalIstioKindUsesCachedDiscoveryBeforeRefreshing(t *testing.T) {
 	c := &Cluster{idx: &apiIndex{byKind: map[string][]APIKind{}}}
-	if _, installed, err := optionalIstioKind(c, istioGatewayKind); err != nil || installed {
+	if _, installed, err := optionalKind(c, istioGatewayKind); err != nil || installed {
 		t.Fatalf("first lookup: installed=%v err=%v", installed, err)
 	}
-	if _, installed, err := optionalIstioKind(c, istioGatewayKind); err != nil || installed {
+	if _, installed, err := optionalKind(c, istioGatewayKind); err != nil || installed {
 		t.Fatalf("cached lookup: installed=%v err=%v", installed, err)
 	}
 }

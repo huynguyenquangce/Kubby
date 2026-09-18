@@ -125,6 +125,60 @@ spec:
                 port:
                   number: 80
 ---
+# Health checks. The broken webhook matches only this labelled namespace, where
+# nothing is created afterwards, so its missing backend cannot break the smoke.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubby-ci-webhook
+  labels:
+    kubby.dev/webhook-test: "true"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: ci-broken-webhook
+webhooks:
+  - name: broken.kubby.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    namespaceSelector:
+      matchLabels:
+        kubby.dev/webhook-test: "true"
+    rules:
+      - operations: ["CREATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+    clientConfig:
+      service:
+        namespace: kubby-ci-webhook
+        name: missing-webhook
+---
+# Self-signed test certificate that expired on 2021-01-02; the key is test-only.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ci-expired-tls
+  namespace: kubby-ci
+type: kubernetes.io/tls
+data:
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJTekNCODZBREFnRUNBZ1FCTkdHMk1Bb0dDQ3FHU000OUJBTUNNQjB4R3pBWkJnTlZCQU1URW1WNGNHbHkKWldRdWEzVmlZbmt1ZEdWemREQWVGdzB5TURBeE1ERXdNREF3TURCYUZ3MHlNVEF4TURJd01EQXdNREJhTUIweApHekFaQmdOVkJBTVRFbVY0Y0dseVpXUXVhM1ZpWW5rdWRHVnpkREJaTUJNR0J5cUdTTTQ5QWdFR0NDcUdTTTQ5CkF3RUhBMElBQkpEa1duWXBuMTI5c3MyN1B1NHhDdmJ5U3RzL2Fyc0Q0d1ZoRnlRL2h0ZEFuUkZTejhIa1VQcEYKc2lsZ3VFWkxWWk1qUDN6ZEJFSWVLWFhQVW5TSmF6YWpJVEFmTUIwR0ExVWRFUVFXTUJTQ0VtVjRjR2x5WldRdQphM1ZpWW5rdWRHVnpkREFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUFJWklMclh6UVVLZlBQdEtzcDNtdlBEaXJ4CmxoU3VqaTNvN3VxV1JTaFEyd0lnU2EvOU54S1R3aU9MWUtHQ0VFT1ErUkpya0Y0aEtjVEQ2ejRxYlNQY1hlOD0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+  tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSU1UZ2E5WG5IbktQY0didVN5V3V6OURVa1FJYks3L05nOVhnMTV2Tkl6RHZvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFa09SYWRpbWZYYjJ5emJzKzdqRUs5dkpLMno5cXV3UGpCV0VYSkQrRzEwQ2RFVkxQd2VSUQora1d5S1dDNFJrdFZreU0vZk4wRVFoNHBkYzlTZElsck5nPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+---
+# Held by a finalizer nothing removes; the smoke deletes it to observe a stuck
+# deletion in the Health checks report.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ci-stuck
+  namespace: kubby-ci
+  finalizers:
+    - kubby.dev/ci-hold
+data:
+  purpose: stuck-deletion fixture
+---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

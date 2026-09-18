@@ -60,6 +60,7 @@ operate.
 | **Resource explorer** | Sortable and filterable tables, details, YAML, events, relationships, namespace scoping, and global search. |
 | **Custom resources** | Discovery-backed sections for CRD-defined resources using unambiguous `Kind.group` references. |
 | **Diagnostics** | Logs, exec, port-forward, traffic topology, resource evidence, and provider-selectable AI assistance. |
+| **Health checks** | Admission webhooks whose backend is down, certificates close to expiry, and deletions stuck on finalizers — each explained, with the kubectl fix to copy. |
 | **Operations** | Create/apply, delete, scale, restart, pause/resume, rollback, cordon/drain, and CronJob triggering. |
 | **Helm** | Releases, history, rollback, repositories, Artifact Hub search, chart installation, and dry-run previews. |
 | **Developer tooling** | `kubby-cli` exercises the same Go Kubernetes layer as the desktop application; Playwright covers mocked browser workflows, responsive/zoom behavior, and visual regression in CI. |

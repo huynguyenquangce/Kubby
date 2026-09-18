@@ -1884,6 +1884,54 @@ tbody tr.selected:hover { background: #e0ebff; }
 }
 .modal-callout-warn { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
 .modal-callout strong { color: var(--ink); }
+
+/* Health checks: summary tiles switch tabs; each checked object is a card with
+   its findings, so a long explanation never has to fit a table cell. */
+.status-badge.status-info { background: var(--accent-soft); color: var(--blue); }
+.checks-stat { font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.checks-stat:hover { border-color: var(--blue); }
+.checks-stat:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.checks-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+.checks-intro { margin: 0 0 0.75rem; font-size: 0.8rem; color: var(--muted); }
+.checks-note { margin: 0.35rem 0 0; font-size: 0.74rem; color: var(--muted); }
+.checks-list { display: flex; flex-direction: column; gap: 0.6rem; }
+.checks-item {
+    min-width: 0; padding: 0.7rem 0.9rem; border-radius: 10px;
+    background: var(--card); border: 1px solid var(--line); box-shadow: var(--card-shadow);
+}
+.checks-item-critical { border-color: color-mix(in srgb, var(--err) 50%, var(--line)); }
+.checks-item-warning { border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
+.checks-item-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.checks-object {
+    padding: 0; border: 0; background: none; cursor: pointer; text-align: left;
+    font: inherit; font-weight: 600; color: var(--blue); overflow-wrap: anywhere;
+}
+.checks-object:hover { text-decoration: underline; }
+.checks-object:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 3px; }
+.checks-object-text { font-weight: 600; overflow-wrap: anywhere; }
+.checks-item-sub { font-size: 0.76rem; color: var(--muted); overflow-wrap: anywhere; }
+.checks-meta { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.45rem 0 0.2rem; }
+.checks-line { display: flex; gap: 0.5rem; min-width: 0; margin: 0.25rem 0 0; font-size: 0.78rem; overflow-wrap: anywhere; }
+.checks-line .checks-object { font-weight: 500; }
+.checks-label { flex: 0 0 5.5rem; color: var(--muted); }
+.checks-findings { display: flex; flex-direction: column; gap: 0.3rem; margin: 0.5rem 0 0; padding: 0; list-style: none; }
+.checks-finding {
+    display: flex; flex-direction: column; gap: 0.1rem; padding: 0.35rem 0.6rem; border-radius: 6px;
+    font-size: 0.78rem; background: var(--bg); border-left: 3px solid var(--line);
+}
+.checks-finding span { color: var(--muted); overflow-wrap: anywhere; }
+.checks-finding-critical { border-left-color: var(--err); }
+.checks-finding-warning { border-left-color: var(--warn); }
+.checks-finding-info { border-left-color: var(--blue); }
+.checks-command { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.55rem; }
+.checks-command code {
+    flex: 1 1 18rem; min-width: 0; padding: 0.35rem 0.5rem; border-radius: 6px; font-size: 0.74rem;
+    background: var(--bg); border: 1px solid var(--line); overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+    .checks-line { flex-direction: column; gap: 0.1rem; }
+    .checks-label { flex-basis: auto; }
+}
 .flow-void {
     font-size: 0.76rem; color: var(--err);
     border: 1px dashed color-mix(in srgb, var(--err) 45%, var(--line));

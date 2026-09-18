@@ -24,6 +24,9 @@ type APIKind struct {
 	GVR        schema.GroupVersionResource
 	Kind       string
 	Namespaced bool
+	// Listable is known only for kinds read from discovery; the static
+	// built-in table leaves it false.
+	Listable bool
 }
 
 // GroupVersionKind is the GVK this resource is addressed by.
@@ -88,7 +91,7 @@ func (c *Cluster) apiKinds(refresh bool) (*apiIndex, error) {
 			if strings.Contains(r.Name, "/") {
 				continue // a subresource (pods/log, deployments/scale) — not addressable on its own
 			}
-			ak := APIKind{GVR: gv.WithResource(r.Name), Kind: r.Kind, Namespaced: r.Namespaced}
+			ak := APIKind{GVR: gv.WithResource(r.Name), Kind: r.Kind, Namespaced: r.Namespaced, Listable: containsAny(r.Verbs, "list")}
 			idx.byGVK[gv.WithKind(r.Kind)] = ak
 			if preferred[gv.Group] != gv.Version {
 				continue
