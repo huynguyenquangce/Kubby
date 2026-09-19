@@ -77,6 +77,21 @@ checks="$(run_cli checks)"
 [[ "$traffic_check" == BLOCKED:* ]]
 [[ "$traffic_check" == *"ci-deny-ingress"* ]]
 
+# Why Pending: the answer must name the node and quantify the gap, not repeat
+# the scheduler's one-liner.
+why_pending="$(run_cli why-pending ci-pending -n kubby-ci)"
+[[ "$why_pending" == *"unschedulable"* ]]
+[[ "$why_pending" == *"Insufficient memory"* ]]
+[[ "$why_pending" == *"${cluster_name}-control-plane"* ]]
+[[ "$why_pending" == *"needs 900.0Gi"* ]]
+
+# Cleanup: the unreferenced ConfigMap is listed with its command; the one a
+# scaled-to-zero Deployment uses is not listed at all.
+hygiene="$(run_cli hygiene -n kubby-ci --category unused-configmap)"
+[[ "$hygiene" == *"ci-orphan-config"* ]]
+[[ "$hygiene" == *"kubectl delete configmap ci-orphan-config -n kubby-ci"* ]]
+[[ "$hygiene" != *"ci-used-config"* ]]
+
 [[ "$diagnostics" =~ reachable[[:space:]]+true ]]
 [[ "$pods" == *"ci-pod"* ]]
 [[ "$objects" == *"sample"* ]]
@@ -84,4 +99,4 @@ checks="$(run_cli checks)"
 [[ "$permission_plan" == *'"operation":"apply-yaml"'* ]]
 [[ "$permission_plan" == *'"verb":"patch"'* ]]
 
-printf 'kind smoke passed: diagnostics, Pods, drawer, CRD discovery, custom-resource listing, permission planning, policy kinds, NetworkPolicy evaluation, blocked-route verdicts, container state, drain preview, and health checks\n'
+printf 'kind smoke passed: diagnostics, Pods, drawer, CRD discovery, custom-resource listing, permission planning, policy kinds, NetworkPolicy evaluation, blocked-route verdicts, container state, drain preview, health checks, scheduling explanation, and cleanup scan\n'

@@ -917,3 +917,152 @@ test('FR-42: Health checks explain broken webhooks, expiring certificates and st
     await expect(page.locator('#drawer-name')).toHaveText('legacy-config');
     expect(pageErrors).toEqual([]);
 });
+
+test('FR-43: Why Pending explains the scheduler verdict node by node', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectDashboard(page, {
+        overrides: {
+            OverviewSnapshot: {
+                stats: { nodes: 2, namespaces: 2, pods: 6, deployments: 2, podsAvailable: true },
+                failingPods: [{ namespace: 'payments', name: 'reporting-0', status: 'Pending', restarts: 0 }],
+                nodeMetrics: [], nodeStatus: [], topPods: [], events: [], warnings: [],
+            },
+        },
+    });
+
+    // A Pod with no node yet has no logs and no container state, so the queue
+    // offers the scheduling answer instead of Investigate.
+    const queue = page.locator('#overview-errors-body');
+    await expect(queue.getByRole('button', { name: 'Why Pending?' })).toBeVisible();
+    await expect(queue.getByRole('button', { name: 'Investigate' })).toHaveCount(0);
+    await queue.getByRole('button', { name: 'Why Pending?' }).click();
+
+    await expect(page.locator('#modal-title')).toHaveText('Why is this Pod Pending?');
+    const result = page.locator('#sched-result');
+    await expect(result).toContainText('No node fits');
+    await expect(result).toContainText('0/3 nodes are available');
+    // The scheduler's own message leads; Kubby's explanation follows.
+    await expect(result.locator('.checks-finding').first()).toContainText('The scheduler reports: Unschedulable');
+    // Reasons are grouped with counts rather than repeated per node.
+    const reasons = result.locator('.sched-reason');
+    await expect(reasons).toHaveCount(2);
+    await expect(reasons.first()).toContainText('Insufficient memory');
+    await expect(reasons.first().locator('.sched-reason-count')).toHaveText('2');
+    await expect(reasons.first()).toContainText('needs 8.0Gi, 2.0Gi free of 8.0Gi');
+    // Each node keeps its own numbers, which is what kubectl never shows.
+    const nodes = result.locator('.sched-nodes tbody tr');
+    await expect(nodes).toHaveCount(2);
+    await expect(nodes.first()).toContainText('kubby-worker');
+    await expect(nodes.first()).toContainText('2.0Gi');
+    await expect(result).toContainText('FailedScheduling');
+    await expect(result.locator('.sched-limits')).toContainText('never schedules or evicts anything');
+
+    const calls = await page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'ExplainPodScheduling').map((call) => call.args));
+    expect(calls[0]).toEqual(['payments', 'reporting-0']);
+    expect(pageErrors).toEqual([]);
+});
+
+test('FR-44: Cleanup groups unused objects and offers the command without running it', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectDashboard(page);
+    await openNavView(page, 'hygiene');
+
+    await expect(page.locator('#hygiene-summary')).toContainText('Unreferenced ConfigMaps');
+    await expect(page.locator('#hygiene-updated')).toContainText('3 items');
+    const groups = page.locator('.hygiene-group');
+    await expect(groups).toHaveCount(3);
+    // Every group carries what a reference scan cannot see, beside its items.
+    await expect(groups.first().locator('.hygiene-caveat')).toContainText('reads a ConfigMap by name');
+
+    const claims = page.locator('#hygiene-group-unused-pvc');
+    await expect(claims).toContainText('reporting-scratch');
+    await expect(claims).toContainText('reclaim policy');
+
+    // "Only warnings" hides the informational ConfigMap but keeps the claim.
+    await page.locator('#hygiene-only-problems').check();
+    await expect(page.locator('#hygiene-group-unused-configmap .checks-item')).toBeHidden();
+    await expect(claims.locator('.checks-item')).toBeVisible();
+    await page.locator('#hygiene-only-problems').uncheck();
+
+    await page.locator('#hygiene-filter').fill('legacy');
+    await expect(claims.locator('.checks-item')).toBeHidden();
+    await expect(page.locator('#hygiene-group-unused-configmap .checks-item')).toBeVisible();
+    await page.locator('#hygiene-filter').fill('');
+
+    // The command is copied, never executed.
+    await claims.getByRole('button', { name: 'Copy' }).click();
+    const copied = await page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'CopyToClipboard').map((call) => call.args[0]));
+    expect(copied.at(-1)).toBe('kubectl delete pvc reporting-scratch -n payments');
+    const deleted = await page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method.startsWith('Delete')));
+    expect(deleted).toEqual([]);
+
+    // An item opens the object it names.
+    await claims.getByRole('button', { name: 'payments/reporting-scratch' }).click();
+    await expect(page.locator('#drawer-kind')).toHaveText('PersistentVolumeClaim');
+    expect(pageErrors).toEqual([]);
+});
+
+test('NFR-7: switching view abandons the reads the previous screen still had in flight', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectDashboard(page, { overrides: { ClusterChecks: { __deferred: 'checks' } } });
+
+    // Health checks lists every resource type, so it is exactly the read worth
+    // abandoning. It never resolves here: the user moves on first.
+    await openNavView(page, 'checks');
+    await expect(page.locator('#view-status')).toContainText('Loading…');
+    await openNavView(page, 'nodes');
+
+    await expect.poll(() => page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'CancelViewReads').length))
+        .toBeGreaterThan(0);
+    // The screen the user did ask for is rendered, and the abandoned request
+    // never reports an error into it.
+    await expect(page.locator('#nodes-body')).toContainText('kubby-worker');
+    await expect(page.locator('#view-status')).toContainText('Updated just now');
+    await expect(page.locator('#dash-error')).toBeHidden();
+
+    // The first load of a screen has nothing to abandon, so it costs no call.
+    const beforeFirstLoad = await page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'CancelViewReads').length);
+    await page.evaluate(() => window.__wailsMock.resolveDeferred('checks', {
+        scope: '', checkedAt: '2026-09-17T05:00:00Z',
+        webhooks: { critical: 0, warning: 0, warnings: [], webhooks: [] },
+        certificates: { critical: 0, warning: 0, certManagerInstalled: false, warnings: [], certificates: [] },
+        stuck: { critical: 0, warning: 0, scanned: 12, failed: 0, warnings: [], objects: [] },
+    }));
+    expect(beforeFirstLoad).toBeGreaterThan(0);
+    expect(pageErrors).toEqual([]);
+});
+
+test('FR-6: a namespace created outside Kubby after connecting appears in the picker', async ({ page }) => {
+    const pageErrors = collectPageErrors(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await connectDashboard(page);
+
+    // Created with kubectl while Kubby is connected — Kubby never saw it.
+    await page.evaluate(() => window.__wailsMock.setResponse('ListNamespaces', [
+        { name: 'default', status: 'Active' },
+        { name: 'kubby-demo-sched', status: 'Active' },
+        { name: 'payments', status: 'Active' },
+    ]));
+
+    // Opening the picker reloads the list.
+    await page.locator('#namespace-toggle').click();
+    const option = page.locator('#namespace-options .namespace-option', { hasText: 'kubby-demo-sched' });
+    await expect(option).toBeVisible();
+    await option.click();
+    await expect(page.locator('#namespace-current')).toHaveText('kubby-demo-sched');
+
+    // Refresh reloads it too, and a deleted namespace disappears.
+    await page.evaluate(() => window.__wailsMock.setResponse('ListNamespaces', [
+        { name: 'default', status: 'Active' },
+        { name: 'kubby-demo-sched', status: 'Active' },
+        { name: 'kubby-demo-hygiene', status: 'Active' },
+    ]));
+    await page.locator('#btn-refresh').click();
+    await page.locator('#namespace-toggle').click();
+    await expect(page.locator('#namespace-options')).toContainText('kubby-demo-hygiene');
+    await expect(page.locator('#namespace-options')).not.toContainText('payments');
+    expect(pageErrors).toEqual([]);
+});

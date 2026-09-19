@@ -1634,6 +1634,117 @@ export namespace k8sclient {
 	        this.description = source["description"];
 	    }
 	}
+	export class HygieneItem {
+	    category: string;
+	    kind: string;
+	    namespace: string;
+	    name: string;
+	    age: string;
+	    severity: string;
+	    title: string;
+	    detail: string;
+	    chips: string[];
+	    command: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HygieneItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.category = source["category"];
+	        this.kind = source["kind"];
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.age = source["age"];
+	        this.severity = source["severity"];
+	        this.title = source["title"];
+	        this.detail = source["detail"];
+	        this.chips = source["chips"];
+	        this.command = source["command"];
+	    }
+	}
+	export class HygieneGroup {
+	    category: string;
+	    title: string;
+	    summary: string;
+	    caveat: string;
+	    count: number;
+	    items: HygieneItem[];
+	    warning: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HygieneGroup(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.category = source["category"];
+	        this.title = source["title"];
+	        this.summary = source["summary"];
+	        this.caveat = source["caveat"];
+	        this.count = source["count"];
+	        this.items = this.convertValues(source["items"], HygieneItem);
+	        this.warning = source["warning"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class HygieneReport {
+	    scope: string;
+	    checkedAt: string;
+	    groups: HygieneGroup[];
+	    total: number;
+	    warnings: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new HygieneReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.scope = source["scope"];
+	        this.checkedAt = source["checkedAt"];
+	        this.groups = this.convertValues(source["groups"], HygieneGroup);
+	        this.total = source["total"];
+	        this.warnings = source["warnings"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class IngressInfo {
 	    namespace: string;
 	    name: string;
@@ -1882,6 +1993,67 @@ export namespace k8sclient {
 	        this.age = source["age"];
 	    }
 	}
+	export class NodeFitReason {
+	    code: string;
+	    text: string;
+	    detail: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new NodeFitReason(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.text = source["text"];
+	        this.detail = source["detail"];
+	    }
+	}
+	export class NodeFit {
+	    name: string;
+	    fits: boolean;
+	    ready: boolean;
+	    schedulable: boolean;
+	    cpuFree: string;
+	    memFree: string;
+	    pods: string;
+	    reasons: NodeFitReason[];
+	
+	    static createFrom(source: any = {}) {
+	        return new NodeFit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.fits = source["fits"];
+	        this.ready = source["ready"];
+	        this.schedulable = source["schedulable"];
+	        this.cpuFree = source["cpuFree"];
+	        this.memFree = source["memFree"];
+	        this.pods = source["pods"];
+	        this.reasons = this.convertValues(source["reasons"], NodeFitReason);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class NodeInfo {
 	    name: string;
 	    status: string;
@@ -2386,6 +2558,103 @@ export namespace k8sclient {
 	        this.age = source["age"];
 	    }
 	}
+	export class SchedulingReason {
+	    code: string;
+	    title: string;
+	    detail: string;
+	    count: number;
+	    nodes: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SchedulingReason(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.title = source["title"];
+	        this.detail = source["detail"];
+	        this.count = source["count"];
+	        this.nodes = source["nodes"];
+	    }
+	}
+	export class SchedulingRequest {
+	    resource: string;
+	    request: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SchedulingRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.resource = source["resource"];
+	        this.request = source["request"];
+	    }
+	}
+	export class SchedulingReport {
+	    namespace: string;
+	    name: string;
+	    phase: string;
+	    nodeName: string;
+	    scheduled: boolean;
+	    verdict: string;
+	    headline: string;
+	    requests: SchedulingRequest[];
+	    nodesTotal: number;
+	    nodesFit: number;
+	    nodes: NodeFit[];
+	    reasons: SchedulingReason[];
+	    findings: CheckFinding[];
+	    events: EventInfo[];
+	    limits: string[];
+	    warnings: string[];
+	    checkedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SchedulingReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.namespace = source["namespace"];
+	        this.name = source["name"];
+	        this.phase = source["phase"];
+	        this.nodeName = source["nodeName"];
+	        this.scheduled = source["scheduled"];
+	        this.verdict = source["verdict"];
+	        this.headline = source["headline"];
+	        this.requests = this.convertValues(source["requests"], SchedulingRequest);
+	        this.nodesTotal = source["nodesTotal"];
+	        this.nodesFit = source["nodesFit"];
+	        this.nodes = this.convertValues(source["nodes"], NodeFit);
+	        this.reasons = this.convertValues(source["reasons"], SchedulingReason);
+	        this.findings = this.convertValues(source["findings"], CheckFinding);
+	        this.events = this.convertValues(source["events"], EventInfo);
+	        this.limits = source["limits"];
+	        this.warnings = source["warnings"];
+	        this.checkedAt = source["checkedAt"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class SearchHit {
 	    kind: string;
 	    view: string;

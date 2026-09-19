@@ -46,12 +46,16 @@ Four rules that hold everywhere:
    the Go `App` struct, which Wails binds into async JS functions (generated into
    `frontend/wailsjs/go/main/App.js` on every `wails build` / `wails dev`).
 2. **`App` (`app.go`) is a thin layer** — it checks a cluster is connected, then
-   delegates. Logic does not live here. That check belongs to one of four
+   delegates. Logic does not live here. That check belongs to one of five
    helpers (`withCluster`, `withClusterErr`, `withOwnedCluster`,
-   `withOwnedClusterErr`), so a new binding cannot forget it and the context a
-   call receives can change in one place. Only a method owning its own lifecycle
-   — streaming under `transitionMu`, Helm operations, the drawer snapshot —
-   acquires the cluster itself.
+   `withOwnedClusterErr`, `withViewCluster`), so a new binding cannot forget it
+   and the context a call receives can change in one place. Only a method owning
+   its own lifecycle — streaming under `transitionMu`, Helm operations, the
+   drawer snapshot — acquires the cluster itself.
+   **A read a screen makes takes `withViewCluster`**, which registers its context
+   so `CancelViewReads` can abandon it when the user changes view or namespace; a
+   write never does, because a screen the user left must not abandon a write they
+   confirmed. See [docs/performance.md](docs/performance.md).
 3. **All Kubernetes logic lives in `internal/k8sclient`** — plain Go, no Wails
    dependency — which is what lets `cmd/kubby-cli` reuse it. That reuse is not a
    nicety; it is the only way this app gets verified (see
@@ -94,6 +98,8 @@ These are load-bearing everywhere. Each is explained in the branch that owns it.
 | [docs/ai-assistant.md](docs/ai-assistant.md) | The Ask AI tab, evidence collection, providers, what leaves the machine | changing AI behaviour or its data handling |
 | [docs/incident-studio.md](docs/incident-studio.md) | Deterministic findings, causal timeline, safe next actions, recovery watch and incident export | changing the Investigate workflow |
 | [docs/health-checks.md](docs/health-checks.md) | Admission webhook backends, certificate expiry, deletions stuck on finalizers | changing the Health checks view or adding a check |
+| [docs/scheduling.md](docs/scheduling.md) | Why a Pod is Pending: the scheduler's feasibility checks re-run node by node | changing the Why Pending answer or a predicate |
+| [docs/hygiene.md](docs/hygiene.md) | Cleanup: objects nothing references any more, and unpinned images | changing the Cleanup view or adding a group |
 | [docs/helm.md](docs/helm.md) | Releases, repositories, Artifact Hub, dry-run previews | working on Helm |
 | [docs/frontend.md](docs/frontend.md) | View system, drawer, theme tokens, command palette, dialogs, CSS conventions | writing any UI |
 | [docs/performance.md](docs/performance.md) | The performance contract and how it was measured | adding anything that lists resources |
@@ -139,6 +145,10 @@ src/kubby/
 │   ├── webhookcheck.go         #   Webhook Doctor: backend, scope, self-dependency, caBundle      → health-checks.md
 │   ├── certcheck.go            #   Certificate expiry: TLS Secrets, cert-manager, kubeconfig, API → health-checks.md
 │   ├── stuckcheck.go           #   Terminating objects, the finalizers holding them, why          → health-checks.md
+│   ├── scheduling.go           #   ExplainScheduling — why a Pod is Pending, node by node         → scheduling.md
+│   ├── scheduling_fit.go       #   The predicates: taints, affinity, resources, spread, volumes   → scheduling.md
+│   ├── hygiene.go              #   ClusterHygiene — unused objects and unpinned images, cached    → hygiene.md
+│   ├── hygiene_refs.go         #   Who references what: Pods plus every controller template       → hygiene.md
 │   ├── logstream.go            #   StreamLogs (follow)                                           → streaming.md
 │   ├── portforward.go          #   StartPortForward (SPDY)                                       → streaming.md
 │   ├── exec.go                 #   StartExec (resize-aware PTY)                                  → streaming.md

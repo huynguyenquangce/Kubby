@@ -176,6 +176,78 @@ const DEFAULT_FIXTURES = {
     ListEvents: [{ type: 'Normal', reason: 'Started', age: '12m', message: 'Started container api', count: 1 }],
     PodContainerStates: [{ name: 'api', ready: true, state: 'Running', restartCount: 0, lastTermination: '', lastTerminationAge: '', hasPrevious: false }],
     DrainImpact: { node: 'kubby-worker', evict: 3, daemonSetPods: 1, mirrorPods: 0, unmanaged: [], emptyDir: [], blockingBudgets: [], warnings: [] },
+    CancelViewReads: 0,
+    ExplainPodScheduling: {
+        namespace: 'payments', name: 'reporting-0', phase: 'Pending', nodeName: '', scheduled: false,
+        verdict: 'unschedulable', headline: '0/3 nodes are available: 2 insufficient memory, 1 untolerated taint node-role.kubernetes.io/control-plane:NoSchedule.',
+        requests: [{ resource: 'cpu', request: '500m' }, { resource: 'memory', request: '8.0Gi' }],
+        nodesTotal: 3, nodesFit: 0,
+        nodes: [
+            {
+                name: 'kubby-worker', fits: false, ready: true, schedulable: true, cpuFree: '3.20', memFree: '2.0Gi', pods: '12 / 110',
+                reasons: [{ code: 'insufficient:memory', text: 'Insufficient memory', detail: 'needs 8.0Gi, 2.0Gi free of 8.0Gi' }],
+            },
+            {
+                name: 'kubby-control-plane', fits: false, ready: true, schedulable: true, cpuFree: '3.60', memFree: '6.0Gi', pods: '9 / 110',
+                reasons: [{ code: 'taint:node-role.kubernetes.io/control-plane', text: 'Untolerated taint node-role.kubernetes.io/control-plane:NoSchedule', detail: 'Add a toleration for this taint, or choose a node without it.' }],
+            },
+        ],
+        reasons: [
+            {
+                code: 'insufficient:memory', title: 'Insufficient memory', detail: 'needs 8.0Gi, 2.0Gi free of 8.0Gi',
+                count: 2, nodes: ['kubby-worker', 'kubby-worker-2'],
+            },
+            {
+                code: 'taint:node-role.kubernetes.io/control-plane', title: 'Untolerated taint node-role.kubernetes.io/control-plane:NoSchedule',
+                detail: 'Add a toleration for this taint, or choose a node without it.', count: 1, nodes: ['kubby-control-plane'],
+            },
+        ],
+        findings: [{ severity: 'critical', title: 'The scheduler reports: Unschedulable', detail: '0/3 nodes are available: 2 Insufficient memory.' }],
+        events: [{ type: 'Warning', reason: 'FailedScheduling', message: '0/3 nodes are available.', count: 4, age: '3m', isWarn: true }],
+        limits: ['Read-only: this explains the cluster, it never schedules or evicts anything.'],
+        warnings: [], checkedAt: '2026-09-17T05:00:00Z',
+    },
+    ClusterHygiene: {
+        scope: '', checkedAt: '2026-09-17T05:00:00Z', total: 3, warnings: [],
+        groups: [
+            {
+                category: 'unused-configmap', title: 'Unreferenced ConfigMaps', count: 1,
+                summary: 'No Pod, controller template or ReplicaSet in this scope mounts them.',
+                caveat: 'A controller that reads a ConfigMap by name leaves no reference in any Pod spec.',
+                warning: '',
+                items: [{
+                    category: 'unused-configmap', kind: 'ConfigMap', namespace: 'payments', name: 'legacy-settings',
+                    age: '90d', severity: 'info', title: 'Nothing in this scope references it',
+                    detail: 'No Pod, controller template or ReplicaSet mounts it.',
+                    chips: [], command: 'kubectl delete configmap legacy-settings -n payments',
+                }],
+            },
+            {
+                category: 'unused-pvc', title: 'Claims no Pod mounts', count: 1,
+                summary: 'A PersistentVolumeClaim keeps its volume — and its bill — whether or not anything mounts it.',
+                caveat: 'Claims a StatefulSet created from a volumeClaimTemplate are excluded.',
+                warning: '',
+                items: [{
+                    category: 'unused-pvc', kind: 'PersistentVolumeClaim', namespace: 'payments', name: 'reporting-scratch',
+                    age: '30d', severity: 'warning', title: 'No Pod mounts it',
+                    detail: 'The volume stays allocated while nothing uses it. Check the reclaim policy before deleting.',
+                    chips: ['Bound', '8Gi', 'standard'], command: 'kubectl delete pvc reporting-scratch -n payments',
+                }],
+            },
+            {
+                category: 'unpinned-image', title: 'Images that are not pinned', count: 1,
+                summary: 'A container whose image is :latest runs whatever that tag points at today.',
+                caveat: 'Kubby reads the declared image reference, not what the node actually pulled.',
+                warning: '',
+                items: [{
+                    category: 'unpinned-image', kind: 'Deployment', namespace: 'payments', name: 'checkout',
+                    age: '', severity: 'warning', title: 'Uses the :latest tag',
+                    detail: 'Pin the image by digest so the same deployment always means the same build.',
+                    chips: ['api: example.invalid/api:latest'], command: '',
+                }],
+            },
+        ],
+    },
     ClusterChecks: {
         scope: '', checkedAt: '2026-09-17T05:00:00Z',
         webhooks: {

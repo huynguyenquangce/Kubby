@@ -1,0 +1,111 @@
+# Manual test scenarios for Kubby's "Why Pending?" explainer.
+#
+# Apply to a disposable cluster only (kind, minikube):
+#   kubectl apply -f testdata/manual/scheduling.yaml
+# Everything lives in kubby-demo-sched. Nothing here ever becomes schedulable,
+# which is the point — delete the namespace when you are done:
+#   kubectl delete namespace kubby-demo-sched
+#
+# What to look for, per Pod, in Overview → Attention queue → "Why Pending?"
+# (or any Pod row → ⋯ → Why Pending?):
+#
+#   too-much-memory  every node: "Insufficient memory", with how much is free
+#   wrong-labels     every node: "Labels do not match nodeSelector or node affinity"
+#   no-toleration    a control-plane node: "Untolerated taint …", workers: fits
+#                    (on a single-node kind cluster this one is the whole answer)
+#   missing-claim    a finding: "PersistentVolumeClaim … does not exist"
+#   spread-apart     the second replica: "Topology spread would be uneven"
+#
+# Compare each answer with `kubectl describe pod <name> -n kubby-demo-sched`.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubby-demo-sched
+---
+# Scenario 1 — more memory than any node has free.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: too-much-memory
+  namespace: kubby-demo-sched
+spec:
+  containers:
+    - name: pause
+      image: registry.k8s.io/pause:3.9
+      resources:
+        requests:
+          memory: 900Gi
+          cpu: 100m
+---
+# Scenario 2 — a nodeSelector no node satisfies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: wrong-labels
+  namespace: kubby-demo-sched
+spec:
+  nodeSelector:
+    kubby.dev/pool: gpu
+  containers:
+    - name: pause
+      image: registry.k8s.io/pause:3.9
+---
+# Scenario 3 — control-plane only, without the toleration that needs.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-toleration
+  namespace: kubby-demo-sched
+spec:
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: ""
+  containers:
+    - name: pause
+      image: registry.k8s.io/pause:3.9
+---
+# Scenario 4 — a claim that does not exist. Scheduling never starts.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: missing-claim
+  namespace: kubby-demo-sched
+spec:
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: claim-that-does-not-exist
+  containers:
+    - name: pause
+      image: registry.k8s.io/pause:3.9
+      volumeMounts:
+        - name: data
+          mountPath: /data
+---
+# Scenario 5 — a hard topology spread on a cluster with one zone: the second
+# replica has nowhere to go that keeps the skew within 1.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spread-apart
+  namespace: kubby-demo-sched
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: spread-apart
+  template:
+    metadata:
+      labels:
+        app: spread-apart
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: spread-apart
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9

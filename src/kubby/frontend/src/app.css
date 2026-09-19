@@ -2456,3 +2456,51 @@ tbody tr.selected:hover { background: #e0ebff; }
     white-space: pre-wrap;
     word-break: break-word;
 }
+
+/* Cleanup: groups of objects nothing references, each with its own caveat.
+   The caveat is part of the group, not a footnote, because acting on the list
+   without it is how a ConfigMap an operator reads by name gets deleted. */
+.hygiene-groups { display: flex; flex-direction: column; gap: 1.25rem; }
+.hygiene-group { min-width: 0; }
+.hygiene-group-head h3 {
+    display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.2rem; font-size: 0.95rem;
+}
+.hygiene-count {
+    padding: 0.05rem 0.45rem; border-radius: 999px; font-size: 0.74rem; font-weight: 600;
+    background: var(--accent-soft); color: var(--blue);
+}
+.hygiene-group-warning { color: var(--warn); }
+.hygiene-caveat { margin-top: 0.55rem; padding-left: 0.6rem; border-left: 3px solid var(--warn); }
+.hygiene-group-empty { margin: 0.35rem 0 0; }
+.hygiene-filter { max-width: 18rem; }
+.hygiene-jumped { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* Why Pending: the verdict first, then the grouped reasons, then the nodes —
+   the order the answer is actually read in. */
+.sched-result { display: flex; flex-direction: column; gap: 0.6rem; }
+.sched-verdict {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem;
+    padding: 0.6rem 0.75rem; border-radius: 9px; background: var(--bg); border: 1px solid var(--line);
+}
+.sched-verdict.sched-err { border-color: color-mix(in srgb, var(--err) 50%, var(--line)); }
+.sched-verdict.sched-warn { border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
+.sched-verdict.sched-ok { border-color: color-mix(in srgb, var(--ok) 50%, var(--line)); }
+.sched-headline { margin: 0; flex: 1 1 16rem; min-width: 0; font-size: 0.85rem; overflow-wrap: anywhere; }
+.sched-heading { margin: 0.5rem 0 0; font-size: 0.82rem; }
+.sched-reasons { display: flex; flex-direction: column; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
+.sched-reason {
+    display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.4rem 0.6rem;
+    border-radius: 7px; background: var(--bg); border-left: 3px solid var(--err); font-size: 0.78rem;
+}
+.sched-reason-count { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 1.6rem; text-align: right; }
+.sched-reason div { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.sched-reason-detail { color: var(--muted); overflow-wrap: anywhere; }
+.sched-reason-nodes { font-size: 0.72rem; color: var(--muted); overflow-wrap: anywhere; }
+.sched-nodes { width: 100%; font-size: 0.76rem; }
+.sched-nodes td, .sched-nodes th { padding: 0.3rem 0.5rem; }
+.sched-node-fits td:first-child { border-left: 3px solid var(--ok); }
+.sched-events { display: flex; flex-direction: column; gap: 0.25rem; margin: 0; padding: 0; list-style: none; font-size: 0.78rem; }
+.sched-events li { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline; }
+.sched-event-warn { color: var(--warn); }
+.sched-limits { margin: 0.35rem 0 0; padding-left: 1.1rem; font-size: 0.73rem; color: var(--muted); }
+.sched-limits li { margin: 0.1rem 0; }

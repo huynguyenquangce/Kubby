@@ -331,3 +331,33 @@ test('Helm upgrade is disabled until an exact preview owns values and revision',
     assert.match(mainJS, /diff\.valuesDigest/);
     assert.doesNotMatch(mainJS, /HelmUpgradeValues\(ref\.namespace, ref\.name, vals\)\.then/);
 });
+
+test('Cleanup renders each group with the caveat that limits it', () => {
+    for (const id of ['view-hygiene', 'hygiene-summary', 'hygiene-groups', 'hygiene-only-problems', 'hygiene-filter']) {
+        assert.match(indexHTML, new RegExp(`id="${id}"`));
+    }
+    assert.match(indexHTML, /data-view="hygiene"/);
+    // The caveat belongs to the group, not to a footnote: a cleanup list read
+    // without it is how somebody deletes an object a controller was using.
+    assert.match(mainJS, /hygiene-caveat[\s\S]*?Before you delete:/);
+    // Every command is copied, never run.
+    assert.match(mainJS, /data-copy-command="\$\{esc\(item\.command\)\}"/);
+    assert.doesNotMatch(mainJS, /DeleteResourceOwned\([^)]*item\./);
+});
+
+test('Why Pending leads with the verdict and keeps the simulation limits visible', () => {
+    assert.match(mainJS, /function openSchedulingModal\(ref\)/);
+    assert.match(mainJS, /ExplainPodScheduling\(ref\.namespace, ref\.name\)/);
+    assert.match(mainJS, /sched-verdict/);
+    assert.match(mainJS, /sched-limits/);
+    // A Pod with no node has nothing to investigate, so the queue offers the
+    // scheduling answer instead.
+    assert.match(mainJS, /const unscheduled = p\.status === 'Pending' \|\| p\.status === 'Unschedulable'/);
+    assert.match(mainJS, /issue-scheduling/);
+});
+
+test('a view change abandons the previous screen reads before starting new ones', () => {
+    // Awaited, so the reads started below are never the ones cancelled.
+    assert.match(mainJS, /viewLoadsInFlight > 0[\s\S]*?CancelViewReads\(\)/);
+    assert.match(mainJS, /const p = abandoned\.then\(\(\) => doRefresh\(scope\)\)/);
+});

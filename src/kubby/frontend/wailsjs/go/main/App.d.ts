@@ -23,6 +23,8 @@ export function CancelDrawerSnapshot(arg1:string):Promise<void>;
 
 export function CancelPortForwardStart(arg1:string):Promise<void>;
 
+export function CancelViewReads():Promise<number>;
+
 export function ChartDefaultValues(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function ChartDetails(arg1:string,arg2:string):Promise<k8sclient.ChartDetail>;
@@ -32,6 +34,8 @@ export function CheckTrafficPolicy(arg1:string,arg2:string,arg3:string,arg4:stri
 export function ClusterChecks(arg1:string):Promise<k8sclient.ClusterChecksReport>;
 
 export function ClusterEvents(arg1:number):Promise<Array<k8sclient.EventInfo>>;
+
+export function ClusterHygiene(arg1:string):Promise<k8sclient.HygieneReport>;
 
 export function ClusterStructure(arg1:string):Promise<k8sclient.ClusterStructureData>;
 
@@ -64,6 +68,8 @@ export function DrainNodeOwned(arg1:string,arg2:string):Promise<void>;
 export function ExecResize(arg1:number,arg2:number):Promise<void>;
 
 export function ExecWrite(arg1:string):Promise<void>;
+
+export function ExplainPodScheduling(arg1:string,arg2:string):Promise<k8sclient.SchedulingReport>;
 
 export function ForgetConnection(arg1:string,arg2:string):Promise<void>;
 

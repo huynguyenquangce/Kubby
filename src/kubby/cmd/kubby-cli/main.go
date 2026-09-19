@@ -463,6 +463,113 @@ func main() {
 	checksCmd.Flags().StringVarP(&checksNamespace, "namespace", "n", "", "namespace (rỗng = toàn cluster)")
 	root.AddCommand(checksCmd)
 
+	// why-pending — the scheduling explainer, node by node.
+	var whyNamespace string
+	whyPendingCmd := &cobra.Command{
+		Use:   "why-pending <pod>",
+		Short: "Vì sao Pod chưa được xếp lịch: từng node bị loại vì lý do gì (read-only)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			report, err := k8sclient.ExplainScheduling(context.Background(), cluster, whyNamespace, args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s/%s — %s (%s)\n", report.Namespace, report.Name, report.Phase, report.Verdict)
+			fmt.Printf("%s\n", report.Headline)
+			requests := make([]string, 0, len(report.Requests))
+			for _, request := range report.Requests {
+				requests = append(requests, request.Resource+"="+request.Request)
+			}
+			if len(requests) > 0 {
+				fmt.Printf("requests: %s\n", strings.Join(requests, " "))
+			}
+			for _, finding := range report.Findings {
+				fmt.Printf("  [%s] %s — %s\n", finding.Severity, finding.Title, finding.Detail)
+			}
+			if !report.Scheduled {
+				fmt.Printf("== Nodes: %d fit of %d\n", report.NodesFit, report.NodesTotal)
+				for _, reason := range report.Reasons {
+					fmt.Printf("%4d  %-46s %s\n", reason.Count, reason.Title, reason.Detail)
+					fmt.Printf("      nodes: %s\n", strings.Join(reason.Nodes, ", "))
+				}
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(w, "NODE\tFITS\tCPU FREE\tMEM FREE\tPODS\tWHY NOT")
+				for _, node := range report.Nodes {
+					why := make([]string, 0, len(node.Reasons))
+					for _, reason := range node.Reasons {
+						why = append(why, reason.Text)
+					}
+					fmt.Fprintf(w, "%s\t%v\t%s\t%s\t%s\t%s\n", node.Name, node.Fits, node.CPUFree, node.MemFree, node.Pods, strings.Join(why, "; "))
+				}
+				w.Flush()
+			}
+			for _, event := range report.Events {
+				fmt.Printf("event %s %s: %s\n", event.Type, event.Reason, event.Message)
+			}
+			for _, limit := range report.Limits {
+				fmt.Printf("note: %s\n", limit)
+			}
+			for _, warning := range report.Warnings {
+				fmt.Printf("warning: %s\n", warning)
+			}
+			return nil
+		},
+	}
+	whyPendingCmd.Flags().StringVarP(&whyNamespace, "namespace", "n", "default", "namespace")
+	root.AddCommand(whyPendingCmd)
+
+	// hygiene — objects nothing references any more.
+	var hygieneNamespace string
+	var hygieneCategory string
+	hygieneCmd := &cobra.Command{
+		Use:   "hygiene",
+		Short: "Quét rác: ConfigMap/Secret/PVC không ai dùng, Service không endpoint, Job/Pod đã xong, image không pin (read-only)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cluster, err := k8sclient.New(kubeconfigPath, kubeContext)
+			if err != nil {
+				return err
+			}
+			report, err := k8sclient.ClusterHygiene(context.Background(), cluster, hygieneNamespace)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("== Cluster hygiene: %d item(s) in %s\n", report.Total, scopeText(report.Scope))
+			for _, group := range report.Groups {
+				if hygieneCategory != "" && group.Category != hygieneCategory {
+					continue
+				}
+				fmt.Printf("\n-- %s (%d) [%s]\n", group.Title, group.Count, group.Category)
+				fmt.Printf("   %s\n", group.Summary)
+				if group.Warning != "" {
+					fmt.Printf("   warning: %s\n", group.Warning)
+				}
+				for _, item := range group.Items {
+					fmt.Printf("%-8s %s %s/%s — %s\n", item.Severity, item.Kind, item.Namespace, item.Name, item.Title)
+					if len(item.Chips) > 0 {
+						fmt.Printf("    %s\n", strings.Join(item.Chips, " · "))
+					}
+					if item.Command != "" {
+						fmt.Printf("    command: %s\n", item.Command)
+					}
+				}
+				if group.Count > 0 {
+					fmt.Printf("   caveat: %s\n", group.Caveat)
+				}
+			}
+			for _, warning := range report.Warnings {
+				fmt.Printf("warning: %s\n", warning)
+			}
+			return nil
+		},
+	}
+	hygieneCmd.Flags().StringVarP(&hygieneNamespace, "namespace", "n", "", "namespace (rỗng = toàn cluster)")
+	hygieneCmd.Flags().StringVar(&hygieneCategory, "category", "", "chỉ in một nhóm (vd: unused-pvc)")
+	root.AddCommand(hygieneCmd)
+
 	var applyFile string
 	applyCmd := &cobra.Command{
 		Use:   "apply -f <file>",
@@ -1459,4 +1566,13 @@ func splitLines(s string) []string {
 		return nil
 	}
 	return strings.Split(s, "\n")
+}
+
+// scopeText names the scope the way the flag reads: an empty namespace is the
+// whole cluster.
+func scopeText(namespace string) string {
+	if namespace == "" {
+		return "all namespaces"
+	}
+	return "namespace " + namespace
 }

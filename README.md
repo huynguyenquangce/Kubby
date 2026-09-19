@@ -61,6 +61,8 @@ operate.
 | **Custom resources** | Discovery-backed sections for CRD-defined resources using unambiguous `Kind.group` references. |
 | **Diagnostics** | Logs, exec, port-forward, traffic topology, resource evidence, and provider-selectable AI assistance. |
 | **Health checks** | Admission webhooks whose backend is down, certificates close to expiry, and deletions stuck on finalizers — each explained, with the kubectl fix to copy. |
+| **Why Pending** | The scheduler's feasibility checks re-run node by node, with every reason a node was ruled out and by how much it missed. |
+| **Cleanup** | Objects nothing references any more and images that are not pinned, each with its caveat and the kubectl command to run yourself. |
 | **Operations** | Create/apply, delete, scale, restart, pause/resume, rollback, cordon/drain, and CronJob triggering. |
 | **Helm** | Releases, history, rollback, repositories, Artifact Hub search, chart installation, and dry-run previews. |
 | **Developer tooling** | `kubby-cli` exercises the same Go Kubernetes layer as the desktop application; Playwright covers mocked browser workflows, responsive/zoom behavior, and visual regression in CI. |

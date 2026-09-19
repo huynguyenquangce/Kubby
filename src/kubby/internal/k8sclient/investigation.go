@@ -611,6 +611,10 @@ func waitingExplanation(reason string) string {
 		return "The node cannot retrieve the configured image; verify the image reference, registry access and imagePullSecrets."
 	case "CreateContainerConfigError":
 		return "Kubernetes cannot construct the container configuration; referenced ConfigMaps, Secrets or keys are commonly missing."
+	case "CreateContainerError":
+		return "The container runtime refused to create the container; its message names the rejected part of the container spec."
+	case "InvalidImageName":
+		return "The image reference itself is not a valid name, so no registry is ever contacted."
 	case "ContainerCreating", "PodInitializing":
 		return "The container has not started yet; Events show whether image, volume or sandbox setup is blocking it."
 	default:

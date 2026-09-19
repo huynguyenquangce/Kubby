@@ -122,6 +122,31 @@ Increment on request, compare before painting, drop if superseded. Without this,
 flicking through namespaces can leave older numbers on top of newer ones — and in
 the Traffic view a slow reply once repainted an Ingress that had just been deleted.
 
+## Rule 5b — abandon the reads of a screen the user has left
+
+A generation counter stops a superseded response from *rendering*; the request
+itself keeps running. On a large cluster a view load can hold the connection for
+seconds after the user moved on, delaying the screen they did ask for.
+
+Every read a screen makes therefore goes through `withViewCluster` in `app.go`,
+which registers its context in the App's view-read registry. `refreshCurrentView`
+calls the bound `CancelViewReads()` before starting the next load — awaited, so
+the reads it starts are never the ones cancelled — and client-go aborts the HTTP
+request instead of finishing it into a response nobody will read. The first load
+of a session has nothing in flight, so it costs no extra call.
+
+Two boundaries make this safe:
+
+- **A write is never a view read.** `withOwnedCluster*` registers nothing: a
+  screen the user left must not abandon a write they confirmed.
+  `TestScreenReadsUseTheCancellableHelper` checks both directions against the
+  source, so a new binding added with the wrong helper fails the build.
+- **A cancelled read is not an error.** Its response belongs to a scope that is no
+  longer current, so the existing `isCurrentViewRequest` guard drops it silently.
+
+Connection transitions (switch, disconnect, shutdown) cancel the registry too,
+next to the drawer snapshots.
+
 ## Rule 6 — a failing kind must not blank the screen
 
 In `SidebarCounts` a kind that errors is simply omitted. One forbidden kind (RBAC,
@@ -170,6 +195,9 @@ both the throttle and the payload scale with it.
 | `CheckTrafficPolicy`, 1,000 Pods × 500 policies | **0.93–1.18 s**, 520 MB/op | **40–42 ms**, 34 MB/op; always 5 API requests |
 | Topology indexed join, 1000 Services × 10k Pods | 79–84 ms, **67.9 MB/op** (per-row policy fields) | 83–89 ms, **46.2 MB/op** |
 | Initial production JS, September 2026 | 589.14 kB / 185.52 kB gzip | **602.88 kB / 189.55 kB gzip** after the policy kinds, Check traffic, drain preview and log hints |
+| Why Pending, 10 nodes × 5,000 Pods (derivation only) | **4.7 ms**, 4.8 MB/op, 20,570 allocs (per-Pod `ResourceList` accumulation) | **1.2 ms**, 31 kB/op, **568 allocs**; 4 API requests at 3 nodes and at 200 |
+| Why Pending, 1,000 nodes × 5,000 Pods | — | **3.4 ms**, 12,668 allocs |
+| Cleanup report, 5,000-object namespace (derivation only) | — | **6.0 ms**, 23,707 allocs; 14 lists, cached 30 s |
 
 The September figures were measured on the same Ryzen 5 5600H under WSL2 with
 `-count 3`/`-count 5`. The kind comparison used a one-node cluster seeded with
@@ -203,6 +231,8 @@ go test ./internal/k8sclient -run '^$' -bench BenchmarkOverviewSnapshot10kPods -
 go test ./internal/k8sclient -run '^$' -bench BenchmarkNetworkTopologyIndexedJoin1000Services10kPods -benchmem
 go test ./internal/k8sclient -run '^$' -bench 'Perf' -benchmem -count 3        # policy overlay, traffic check, request counts
 go test ./internal/k8sclient -run 'AllocationBudget|RequestsDoNotScale' -v      # deterministic guards
+go test ./internal/k8sclient -run 'RequestCountIsIndependentOfClusterSize|HygieneCachesItsScanPerScope' -v
+go test . -run 'View|Screen' -v                                                # view-read cancellation
 ```
 
 ## Bounded resource tables
@@ -244,6 +274,12 @@ Not yet addressed — worth knowing before blaming something else:
   connection and scope and live refresh cannot repeat it every five seconds. The
   API server certificate handshake is cached for 10 minutes. See
   [health-checks.md](health-checks.md).
+- **Why Pending lists every Node and every Pod** for one Pod's answer — 4 requests
+  regardless of cluster size, and nothing per node. It is opened on demand, never
+  by a refresh loop. See [scheduling.md](scheduling.md).
+- **Cleanup lists fourteen resource types** (ConfigMaps and Secrets metadata-only)
+  and is cached for 30 s per connection and scope, for the same reason Health
+  checks is. See [hygiene.md](hygiene.md).
 - **Route verdicts add requests when policies exist**: one IngressClass List, one
   Pod List per recognised ingress controller, and a NetworkPolicy List per
   controller namespace outside a scoped view, on each Traffic refresh.

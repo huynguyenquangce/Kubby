@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	netv1 "k8s.io/api/networking/v1"
+	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -340,4 +342,192 @@ func BenchmarkPerfDiagnosticContextLogRequests(b *testing.B) {
 			})
 		}
 	}
+}
+
+// BenchmarkPerfExplainScheduling measures the scheduling explainer on a cluster
+// shaped like the ones it has to answer for: many nodes, many Pods already
+// placed, and a target Pod carrying anti-affinity and a spread constraint (the
+// two predicates whose naive form is O(nodes × pods)). It also reports the API
+// request count, which must stay flat as the cluster grows.
+func BenchmarkPerfExplainScheduling(b *testing.B) {
+	for _, nodes := range []int{10, 200} {
+		for _, pods := range []int{500, 5000} {
+			objects := perfSchedulingCluster(nodes, pods)
+			b.Run(fmt.Sprintf("nodes-%d/pods-%d", nodes, pods), func(b *testing.B) {
+				client := kubefake.NewSimpleClientset(objects...)
+				cluster := &Cluster{Clientset: client}
+				report, err := ExplainScheduling(context.Background(), cluster, perfNamespace, "target")
+				if err != nil {
+					b.Fatal(err)
+				}
+				requests := len(client.Actions())
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if _, err := ExplainScheduling(context.Background(), cluster, perfNamespace, "target"); err != nil {
+						b.Fatal(err)
+					}
+				}
+				b.StopTimer()
+				b.ReportMetric(float64(requests), "api-calls")
+				b.ReportMetric(float64(report.NodesFit), "fitting-nodes")
+			})
+		}
+	}
+}
+
+// perfSchedulingCluster builds nodes across three zones, Pods spread over them,
+// and one unscheduled target Pod with requests, anti-affinity and a hard spread
+// constraint.
+func perfSchedulingCluster(nodes, pods int) []runtime.Object {
+	zones := []string{"a", "b", "c"}
+	objects := make([]runtime.Object, 0, nodes+pods+1)
+	for i := 0; i < nodes; i++ {
+		name := fmt.Sprintf("node-%04d", i)
+		objects = append(objects, &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{
+				"kubernetes.io/hostname": name, "topology.kubernetes.io/zone": zones[i%len(zones)],
+			}},
+			Status: corev1.NodeStatus{
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    apiresource.MustParse("8"),
+					corev1.ResourceMemory: apiresource.MustParse("32Gi"),
+					corev1.ResourcePods:   apiresource.MustParse("110"),
+				},
+				Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+			},
+		})
+	}
+	for i := 0; i < pods; i++ {
+		objects = append(objects, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: perfNamespace, Name: fmt.Sprintf("placed-%05d", i),
+				Labels: map[string]string{"app": fmt.Sprintf("app-%d", i%25)},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: fmt.Sprintf("node-%04d", i%nodes),
+				Containers: []corev1.Container{{Name: "main", Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("100m"), corev1.ResourceMemory: apiresource.MustParse("256Mi")},
+				}}},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		})
+	}
+	return append(objects, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: perfNamespace, Name: "target", Labels: map[string]string{"app": "app-0"}},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "main", Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceCPU: apiresource.MustParse("500m"), corev1.ResourceMemory: apiresource.MustParse("1Gi")},
+			}}},
+			Affinity: &corev1.Affinity{PodAntiAffinity: &corev1.PodAntiAffinity{
+				RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{{
+					TopologyKey:   "kubernetes.io/hostname",
+					LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "app-0"}},
+				}},
+			}},
+			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
+				MaxSkew: 1, TopologyKey: "topology.kubernetes.io/zone", WhenUnsatisfiable: corev1.DoNotSchedule,
+				LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "app-0"}},
+			}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodPending},
+	})
+}
+
+// BenchmarkPerfSchedulingSimulation isolates Kubby's own work from the client:
+// the inputs are built once, so what is measured is the per-node evaluation and
+// the selector compilation, not the fake clientset's deep copies.
+func BenchmarkPerfSchedulingSimulation(b *testing.B) {
+	for _, nodes := range []int{10, 200, 1000} {
+		for _, pods := range []int{500, 5000} {
+			objects := perfSchedulingCluster(nodes, pods)
+			in := &schedulingInputs{claims: map[string]*corev1.PersistentVolumeClaim{}}
+			var target *corev1.Pod
+			for _, object := range objects {
+				switch typed := object.(type) {
+				case *corev1.Node:
+					in.nodes = append(in.nodes, *typed)
+				case *corev1.Pod:
+					if typed.Name == "target" {
+						target = typed
+						continue
+					}
+					in.pods = append(in.pods, *typed)
+				}
+			}
+			b.Run(fmt.Sprintf("nodes-%d/pods-%d", nodes, pods), func(b *testing.B) {
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					report := buildSchedulingReport(target, in)
+					if report.NodesTotal != nodes {
+						b.Fatalf("nodes = %d, want %d", report.NodesTotal, nodes)
+					}
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkPerfHygieneReport measures the cleanup scan's own work — reference
+// indexing and the eight group passes — on a namespace with many objects. The
+// inputs are built once so the fake clientset's deep copies are not what is
+// measured; the API cost is a fixed set of lists, pinned by the request-count
+// assertion in the hygiene tests.
+func BenchmarkPerfHygieneReport(b *testing.B) {
+	for _, scale := range []int{500, 5000} {
+		in := perfHygieneInputs(scale)
+		b.Run(fmt.Sprintf("objects-%d", scale), func(b *testing.B) {
+			b.ReportAllocs()
+			report := buildHygieneReport(perfNamespace, in)
+			b.ReportMetric(float64(report.Total), "items")
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				buildHygieneReport(perfNamespace, in)
+			}
+		})
+	}
+}
+
+// perfHygieneInputs builds a namespace where most objects are referenced and a
+// tenth are not — the shape that makes the reference index do real work.
+func perfHygieneInputs(scale int) *hygieneInputs {
+	in := &hygieneInputs{errs: map[string]error{}}
+	for i := 0; i < scale; i++ {
+		name := fmt.Sprintf("app-%05d", i)
+		in.pods = append(in.pods, corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: perfNamespace, Name: name + "-pod",
+				OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: name}}},
+			Spec: corev1.PodSpec{
+				Volumes: []corev1.Volume{{Name: "config", VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}}}},
+				Containers: []corev1.Container{{Name: "main", Image: "registry.example.com/app:1.0", EnvFrom: []corev1.EnvFromSource{{
+					SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}}}}},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		})
+		in.deployments = append(in.deployments, appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Namespace: perfNamespace, Name: name},
+			Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "main", Image: "registry.example.com/app:1.0"}}}}},
+		})
+		in.configMaps = append(in.configMaps, metav1.PartialObjectMetadata{
+			ObjectMeta: metav1.ObjectMeta{Namespace: perfNamespace, Name: name}})
+		in.secrets = append(in.secrets, metav1.PartialObjectMetadata{
+			ObjectMeta: metav1.ObjectMeta{Namespace: perfNamespace, Name: name}})
+		in.services = append(in.services, corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Namespace: perfNamespace, Name: name},
+			Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": name}}})
+		ready := true
+		in.slices = append(in.slices, discoveryv1.EndpointSlice{
+			ObjectMeta: metav1.ObjectMeta{Namespace: perfNamespace, Name: name + "-abc",
+				Labels: map[string]string{discoveryv1.LabelServiceName: name}},
+			Endpoints: []discoveryv1.Endpoint{{Addresses: []string{"10.0.0.1"}, Conditions: discoveryv1.EndpointConditions{Ready: &ready}}}})
+		if i%10 == 0 {
+			in.configMaps = append(in.configMaps, metav1.PartialObjectMetadata{
+				ObjectMeta: metav1.ObjectMeta{Namespace: perfNamespace, Name: name + "-orphan"}})
+			in.claims = append(in.claims, corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{Namespace: perfNamespace, Name: name + "-data"},
+				Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound}})
+		}
+	}
+	return in
 }

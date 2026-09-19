@@ -42,6 +42,10 @@ export function CancelPortForwardStart(arg1) {
   return window['go']['main']['App']['CancelPortForwardStart'](arg1);
 }
 
+export function CancelViewReads() {
+  return window['go']['main']['App']['CancelViewReads']();
+}
+
 export function ChartDefaultValues(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ChartDefaultValues'](arg1, arg2, arg3, arg4);
 }
@@ -60,6 +64,10 @@ export function ClusterChecks(arg1) {
 
 export function ClusterEvents(arg1) {
   return window['go']['main']['App']['ClusterEvents'](arg1);
+}
+
+export function ClusterHygiene(arg1) {
+  return window['go']['main']['App']['ClusterHygiene'](arg1);
 }
 
 export function ClusterStructure(arg1) {
@@ -124,6 +132,10 @@ export function ExecResize(arg1, arg2) {
 
 export function ExecWrite(arg1) {
   return window['go']['main']['App']['ExecWrite'](arg1);
+}
+
+export function ExplainPodScheduling(arg1, arg2) {
+  return window['go']['main']['App']['ExplainPodScheduling'](arg1, arg2);
 }
 
 export function ForgetConnection(arg1, arg2) {

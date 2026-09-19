@@ -101,6 +101,9 @@ import {
     CanI,
     Sizing,
     ClusterChecks,
+    ClusterHygiene,
+    ExplainPodScheduling,
+    CancelViewReads,
     GetDetail,
     GetDrawerSnapshotOwned,
     CancelDrawerSnapshot,
@@ -159,6 +162,7 @@ const PAGE_TITLES = {
     namespaces: 'Namespaces',
     sizing: 'Right-sizing',
     checks: 'Health checks',
+    hygiene: 'Cleanup',
     pods: 'Pods',
     deployments: 'Deployments',
     services: 'Services',
@@ -194,6 +198,7 @@ const PAGE_SUBTITLES = {
     namespaces: 'Browse logical scopes and the resources running inside them.',
     sizing: 'Compare requested resources with live usage and find waste or risk.',
     checks: 'Find broken admission webhooks, expiring certificates and deletions stuck on finalizers.',
+    hygiene: 'Find objects nothing references any more, and images that are not pinned.',
     pods: 'Monitor workload health, resource usage, logs, terminals, and events.',
     deployments: 'Review rollout health and safely scale, restart, pause, or roll back.',
     services: 'Inspect stable network endpoints and the workloads behind them.',
@@ -228,7 +233,7 @@ const NAMESPACED_VIEWS = new Set([
     'statefulsets', 'daemonsets', 'jobs', 'cronjobs', 'ingresses', 'pvcs', 'serviceaccounts',
     'networkpolicies', 'hpas', 'pdbs',
     'roles', 'rolebindings', 'helm', 'resourcequotas', 'limitranges',
-    'sizing', 'checks',
+    'sizing', 'checks', 'hygiene',
 ]);
 
 // Maps a view to the resource kind it creates (views omitted here get no Create button).
@@ -701,6 +706,8 @@ function openNamespacePicker() {
     $('namespace-search').setAttribute('aria-expanded', 'true');
     $('namespace-search').value = '';
     renderNamespacePicker();
+    // Show what is known immediately, then pick up namespaces created since.
+    loadNamespaceOptions();
     requestAnimationFrame(() => {
         $('namespace-search').focus();
         $('namespace-search').select();
@@ -757,7 +764,7 @@ $('namespace-select').addEventListener('change', (e) => {
     refreshCurrentView();
 });
 
-$('btn-refresh').addEventListener('click', () => { loadSidebarCounts(); refreshCurrentView(); });
+$('btn-refresh').addEventListener('click', () => { loadSidebarCounts(); loadNamespaceOptions(); refreshCurrentView(); });
 $('btn-cluster-structure').addEventListener('click', () => selectView('structure'));
 $('topology-dependencies').addEventListener('click', () => selectView('structure'));
 $('topology-traffic').addEventListener('click', () => selectView('traffic'));
@@ -935,7 +942,7 @@ function selectView(view) {
         });
     }
     // The instant filter applies to table views only (not the dashboard-style views).
-    const hasTable = view !== 'overview' && view !== 'structure' && view !== 'traffic' && view !== 'sizing' && view !== 'helm' && view !== 'checks';
+    const hasTable = view !== 'overview' && view !== 'structure' && view !== 'traffic' && view !== 'sizing' && view !== 'helm' && view !== 'checks' && view !== 'hygiene';
     $('view-search').hidden = !hasTable;
     $('view-filter').value = '';
     updateNsScope();
@@ -951,6 +958,10 @@ function updateNsScope() {
         : '';
 }
 
+// viewLoadsInFlight counts the view loads that have not settled. It is what
+// decides whether the previous screen still has reads worth abandoning.
+let viewLoadsInFlight = 0;
+
 function refreshCurrentView() {
     clearDashError();
     clearSelection();
@@ -961,8 +972,18 @@ function refreshCurrentView() {
     // transition still clears it immediately so old-cluster rows cannot be used.
     if (!refreshing) clearRenderedView(scope.view);
     setViewStatus(refreshing ? 'refreshing' : 'loading', refreshing ? 'Refreshing…' : 'Loading…');
-    const p = Promise.resolve(doRefresh(scope));
+    // The epochs above already stop a superseded response from rendering, but
+    // the request itself kept running: a cluster-wide list can hold the
+    // connection for seconds after the user moved on, delaying the screen they
+    // did ask for. Abandoning it first is the difference the user feels.
+    // Awaited, so the reads started below are never the ones cancelled.
+    const abandoned = viewLoadsInFlight > 0
+        ? Promise.resolve(CancelViewReads()).catch(() => 0)
+        : Promise.resolve(0);
+    viewLoadsInFlight++;
+    const p = abandoned.then(() => doRefresh(scope));
     p.finally(() => {
+        viewLoadsInFlight--;
         if (!isCurrentViewRequest(scope)) return;
         filterCurrentTable();
         if ($('view-status').dataset.state !== 'error') {
@@ -998,6 +1019,24 @@ function clearRenderedView(view = currentView) {
         resetStructureInspector();
     }
 	if (view === 'traffic') $('traffic-warnings').hidden = true;
+    // The check and cleanup cards carry buttons that open an object by
+    // namespace and name. Left on screen during a scope change they would open
+    // the previous scope's object, so they go with the scope.
+    if (view === 'checks') {
+        checksReport = null;
+        $('checks-summary').innerHTML = '';
+        for (const tab of Object.keys(CHECK_TABS)) $(`checks-${tab}-list`).innerHTML = '';
+        $('checks-warnings').hidden = true;
+        $('checks-updated').textContent = '';
+    }
+    if (view === 'hygiene') {
+        hygieneReport = null;
+        $('hygiene-summary').innerHTML = '';
+        $('hygiene-groups').innerHTML = '';
+        $('hygiene-warnings').hidden = true;
+        $('hygiene-updated').textContent = '';
+        $('hygiene-empty').hidden = true;
+    }
 }
 
 // Instant client-side filter over the current view's table rows.
@@ -1039,6 +1078,7 @@ function doRefresh(scope) {
         case 'namespaces': return loadNamespaces(scope);
         case 'sizing': return loadSizing(scope);
         case 'checks': return loadChecks(scope);
+        case 'hygiene': return loadHygiene(scope);
         case 'pods': return loadPods(scope);
         case 'deployments': return loadDeployments(scope);
         case 'services': return loadServices(scope);
@@ -1235,11 +1275,23 @@ function quotaChips(summary) {
     }).join('')}</div>`;
 }
 
+// The picker used to be filled only at connect, so a namespace created from
+// kubectl, a Helm install or a controller stayed invisible until reconnect.
+// It now also reloads on Refresh and whenever the picker opens; concurrent
+// callers share one request, and an unchanged list is not re-rendered, so the
+// picker never jumps under the user's keyboard for nothing.
+let namespaceOptionsRequest = null;
+
 function loadNamespaceOptions(connection = requestScopes.connectionToken()) {
-    return ListNamespaces()
+    if (namespaceOptionsRequest?.connection === connection) return namespaceOptionsRequest.promise;
+    const promise = ListNamespaces()
         .then((namespaces) => {
             if (!requestScopes.isCurrentConnection(connection)) return;
             const select = $('namespace-select');
+            const names = (namespaces ?? []).map((ns) => ns.name);
+            const current = [...select.options].slice(1).map((option) => option.value);
+            const unchanged = select.options.length > 0 && names.length === current.length && names.every((name, i) => name === current[i]);
+            if (unchanged && select.value === currentNamespace) return;
             const wanted = currentNamespace;
             select.innerHTML = '<option value="">All namespaces</option>';
             for (const ns of namespaces ?? []) {
@@ -1252,7 +1304,10 @@ function loadNamespaceOptions(connection = requestScopes.connectionToken()) {
             else currentNamespace = '';
             syncNamespacePicker();
         })
-        .catch((err) => { if (requestScopes.isCurrentConnection(connection)) showDashError(err); });
+        .catch((err) => { if (requestScopes.isCurrentConnection(connection)) showDashError(err); })
+        .finally(() => { if (namespaceOptionsRequest?.promise === promise) namespaceOptionsRequest = null; });
+    namespaceOptionsRequest = { connection, promise };
+    return promise;
 }
 
 // Build a table row; if `ref` is given the row is clickable and opens the drawer.
@@ -1325,12 +1380,20 @@ function loadOverview(scope) {
             setAttentionEmptyState(Boolean(sectionErrors.pods), errored.length > 0);
             for (const p of errored) {
                 const ref = { kind: 'Pod', namespace: p.namespace, name: p.name, isPod: true };
+                // A Pod with no node yet has nothing to investigate: no logs, no
+                // container state, no events beyond the scheduler's. The useful
+                // first step is the scheduling answer, so it takes the lead here.
+                const unscheduled = p.status === 'Pending' || p.status === 'Unschedulable';
                 const tr = row(
-                    `<td class="overview-namespace">${esc(p.namespace)}</td><td class="overview-resource-name" title="${esc(p.name)}">${esc(p.name)}</td><td>${badge(p.status, false)}</td><td class="overview-count">${p.restarts}</td><td class="overview-issue-actions"><button type="button" class="btn btn-secondary btn-sm issue-inspect">Inspect</button><button type="button" class="btn btn-primary btn-sm issue-diagnose"><span aria-hidden="true">⌁</span>Investigate</button></td>`,
+                    `<td class="overview-namespace">${esc(p.namespace)}</td><td class="overview-resource-name" title="${esc(p.name)}">${esc(p.name)}</td><td>${badge(p.status, false)}</td><td class="overview-count">${p.restarts}</td><td class="overview-issue-actions"><button type="button" class="btn btn-secondary btn-sm issue-inspect">Inspect</button>${
+                        unscheduled
+                            ? '<button type="button" class="btn btn-primary btn-sm issue-scheduling"><span aria-hidden="true">◷</span>Why Pending?</button>'
+                            : '<button type="button" class="btn btn-primary btn-sm issue-diagnose"><span aria-hidden="true">⌁</span>Investigate</button>'}</td>`,
                     { isError: true, actions: false, ref },
                 );
                 tr.querySelector('.issue-inspect').addEventListener('click', () => openDrawer({ ...ref, tab: 'details' }));
-                tr.querySelector('.issue-diagnose').addEventListener('click', () => openDrawer({ ...ref, tab: 'investigate' }));
+                tr.querySelector('.issue-diagnose')?.addEventListener('click', () => openDrawer({ ...ref, tab: 'investigate' }));
+                tr.querySelector('.issue-scheduling')?.addEventListener('click', () => openSchedulingModal(ref));
                 body.appendChild(tr);
             }
 
@@ -4756,6 +4819,220 @@ function stuckObjectHtml(object) {
         ${object.commandNote ? `<p class="checks-note">${esc(object.commandNote)}</p>` : ''}`);
 }
 
+// ============ Cleanup: what nothing references any more ============
+//
+// One read-only scan (ClusterHygiene) shown as groups. Every group states what
+// a reference scan cannot see, next to its items — a cleanup list without its
+// caveat is how someone deletes a ConfigMap an operator was reading by name.
+// Kubby never deletes anything here: the item carries the command to copy.
+
+let hygieneReport = null;
+
+function loadHygiene(scope) {
+    return ClusterHygiene(scope.namespace)
+        .then((report) => {
+            if (!isCurrentViewRequest(scope)) return;
+            hygieneReport = report;
+            renderHygiene();
+        })
+        .catch((err) => {
+            if (!isCurrentViewRequest(scope)) return;
+            hygieneReport = null;
+            $('hygiene-summary').innerHTML = '';
+            $('hygiene-groups').innerHTML = '';
+            $('hygiene-empty').hidden = true;
+            showDashError(err);
+        });
+}
+
+function renderHygiene() {
+    const report = hygieneReport;
+    const groups = report?.groups ?? [];
+    $('hygiene-summary').innerHTML = groups.map((group) => {
+        const warnings = (group.items ?? []).filter((item) => item.severity === 'warning' || item.severity === 'critical').length;
+        return `<button type="button" class="flow-stat checks-stat${warnings ? ' flow-stat-bad' : ''}" data-hygiene-jump="${esc(group.category)}">
+            <span class="flow-stat-num">${group.count ?? 0}</span>
+            <span class="flow-stat-label">${esc(group.title)}</span>
+            <span class="flow-stat-hint">${warnings ? `${warnings} worth acting on` : 'nothing urgent'}</span>
+        </button>`;
+    }).join('');
+    $('hygiene-summary').querySelectorAll('[data-hygiene-jump]').forEach((tile) => {
+        tile.addEventListener('click', () => {
+            const section = document.getElementById(`hygiene-group-${tile.dataset.hygieneJump}`);
+            section?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+            section?.querySelector('.checks-item')?.classList.add('hygiene-jumped');
+        });
+    });
+
+    $('hygiene-groups').innerHTML = groups.map(hygieneGroupHtml).join('');
+    $('hygiene-groups').querySelectorAll('[data-open-kind]').forEach((button) => {
+        button.addEventListener('click', () => openDrawer({
+            kind: button.dataset.openKind,
+            namespace: button.dataset.openNamespace || '',
+            name: button.dataset.openName,
+            isPod: button.dataset.openKind === 'Pod',
+        }));
+    });
+    $('hygiene-groups').querySelectorAll('[data-copy-command]').forEach((button) => {
+        button.addEventListener('click', () => copyCommand(button, button.dataset.copyCommand));
+    });
+
+    const warnings = report?.warnings ?? [];
+    $('hygiene-warnings').textContent = warnings.join(' · ');
+    $('hygiene-warnings').hidden = warnings.length === 0;
+    $('hygiene-updated').textContent = report?.checkedAt
+        ? `${countNoun(report.total ?? 0, 'item')} · scanned ${new Date(report.checkedAt).toLocaleTimeString()}`
+        : '';
+    applyHygieneFilter();
+}
+
+function hygieneGroupHtml(group) {
+    const items = group.items ?? [];
+    return `<section class="hygiene-group" id="hygiene-group-${esc(group.category)}" data-hygiene-group="${esc(group.category)}">
+        <header class="hygiene-group-head">
+            <h3>${esc(group.title)} <span class="hygiene-count">${group.count ?? 0}</span></h3>
+            <p class="checks-intro">${esc(group.summary)}</p>
+        </header>
+        ${group.warning ? `<p class="checks-note hygiene-group-warning">${esc(group.warning)}</p>` : ''}
+        <div class="checks-list">${items.map(hygieneItemHtml).join('')}</div>
+        <p class="empty-inline hygiene-group-empty" hidden></p>
+        <p class="checks-note hygiene-caveat"><strong>Before you delete:</strong> ${esc(group.caveat)}</p>
+    </section>`;
+}
+
+function hygieneItemHtml(item) {
+    const where = item.namespace ? `${item.namespace}/${item.name}` : item.name;
+    const search = `${item.namespace ?? ''} ${item.name} ${item.title}`.toLowerCase();
+    const problem = item.severity === 'critical' || item.severity === 'warning';
+    return `<article class="checks-item checks-item-${esc(item.severity)}" data-problem="${problem ? '1' : '0'}" data-search="${esc(search)}">
+        <header class="checks-item-head">${checkSeverityBadge(item.severity)}
+            ${checkObjectButton(item.kind, item.namespace, item.name, where)}
+            <span class="checks-item-sub">${esc(item.kind)}${item.age ? ` · ${esc(item.age)} old` : ''}</span>
+        </header>
+        <div class="checks-meta">${checkChips(item.chips ?? [])}</div>
+        <p class="checks-line"><span class="checks-label">Why</span><span>${esc(item.title)} — ${esc(item.detail)}</span></p>
+        ${item.command ? `<div class="checks-command"><code class="mono">${esc(item.command)}</code>
+            <button type="button" class="btn btn-secondary btn-sm" data-copy-command="${esc(item.command)}">Copy</button></div>` : ''}
+    </article>`;
+}
+
+function applyHygieneFilter() {
+    const onlyProblems = $('hygiene-only-problems').checked;
+    const term = $('hygiene-filter').value.trim().toLowerCase();
+    let shown = 0;
+    for (const section of $('hygiene-groups').querySelectorAll('.hygiene-group')) {
+        const items = [...section.querySelectorAll('.checks-item')];
+        let visible = 0;
+        for (const item of items) {
+            const hidden = (onlyProblems && item.dataset.problem !== '1')
+                || (term !== '' && !item.dataset.search.includes(term));
+            item.hidden = hidden;
+            if (!hidden) visible++;
+        }
+        shown += visible;
+        const empty = section.querySelector('.hygiene-group-empty');
+        empty.textContent = items.length === 0 ? 'Nothing to clean up here.' : 'No item matches the current filter.';
+        empty.hidden = visible > 0;
+        section.querySelector('.hygiene-caveat').hidden = items.length === 0;
+    }
+    const empty = $('hygiene-empty');
+    empty.textContent = hygieneReport ? 'Nothing matches — this scope is tidy.' : '';
+    empty.hidden = !hygieneReport || shown > 0 || (hygieneReport.total ?? 0) === 0;
+}
+
+$('hygiene-only-problems').addEventListener('change', applyHygieneFilter);
+$('hygiene-filter').addEventListener('input', applyHygieneFilter);
+
+// ============ Why is this Pod Pending? ============
+//
+// The backend (scheduling.go) re-runs the scheduler's feasibility checks node
+// by node. This renders the answer in the order an operator reads it: the
+// verdict, what the scheduler itself said, the reason groups with counts, and
+// only then the individual nodes.
+
+function openSchedulingModal(ref) {
+    let scope;
+    const load = () => {
+        const box = $('sched-result');
+        box.innerHTML = '<p class="modal-hint">Checking every node…</p>';
+        return ExplainPodScheduling(ref.namespace, ref.name)
+            .then((report) => { if (isCurrentModalRequest(scope)) renderScheduling(box, report); })
+            .catch((err) => {
+                if (isCurrentModalRequest(scope)) box.innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
+                recordError(err);
+            });
+    };
+    scope = openModal({
+        title: 'Why is this Pod Pending?',
+        eyebrow: 'Scheduling',
+        description: `${ref.namespace}/${ref.name} — every node, and the reason it was ruled out.`,
+        ownerKey: modalOwner('scheduling', $('cluster-select').value, ref.namespace, ref.name),
+        okText: 'Done',
+        cancelText: null,
+        extraText: 'Re-check',
+        onExtra: load,
+        wide: true,
+        bodyHtml: '<div id="sched-result" class="sched-result" aria-live="polite"></div>',
+        onOpen: load,
+    });
+}
+
+function renderScheduling(box, report) {
+    const tone = { unschedulable: 'err', fits: 'warn', scheduled: 'ok', unknown: 'warn' }[report.verdict] ?? 'warn';
+    const label = {
+        unschedulable: 'No node fits', fits: 'A node does fit', scheduled: 'Already scheduled', unknown: 'Cannot tell',
+    }[report.verdict] ?? report.verdict;
+    const requests = (report.requests ?? []).map((request) => `${request.resource} ${request.request}`);
+    box.innerHTML = `
+        <div class="sched-verdict sched-${tone}">
+            <span class="status-badge ${tone === 'err' ? 'status-error' : tone === 'ok' ? 'status-ok' : 'status-warn'}">${esc(label)}</span>
+            <p class="sched-headline">${esc(report.headline)}</p>
+        </div>
+        <div class="checks-meta">${checkChips([
+            report.nodeName ? `node ${report.nodeName}` : `${report.nodesFit} of ${report.nodesTotal} nodes fit`,
+            ...requests,
+        ])}</div>
+        ${checkFindingsHtml(report.findings)}
+        ${schedulingReasonsHtml(report.reasons ?? [])}
+        ${schedulingNodesHtml(report.nodes ?? [])}
+        ${schedulingEventsHtml(report.events ?? [])}
+        ${(report.warnings ?? []).map((warning) => `<p class="checks-note">${esc(warning)}</p>`).join('')}
+        <ul class="sched-limits">${(report.limits ?? []).map((limit) => `<li>${esc(limit)}</li>`).join('')}</ul>`;
+}
+
+function schedulingReasonsHtml(reasons) {
+    if (!reasons.length) return '';
+    return `<h4 class="sched-heading">Why each node was ruled out</h4>
+        <ul class="sched-reasons">${reasons.map((reason) => `<li class="sched-reason">
+            <span class="sched-reason-count">${reason.count}</span>
+            <div><strong>${esc(reason.title)}</strong>
+                ${reason.detail ? `<span class="sched-reason-detail">${esc(reason.detail)}</span>` : ''}
+                <span class="sched-reason-nodes mono">${esc((reason.nodes ?? []).join(', '))}</span>
+            </div>
+        </li>`).join('')}</ul>`;
+}
+
+function schedulingNodesHtml(nodes) {
+    if (!nodes.length) return '';
+    return `<h4 class="sched-heading">Nodes</h4>
+        <div class="table-wrap"><table class="sched-nodes"><thead><tr>
+            <th>Node</th><th>Fits</th><th>CPU free</th><th>Memory free</th><th>Pods</th><th>Why not</th>
+        </tr></thead><tbody>${nodes.map((node) => `<tr class="${node.fits ? 'sched-node-fits' : ''}">
+            <td class="mono">${esc(node.name)}</td>
+            <td>${node.fits ? '<span class="status-badge status-ok">Yes</span>' : '<span class="status-badge status-error">No</span>'}</td>
+            <td>${esc(node.cpuFree)}</td><td>${esc(node.memFree)}</td><td>${esc(node.pods)}</td>
+            <td>${(node.reasons ?? []).map((reason) => `<span class="chip">${esc(reason.text)}</span>`).join('') || '<span class="dim">—</span>'}</td>
+        </tr>`).join('')}</tbody></table></div>`;
+}
+
+function schedulingEventsHtml(events) {
+    if (!events.length) return '';
+    return `<h4 class="sched-heading">What the cluster reported</h4>
+        <ul class="sched-events">${events.map((event) => `<li class="${event.isWarn ? 'sched-event-warn' : ''}">
+            <span class="chip">${esc(event.reason)}</span><span>${esc(event.message)}</span><span class="dim">${esc(event.age)}</span>
+        </li>`).join('')}</ul>`;
+}
+
 // ============ Right-sizing: requested vs actually used ============
 //
 // The backend (rightsizing.go) does the joining and the judging; this only
@@ -5106,6 +5383,9 @@ function openRowMenu(btn, ref) {
         { label: 'Edit YAML', need: 'get', run: () => openDrawer({ ...ref, tab: 'yaml' }) },
     ];
     if (ref.isPod) {
+        // The first question about a Pod that is not running yet, and the one
+        // kubectl answers worst. Read-only, so `get` is all it needs.
+        actions.push({ label: '◷ Why Pending?', need: 'get', run: () => openSchedulingModal(ref) });
         actions.push({ label: 'View logs', need: 'logs', run: () => openDrawer({ ...ref, tab: 'logs' }) });
         actions.push({ label: 'Terminal', need: 'exec', run: () => openDrawer({ ...ref, tab: 'terminal' }) });
     }

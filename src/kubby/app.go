@@ -51,6 +51,11 @@ type App struct {
 	helmSeq            uint64
 	drawerReadMu       sync.Mutex
 	drawerReads        map[string]*drawerRead
+	// viewReads are the cluster reads a screen has in flight. Switching view or
+	// namespace abandons them: see CancelViewReads.
+	viewReadMu  sync.Mutex
+	viewReads   map[uint64]context.CancelFunc
+	viewReadSeq uint64
 }
 
 type drawerRead struct {
@@ -78,6 +83,7 @@ func NewApp() *App {
 		recentPath:         recentFilePath,
 		helmOps:            map[uint64]context.CancelFunc{},
 		drawerReads:        map[string]*drawerRead{},
+		viewReads:          map[uint64]context.CancelFunc{},
 	}
 }
 
@@ -87,6 +93,7 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(context.Context) {
 	a.cancelAllDrawerSnapshots()
+	a.cancelViewReads()
 	a.cancelHelmOperations()
 	a.StopLogStream()
 	a.StopExec()
@@ -176,6 +183,7 @@ func (a *App) storeVerifiedCluster(name string, cluster *k8sclient.Cluster) *clu
 	a.stopAllPortForwards()
 	a.cancelHelmOperations()
 	a.cancelAllDrawerSnapshots()
+	a.cancelViewReads()
 
 	a.stateMu.Lock()
 	a.connectionSeq++
@@ -242,6 +250,7 @@ func (a *App) SwitchCluster(id string) error {
 	a.stopAllPortForwards()
 	a.cancelHelmOperations()
 	a.cancelAllDrawerSnapshots()
+	a.cancelViewReads()
 	a.stateMu.Lock()
 	a.activeID = id
 	a.connectionEpoch++
@@ -269,6 +278,7 @@ func (a *App) DisconnectCluster(id string) string {
 		a.stopAllPortForwards()
 		a.cancelHelmOperations()
 		a.cancelAllDrawerSnapshots()
+		a.cancelViewReads()
 	}
 
 	a.stateMu.Lock()
@@ -376,12 +386,75 @@ func withOwnedClusterErr(a *App, expectedConnectionID string, fn func(context.Co
 	return fn(a.ctx, cluster)
 }
 
+// withViewCluster is withCluster for a read a *screen* makes: listing a kind,
+// filling the dashboard, scanning for health. Those reads belong to the view
+// the user was looking at, and the moment they switch view or namespace the
+// answer is worthless — while a cluster-wide Pod list on a large cluster keeps
+// the connection busy for seconds and delays the screen they did ask for.
+//
+// Registering the context here is what makes abandoning them possible: the
+// frontend calls CancelViewReads before it starts the next view, and client-go
+// aborts the HTTP request rather than finishing it into a discarded response.
+// Writes deliberately do not use this — an abandoned screen must never abandon
+// a write the user confirmed.
+func withViewCluster[T any](a *App, fn func(context.Context, *k8sclient.Cluster) (T, error)) (T, error) {
+	var zero T
+	cluster, err := a.requireCluster()
+	if err != nil {
+		return zero, err
+	}
+	ctx, done := a.beginViewRead()
+	defer done()
+	return fn(ctx, cluster)
+}
+
+func (a *App) beginViewRead() (context.Context, func()) {
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.viewReadMu.Lock()
+	a.viewReadSeq++
+	id := a.viewReadSeq
+	if a.viewReads == nil {
+		a.viewReads = map[uint64]context.CancelFunc{}
+	}
+	a.viewReads[id] = cancel
+	a.viewReadMu.Unlock()
+	return ctx, func() {
+		a.viewReadMu.Lock()
+		delete(a.viewReads, id)
+		a.viewReadMu.Unlock()
+		cancel()
+	}
+}
+
+// CancelViewReads abandons every view read still in flight and reports how many
+// there were. The frontend calls it when the view or namespace changes; a read
+// that has already returned is simply not there to cancel.
+func (a *App) CancelViewReads() int {
+	return a.cancelViewReads()
+}
+
+func (a *App) cancelViewReads() int {
+	a.viewReadMu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(a.viewReads))
+	for id, cancel := range a.viewReads {
+		cancels = append(cancels, cancel)
+		delete(a.viewReads, id)
+	}
+	a.viewReadMu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+	return len(cancels)
+}
+
 func (a *App) ListNodes() ([]k8sclient.NodeInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.NodeInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.NodeInfo, error) {
 		return k8sclient.ListNodes(ctx, cluster.Clientset)
 	})
 }
 
+// ListNamespaces also fills the namespace picker, which belongs to no screen:
+// a view change must not abandon it, so it is deliberately not a view read.
 func (a *App) ListNamespaces() ([]k8sclient.NamespaceInfo, error) {
 	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.NamespaceInfo, error) {
 		return k8sclient.ListNamespaces(ctx, cluster.Clientset)
@@ -390,7 +463,7 @@ func (a *App) ListNamespaces() ([]k8sclient.NamespaceInfo, error) {
 
 // ListPods lists pods in a namespace ("" means all namespaces) (FR-2, FR-3).
 func (a *App) ListPods(namespace string) ([]k8sclient.PodInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.PodInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.PodInfo, error) {
 		return k8sclient.ListPods(ctx, cluster.Clientset, namespace)
 	})
 }
@@ -399,38 +472,38 @@ func (a *App) ListPods(namespace string) ([]k8sclient.PodInfo, error) {
 // bridge call. The client performs the independent Kubernetes reads in
 // parallel.
 func (a *App) PodsSnapshot(namespace string) (*k8sclient.PodsSnapshot, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.PodsSnapshot, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.PodsSnapshot, error) {
 		return k8sclient.ListPodsSnapshot(ctx, cluster, namespace)
 	})
 }
 
 // PodsPage returns one bounded Pods-screen page and its continuation token.
 func (a *App) PodsPage(namespace, continueToken string, limit int64) (*k8sclient.PodsPage, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.PodsPage, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.PodsPage, error) {
 		return k8sclient.ListPodsPage(ctx, cluster, namespace, continueToken, limit)
 	})
 }
 
 func (a *App) ListDeployments(namespace string) ([]k8sclient.DeploymentInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.DeploymentInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.DeploymentInfo, error) {
 		return k8sclient.ListDeployments(ctx, cluster.Clientset, namespace)
 	})
 }
 
 func (a *App) ListServices(namespace string) ([]k8sclient.ServiceInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.ServiceInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.ServiceInfo, error) {
 		return k8sclient.ListServices(ctx, cluster.Clientset, namespace)
 	})
 }
 
 func (a *App) ListConfigMaps(namespace string) ([]k8sclient.ConfigMapInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.ConfigMapInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.ConfigMapInfo, error) {
 		return k8sclient.ListConfigMaps(ctx, cluster.Clientset, namespace)
 	})
 }
 
 func (a *App) ListSecrets(namespace string) ([]k8sclient.SecretInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.SecretInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.SecretInfo, error) {
 		return k8sclient.ListSecrets(ctx, cluster.Clientset, namespace)
 	})
 }
@@ -601,37 +674,37 @@ func (a *App) SecretData(namespace, name string) ([]k8sclient.SecretEntry, error
 // ---- Feature 3: more resource types ----
 
 func (a *App) ListStatefulSets(ns string) ([]k8sclient.StatefulSetInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.StatefulSetInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.StatefulSetInfo, error) {
 		return k8sclient.ListStatefulSets(ctx, cluster.Clientset, ns)
 	})
 }
 func (a *App) ListDaemonSets(ns string) ([]k8sclient.DaemonSetInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.DaemonSetInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.DaemonSetInfo, error) {
 		return k8sclient.ListDaemonSets(ctx, cluster.Clientset, ns)
 	})
 }
 func (a *App) ListJobs(ns string) ([]k8sclient.JobInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.JobInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.JobInfo, error) {
 		return k8sclient.ListJobs(ctx, cluster.Clientset, ns)
 	})
 }
 func (a *App) ListCronJobs(ns string) ([]k8sclient.CronJobInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.CronJobInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.CronJobInfo, error) {
 		return k8sclient.ListCronJobs(ctx, cluster.Clientset, ns)
 	})
 }
 func (a *App) ListIngresses(ns string) ([]k8sclient.IngressInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.IngressInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.IngressInfo, error) {
 		return k8sclient.ListIngresses(ctx, cluster.Clientset, ns)
 	})
 }
 func (a *App) ListPVCs(ns string) ([]k8sclient.PVCInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.PVCInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.PVCInfo, error) {
 		return k8sclient.ListPVCs(ctx, cluster.Clientset, ns)
 	})
 }
 func (a *App) ListServiceAccounts(ns string) ([]k8sclient.ServiceAccountInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.ServiceAccountInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.ServiceAccountInfo, error) {
 		return k8sclient.ListServiceAccounts(ctx, cluster.Clientset, ns)
 	})
 }
@@ -639,32 +712,32 @@ func (a *App) ListServiceAccounts(ns string) ([]k8sclient.ServiceAccountInfo, er
 // ---- Storage + RBAC resource types ----
 
 func (a *App) ListPersistentVolumes() ([]k8sclient.PersistentVolumeInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.PersistentVolumeInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.PersistentVolumeInfo, error) {
 		return k8sclient.ListPersistentVolumes(ctx, cluster.Clientset)
 	})
 }
 func (a *App) ListStorageClasses() ([]k8sclient.StorageClassInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.StorageClassInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.StorageClassInfo, error) {
 		return k8sclient.ListStorageClasses(ctx, cluster.Clientset)
 	})
 }
 func (a *App) ListRoles(ns string) ([]k8sclient.RoleInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.RoleInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.RoleInfo, error) {
 		return k8sclient.ListRoles(ctx, cluster.Clientset, ns)
 	})
 }
 func (a *App) ListRoleBindings(ns string) ([]k8sclient.RoleBindingInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.RoleBindingInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.RoleBindingInfo, error) {
 		return k8sclient.ListRoleBindings(ctx, cluster.Clientset, ns)
 	})
 }
 func (a *App) ListClusterRoles() ([]k8sclient.ClusterRoleInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.ClusterRoleInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.ClusterRoleInfo, error) {
 		return k8sclient.ListClusterRoles(ctx, cluster.Clientset)
 	})
 }
 func (a *App) ListClusterRoleBindings() ([]k8sclient.ClusterRoleBindingInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.ClusterRoleBindingInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.ClusterRoleBindingInfo, error) {
 		return k8sclient.ListClusterRoleBindings(ctx, cluster.Clientset)
 	})
 }
@@ -672,12 +745,12 @@ func (a *App) ListClusterRoleBindings() ([]k8sclient.ClusterRoleBindingInfo, err
 // ---- Ecosystem: CRDs, Helm, quotas ----
 
 func (a *App) ListCRDs() ([]k8sclient.CRDInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.CRDInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.CRDInfo, error) {
 		return k8sclient.ListCRDs(ctx, cluster)
 	})
 }
 func (a *App) ListHelmReleases(ns string) ([]k8sclient.HelmReleaseInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.HelmReleaseInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.HelmReleaseInfo, error) {
 		return k8sclient.ListHelmReleases(ctx, cluster.Meta, ns)
 	})
 }
@@ -871,12 +944,12 @@ func (a *App) BrowseHelmRepo(name string) ([]k8sclient.ChartSearchResult, error)
 	return k8sclient.BrowseHelmRepo(name)
 }
 func (a *App) ListResourceQuotas(ns string) ([]k8sclient.ResourceQuotaInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.ResourceQuotaInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.ResourceQuotaInfo, error) {
 		return k8sclient.ListResourceQuotas(ctx, cluster.Clientset, ns)
 	})
 }
 func (a *App) ListLimitRanges(ns string) ([]k8sclient.LimitRangeInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.LimitRangeInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.LimitRangeInfo, error) {
 		return k8sclient.ListLimitRanges(ctx, cluster.Clientset, ns)
 	})
 }
@@ -884,17 +957,17 @@ func (a *App) ListLimitRanges(ns string) ([]k8sclient.LimitRangeInfo, error) {
 // ---- Scaling, disruption and network policy ----
 
 func (a *App) ListHorizontalPodAutoscalers(ns string) ([]k8sclient.HPAInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.HPAInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.HPAInfo, error) {
 		return k8sclient.ListHorizontalPodAutoscalers(ctx, cluster.Clientset, ns)
 	})
 }
 func (a *App) ListPodDisruptionBudgets(ns string) ([]k8sclient.PDBInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.PDBInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.PDBInfo, error) {
 		return k8sclient.ListPodDisruptionBudgets(ctx, cluster.Clientset, ns)
 	})
 }
 func (a *App) ListNetworkPolicies(ns string) ([]k8sclient.NetworkPolicyInfo, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.NetworkPolicyInfo, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.NetworkPolicyInfo, error) {
 		return k8sclient.ListNetworkPolicies(ctx, cluster.Clientset, ns)
 	})
 }
@@ -910,8 +983,26 @@ func (a *App) CheckTrafficPolicy(sourceNamespace, sourcePod, destinationKind, de
 // ClusterChecks runs the Health checks screen — admission webhooks,
 // certificates and stuck deletions — in one read-only call.
 func (a *App) ClusterChecks(namespace string) (*k8sclient.ClusterChecksReport, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.ClusterChecksReport, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.ClusterChecksReport, error) {
 		return k8sclient.ClusterChecks(ctx, cluster, namespace)
+	})
+}
+
+// ClusterHygiene scans a namespace ("" = all) for objects nothing references
+// any more, and for images that are not pinned. Read-only: every item carries
+// the kubectl command, and Kubby never runs it.
+func (a *App) ClusterHygiene(namespace string) (*k8sclient.HygieneReport, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.HygieneReport, error) {
+		return k8sclient.ClusterHygiene(ctx, cluster, namespace)
+	})
+}
+
+// ExplainPodScheduling answers "why is this Pod Pending?" node by node.
+// Read-only: it simulates the scheduler's feasibility checks, it never places,
+// evicts or patches anything.
+func (a *App) ExplainPodScheduling(namespace, name string) (*k8sclient.SchedulingReport, error) {
+	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.SchedulingReport, error) {
+		return k8sclient.ExplainScheduling(ctx, cluster, namespace, name)
 	})
 }
 
@@ -928,7 +1019,7 @@ func (a *App) DrainImpact(nodeName string) (*k8sclient.DrainImpact, error) {
 // OverviewSnapshot returns the complete dashboard payload in one bound call;
 // Kubernetes fan-out and partial-error handling live in k8sclient.
 func (a *App) OverviewSnapshot() (*k8sclient.OverviewData, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.OverviewData, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.OverviewData, error) {
 		return k8sclient.OverviewSnapshot(ctx, cluster)
 	})
 }
@@ -1034,19 +1125,19 @@ func (a *App) CustomKinds() (*k8sclient.CustomKindList, error) {
 
 // ListCustom lists the objects of a custom kind ("Kind.group"), namespace "" = all.
 func (a *App) ListCustom(refKind, namespace string) ([]k8sclient.CustomObject, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.CustomObject, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) ([]k8sclient.CustomObject, error) {
 		return k8sclient.ListCustom(ctx, cluster, refKind, namespace)
 	})
 }
 
 func (a *App) ListCustomPage(refKind, namespace, continueToken string, limit int64) (*k8sclient.CustomObjectPage, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.CustomObjectPage, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.CustomObjectPage, error) {
 		return k8sclient.ListCustomPage(ctx, cluster, refKind, namespace, continueToken, limit)
 	})
 }
 
 func (a *App) NetworkFlows(namespace string) (*k8sclient.NetworkFlows, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.NetworkFlows, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.NetworkFlows, error) {
 		return k8sclient.NetworkTopology(ctx, cluster, namespace)
 	})
 }
@@ -1055,7 +1146,7 @@ func (a *App) NetworkFlows(namespace string) (*k8sclient.NetworkFlows, error) {
 // owns the cross-resource joins so the WebView never talks to Kubernetes or
 // creates an N+1 request pattern.
 func (a *App) ClusterStructure(namespace string) (*k8sclient.ClusterStructureData, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.ClusterStructureData, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.ClusterStructureData, error) {
 		return k8sclient.ClusterStructure(ctx, cluster, namespace)
 	})
 }
@@ -1361,7 +1452,7 @@ func (a *App) PlanDrainPermissions(nodeName string) (*k8sclient.PermissionPlan, 
 // Sizing reports declared requests/limits against actual usage for a namespace
 // ("" = whole cluster). Backs the Right-sizing view.
 func (a *App) Sizing(namespace string) (*k8sclient.SizingReport, error) {
-	return withCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.SizingReport, error) {
+	return withViewCluster(a, func(ctx context.Context, cluster *k8sclient.Cluster) (*k8sclient.SizingReport, error) {
 		return k8sclient.Sizing(ctx, cluster, namespace)
 	})
 }

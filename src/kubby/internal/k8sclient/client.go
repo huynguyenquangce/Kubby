@@ -74,6 +74,8 @@ type Cluster struct {
 	// read by a TLS handshake cached for longer. See healthchecks.go.
 	checksMu       sync.Mutex
 	checksCache    map[string]checksCacheEntry
+	hygieneMu      sync.Mutex
+	hygieneCache   map[string]hygieneCacheEntry
 	apiCertMu      sync.Mutex
 	apiCert        *x509.Certificate
 	apiCertErr     error

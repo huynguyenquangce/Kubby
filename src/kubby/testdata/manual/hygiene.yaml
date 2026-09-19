@@ -1,0 +1,196 @@
+# Manual test scenarios for Kubby's Cleanup view.
+#
+# Apply to a disposable cluster only (kind, minikube):
+#   kubectl apply -f testdata/manual/hygiene.yaml
+# Everything lives in kubby-demo-hygiene. Remove it all afterwards with:
+#   kubectl delete namespace kubby-demo-hygiene
+#
+# Open Cluster → Cleanup with the namespace selector on kubby-demo-hygiene.
+# What must appear:
+#
+#   Unreferenced ConfigMaps        orphan-config
+#   Unreferenced Secrets           orphan-secret
+#   Claims no Pod mounts           left-behind        (after its Pod is deleted, below)
+#   Services with no ready endpoint dead-service
+#   Images that are not pinned     floating (Deployment, uses :latest)
+#
+# What must NOT appear — these are the false positives that matter:
+#
+#   used-config      referenced by a Deployment scaled to zero (no Pod exists)
+#   registry-secret  an imagePullSecret
+#   data-db-0        the StatefulSet's own volumeClaimTemplate claim
+#   live-service     has a ready endpoint
+#
+# Finished Pods and Jobs only appear after 24 hours, so they are not included
+# here; check them on a cluster that has been running a while.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubby-demo-hygiene
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orphan-config
+  namespace: kubby-demo-hygiene
+data:
+  note: nothing references this
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: used-config
+  namespace: kubby-demo-hygiene
+data:
+  note: a Deployment scaled to zero still uses this
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orphan-secret
+  namespace: kubby-demo-hygiene
+type: Opaque
+stringData:
+  note: nothing references this
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-secret
+  namespace: kubby-demo-hygiene
+type: Opaque
+stringData:
+  note: referenced as an imagePullSecret below
+---
+# Scaled to zero on purpose: it has no Pod, and it still uses used-config.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scaled-to-zero
+  namespace: kubby-demo-hygiene
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: scaled-to-zero
+  template:
+    metadata:
+      labels:
+        app: scaled-to-zero
+    spec:
+      imagePullSecrets:
+        - name: registry-secret
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.9
+          envFrom:
+            - configMapRef:
+                name: used-config
+---
+# An unpinned image: :latest cannot be rolled back to.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: floating
+  namespace: kubby-demo-hygiene
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: floating
+  template:
+    metadata:
+      labels:
+        app: floating
+    spec:
+      containers:
+        - name: app
+          image: busybox:latest
+          command: ["sh", "-c", "sleep 86400"]
+---
+# A Service whose selector matches nothing — the label-rename outage.
+apiVersion: v1
+kind: Service
+metadata:
+  name: dead-service
+  namespace: kubby-demo-hygiene
+spec:
+  selector:
+    app: renamed-away
+  ports:
+    - port: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: live-service
+  namespace: kubby-demo-hygiene
+spec:
+  selector:
+    app: floating
+  ports:
+    - port: 80
+---
+# A claim with a Pod, for now. Delete the Pod and the claim becomes unused:
+#   kubectl delete pod claim-holder -n kubby-demo-hygiene
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: left-behind
+  namespace: kubby-demo-hygiene
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 128Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: claim-holder
+  namespace: kubby-demo-hygiene
+spec:
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: left-behind
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.9
+      volumeMounts:
+        - name: data
+          mountPath: /data
+---
+# A StatefulSet's own claim (data-db-0) must never be called unused, even with
+# the StatefulSet scaled to zero.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+  namespace: kubby-demo-hygiene
+spec:
+  serviceName: db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.9
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 128Mi
