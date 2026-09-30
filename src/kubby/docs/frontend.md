@@ -77,6 +77,11 @@ pressure-free control-plane node unhealthy. Capacity uses comparable linear mete
 rather than decorative rings. Every Overview table still carries `class="plain"`,
 uses a fixed layout, and owns horizontal overflow so an event message cannot widen
 the page. At narrow workspace widths the cards stack without hiding any state.
+The two queue panels align at the top and keep their own content heights; grid
+stretch makes a short Attention queue look like a large empty card. Shared `.btn`
+controls use primary, secondary, soft and quiet variants in `option-b.css`. In
+dense issue rows, Inspect is quiet and the next step is soft so the health state
+stays more prominent than the controls.
 
 The contextual **Open topology** button opens the **Dependencies** canvas in the
 shared Topology workspace, not a resource table. `ClusterStructure()` supplies

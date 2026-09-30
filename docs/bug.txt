@@ -663,3 +663,10 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   overriding error rows in both themes; the semantic error selectors now match
   that specificity.
   Other typed backend lists remain the documented pagination gap.
+- [2026-10-01] Overview's short Attention queue showed a large blank card beside
+  Top consumers, and its row actions looked heavier than the issue status.
+  Root causes: the two-column grid stretched both panels to the height of its
+  longest item, while shared buttons and row actions used the same strong border
+  and accent treatment regardless of their role. Fix: top-align the panels,
+  soften the global control palette, and use quiet/soft variants for the
+  resource-local actions.

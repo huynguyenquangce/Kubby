@@ -1385,10 +1385,10 @@ function loadOverview(scope) {
                 // first step is the scheduling answer, so it takes the lead here.
                 const unscheduled = p.status === 'Pending' || p.status === 'Unschedulable';
                 const tr = row(
-                    `<td class="overview-namespace">${esc(p.namespace)}</td><td class="overview-resource-name" title="${esc(p.name)}">${esc(p.name)}</td><td>${badge(p.status, false)}</td><td class="overview-count">${p.restarts}</td><td class="overview-issue-actions"><button type="button" class="btn btn-secondary btn-sm issue-inspect">Inspect</button>${
+                    `<td class="overview-namespace" title="${esc(p.namespace)}">${esc(p.namespace)}</td><td class="overview-resource-name" title="${esc(p.name)}">${esc(p.name)}</td><td>${badge(p.status, false)}</td><td class="overview-count">${p.restarts}</td><td class="overview-issue-actions"><button type="button" class="btn btn-quiet btn-sm issue-inspect">Inspect</button>${
                         unscheduled
-                            ? '<button type="button" class="btn btn-primary btn-sm issue-scheduling"><span aria-hidden="true">◷</span>Why Pending?</button>'
-                            : '<button type="button" class="btn btn-primary btn-sm issue-diagnose"><span aria-hidden="true">⌁</span>Investigate</button>'}</td>`,
+                            ? '<button type="button" class="btn btn-soft btn-sm issue-scheduling">Why Pending?</button>'
+                            : '<button type="button" class="btn btn-soft btn-sm issue-diagnose">Investigate</button>'}</td>`,
                     { isError: true, actions: false, ref },
                 );
                 tr.querySelector('.issue-inspect').addEventListener('click', () => openDrawer({ ...ref, tab: 'details' }));

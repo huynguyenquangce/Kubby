@@ -1540,7 +1540,6 @@ tbody tr.selected:hover { background: #e0ebff; }
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 .page-write-actions .btn { min-height: 32px; }
-.structure-button-icon { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: var(--accent-soft); color: var(--blue); font-weight: 800; }
 .structure-view { min-width: 0; }
 .structure-summary { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 0.7rem; }
 .structure-stat {
