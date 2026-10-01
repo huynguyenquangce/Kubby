@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Kubby K-Cube logo</title>
+  <desc id="desc">A three-colour cube with a K-shaped negative space.</desc>
+  <defs>
+    <mask id="k-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
+      <rect width="256" height="256" fill="white"/>
+      <path d="M120 100v132M120 174l96-64M120 174l88 62" fill="none" stroke="black" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+  <g mask="url(#k-cut)">
+    <path d="M124 17a8 8 0 0 1 8 0l96 55a8 8 0 0 1 0 14l-96 55a8 8 0 0 1-8 0L28 86a8 8 0 0 1 0-14z" fill="#165DFF"/>
+    <path d="M24 96a8 8 0 0 1 12-7l84 49a8 8 0 0 1 4 7v94a8 8 0 0 1-12 7l-84-49a8 8 0 0 1-4-7z" fill="#4F46E5"/>
+    <path d="M132 145a8 8 0 0 1 4-7l84-49a8 8 0 0 1 12 7v94a8 8 0 0 1-4 7l-84 49a8 8 0 0 1-12-7z" fill="#0D9488"/>
+  </g>
+</svg>

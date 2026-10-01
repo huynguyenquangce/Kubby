@@ -19,6 +19,7 @@ Thumbs.db
 .npmrc
 .netrc
 .pypirc
+.vercel/
 repositories.yaml
 id_rsa
 id_ed25519
