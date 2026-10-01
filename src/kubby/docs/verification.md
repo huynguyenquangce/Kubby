@@ -199,8 +199,8 @@ trace, screenshot, and video only on failure. Generated failure evidence is
 ignored by Git.
 
 This proves frontend behavior against the mocked binding contract. It does not
-prove native file dialogs, clipboard behavior, WebView2 focus/paint behavior,
-PTY/ANSI rendering, or Kubernetes correctness.
+prove native file dialogs, clipboard behavior, WebView2 or macOS WebKit
+focus/paint behavior, PTY/ANSI rendering, or Kubernetes correctness.
 
 Native window automation is still not reliable from a headless session.
 
@@ -213,6 +213,15 @@ behaviour visually.** Do not try to automate clicks through native dialogs.
 
 The browser suite is therefore a release gate alongside the native manual checks
 below, not a replacement for them.
+
+macOS native verification must use an Apple Silicon Mac and the packaged `.app`.
+Open it from Finder, select a kubeconfig through the native file dialog, connect
+to a disposable cluster, and check both themes and a narrow window. Confirm
+Cmd+K opens search, Cmd+F searches YAML inside CodeMirror, clipboard copy/paste
+works, and Logs, Terminal, and Port Forward can start and stop. Record the OS
+version, artifact hash, and any failure. The macOS CI bundle is unsigned and
+does not count as native visual evidence. The build and artifact procedure is
+owned only by [`docs/BUILD.md`](../../../docs/BUILD.md).
 
 Port-forward manager manual check: start one tunnel with **Keep running** enabled,
 close the resource drawer, and verify the top-bar badge still exposes and can stop

@@ -111,7 +111,7 @@ These are load-bearing everywhere. Each is explained in the branch that owns it.
 src/kubby/
 ├── app.go                      # App layer: every method bound for the frontend. Registry of *k8sclient.Cluster (multi-cluster) + active pointer + logCancel + pfSessions + execSess.
 ├── main.go                     # Wails bootstrap (embeds frontend/dist, registers App).
-├── recent.go                   # Recent-connections store (%AppData%/kubby/recent.json — paths + context only).
+├── recent.go                   # Recent-connections store (OS user config dir/kubby/recent.json — paths + context only).
 ├── ai.go                       # (package main) AI provider config + multi-turn chat clients. Requests 0600; Windows relies on the profile ACL.
 ├── diagnostics.go              # AppVersion + Diagnostics (the copy-pasteable bug report) + CopyToClipboard  → verification.md
 ├── diagnostics_test.go         # report shape + configured-key/common credential redaction                 → verification.md

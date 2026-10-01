@@ -5796,7 +5796,7 @@ function cellSortValue(tr, idx) {
     return t.toLowerCase();
 }
 
-// ============ Command palette (Ctrl+K) ============
+// ============ Command palette (Ctrl/Cmd+K) ============
 
 let paletteFiltered = [];
 let paletteSel = 0;
@@ -7096,7 +7096,7 @@ function aiSetupCardHtml() {
             <li><strong>Anthropic (Claude)</strong> or an <strong>OpenAI-compatible</strong> endpoint — needs an API key.</li>
         </ul>
         <button type="button" class="btn btn-primary btn-sm" id="ai-setup-open">Choose a provider</button>
-        <p class="ai-setup-note">Your key is stored only on this machine, in <code>%AppData%/kubby/ai.json</code>.</p>
+        <p class="ai-setup-note">Your key is stored only on this machine, in <code>kubby/ai.json</code> under your user config folder.</p>
     </div>`;
 }
 
@@ -7210,7 +7210,7 @@ function openSettingsModal() {
         description: 'Configure the AI assistant and review build diagnostics stored on this machine.',
         ownerKey: modalOwner('settings'),
         okText: 'Save',
-        bodyHtml: `<div class="modal-context-card"><div><span class="helm-kicker">AI assistant</span><strong>Your evidence, your provider</strong><p>Questions include the selected resource's events, recent logs and manifest. The API key stays in <code>%AppData%/kubby/ai.json</code> on this machine.</p></div><span class="chip">Local key storage</span></div>
+        bodyHtml: `<div class="modal-context-card"><div><span class="helm-kicker">AI assistant</span><strong>Your evidence, your provider</strong><p>Questions include the selected resource's events, recent logs and manifest. The API key stays in <code>kubby/ai.json</code> under your user config folder on this machine.</p></div><span class="chip">Local key storage</span></div>
             <div class="modal-section-title"><strong>Provider</strong><p>Choose where Kubby sends questions and resource evidence.</p></div>
             <div class="settings-ai-form">
                 <label>Provider

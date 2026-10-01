@@ -103,6 +103,9 @@ cleanup are centralized in one guide:
 
 A Windows executable can be built natively or cross-built from WSL. A
 cross-built artifact still needs a native Windows visual check before release.
+macOS Apple Silicon support is in progress. Its build and native verification
+procedure is documented in [`docs/BUILD.md`](docs/BUILD.md); no macOS release
+artifact has been verified yet.
 
 ## Documentation
 

@@ -59,8 +59,10 @@ truncated snapshot.
 
 ## Data handling — read before changing
 
-- Config, **including the API key**, lives at `%AppData%/kubby/ai.json`; its
-  directory and file permissions are tightened to **0700/0600** where supported.
+- Config, **including the API key**, lives at `kubby/ai.json` under
+  `os.UserConfigDir()` (`%AppData%` on Windows,
+  `~/Library/Application Support` on macOS); its directory and file permissions
+  are tightened to **0700/0600** where supported.
 - `GetAIConfig()` and `GetAIStatus()` expose only settings metadata plus a
   `hasApiKey` boolean. The key is write-only from the WebView and leaving its
   field blank preserves the existing key for the same provider.

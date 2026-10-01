@@ -1013,9 +1013,9 @@
                             <span class="term-brand"><b aria-hidden="true">K›</b><span>KUBBY / EXEC</span></span>
                             <span id="term-session-label">Not connected</span>
                             <span class="term-frame-actions">
-                                <span class="term-key-hint"><kbd>Ctrl Shift C</kbd> copy · <kbd>Ctrl Shift V</kbd> paste</span>
-                                <button id="btn-term-copy" class="term-frame-button" type="button" title="Copy selected text (Ctrl+Shift+C)" disabled>Copy</button>
-                                <button id="btn-term-paste" class="term-frame-button" type="button" title="Paste from clipboard (Ctrl+Shift+V)" disabled>Paste</button>
+                                <span class="term-key-hint"><kbd>Ctrl Shift C/V</kbd> or <kbd>Cmd C/V</kbd> copy/paste</span>
+                                <button id="btn-term-copy" class="term-frame-button" type="button" title="Copy selected text (Ctrl+Shift+C or Cmd+C)" disabled>Copy</button>
+                                <button id="btn-term-paste" class="term-frame-button" type="button" title="Paste from clipboard (Ctrl+Shift+V or Cmd+V)" disabled>Paste</button>
                                 <button id="btn-term-clear" class="term-frame-button" type="button">Clear</button>
                                 <button id="btn-term-start" class="term-frame-button term-frame-button-accent" type="button">Retry</button>
                                 <button id="btn-term-stop" class="term-frame-button" type="button" hidden>Disconnect</button>
@@ -1160,7 +1160,7 @@
             <button id="pf-toast-stop" class="btn btn-secondary btn-sm">Stop</button>
         </div>
 
-        <!-- ============ Command palette (Ctrl+K) ============ -->
+        <!-- ============ Command palette (Ctrl/Cmd+K) ============ -->
         <div id="palette-backdrop" class="palette-backdrop" hidden></div>
         <div id="palette" class="palette" hidden role="dialog" aria-modal="true" aria-labelledby="palette-title">
             <h2 id="palette-title" class="sr-only">Search and commands</h2>

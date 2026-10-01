@@ -398,7 +398,7 @@ dialog shell so light/dark and accessibility behavior cannot diverge by feature.
 - Sidebar groups are an **accordion**, collapsed state persisted in `localStorage`.
 - Native `alert` / `confirm` are replaced by a stackable in-app dialog
   (`showAlert` / `showError` / `showConfirm`) that layers above the modal.
-- **Ctrl+K** command palette: static commands (go to view, switch namespace/cluster,
+- **Ctrl/Cmd+K** command palette: static commands (go to view, switch namespace/cluster,
   actions) plus debounced live resource search.
 - The sidebar namespace control is a searchable combobox backed by the existing
   hidden `<select>`. Keep the select as the canonical state because cluster switch,

@@ -11,6 +11,7 @@ Run project commands from `src/kubby/` unless a step explicitly says otherwise.
 |---|---|---|
 | Windows x86-64 | `windows/amd64` | `src/kubby/build/bin/kubby.exe` |
 | Linux x86-64 | `linux/amd64` | `src/kubby/build/bin/kubby` |
+| macOS Apple Silicon | `darwin/arm64` | `src/kubby/build/bin/kubby.app` |
 
 A cross-built Windows executable still needs a native Windows visual check.
 Headless validation proves its format and compilation, not GUI behaviour.
@@ -27,10 +28,14 @@ Required for every target:
 - Wails CLI v2.13.0, matching `src/kubby/go.mod`.
 
 Native Windows builds also require WebView2. Windows 11 normally provides it.
+Native macOS builds require macOS 11 or later, Xcode Command Line Tools
+(`xcode-select --install`), and an Apple Silicon host for the initial
+`darwin/arm64` target. The bundle identifier and minimum version are in
+`src/kubby/build/darwin/Info.plist`.
 
 Browser UI checks require Playwright's pinned Chromium. After `npm ci`, install
-it once per machine. On Windows use `npx playwright install chromium`; on
-WSL/Linux also install its system libraries:
+it once per machine. On Windows or macOS use `npx playwright install chromium`;
+on WSL/Linux also install its system libraries:
 
 ```bash
 cd frontend
@@ -70,6 +75,20 @@ npm --version
 pkg-config --modversion gtk+-3.0 2>/dev/null || true
 pkg-config --modversion webkit2gtk-4.1 2>/dev/null || true
 ```
+
+Probe macOS on an Apple Silicon host:
+
+```bash
+uname -m
+go version
+node --version
+npm --version
+xcode-select -p
+wails doctor
+```
+
+`uname -m` must print `arm64`. Use the pinned Wails CLI from section 2 if
+`wails` is absent.
 
 Use native Windows when its toolchain is available and the GUI must be run
 there. If PowerShell lacks Go/Wails, WSL can cross-build `kubby.exe`.
@@ -122,17 +141,20 @@ These checks are required for a verified build even though Wails also compiles
 the frontend and backend:
 
 ```bash
-go test ./...
-go build ./...
-go vet ./...
-gofmt -l *.go internal/k8sclient/*.go internal/buildinfo/*.go cmd/kubby-cli/*.go
-
 cd frontend
 npm test
 npm run build
 npm run test:e2e
 cd ..
+
+go test ./...
+go build ./...
+go vet ./...
+gofmt -l *.go internal/k8sclient/*.go internal/buildinfo/*.go cmd/kubby-cli/*.go
 ```
+
+Build the frontend before the Go checks so `main.go` can embed
+`frontend/dist` from a clean checkout.
 
 `gofmt -l` passes only when it prints no filenames. `npm run build` may emit a
 bundle-size warning; record it separately from build failure.
@@ -185,6 +207,15 @@ go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build -tags webkit2_41
 Older Linux distributions that still provide WebKitGTK 4.0 can use the default
 Wails tags and their corresponding 4.0 development package.
 
+macOS Apple Silicon, on a native Mac or a macOS CI runner:
+
+```bash
+go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build -platform darwin/arm64
+```
+
+This packages `build/bin/kubby.app`. The current macOS target is Apple Silicon;
+Intel and universal bundles have not been added to the project build gate.
+
 A complete Wails build must finish bindings, frontend compilation, application
 assets where applicable, application compilation, and packaging. Passing only
 the Go checks or frontend bundle is not a full application build.
@@ -212,6 +243,24 @@ ldd build/bin/kubby | grep 'not found' || true
 
 `file` must report an ELF x86-64 executable and `ldd` must have no `not found`
 entries.
+
+For the macOS Apple Silicon bundle, run on macOS:
+
+```bash
+plutil -lint build/bin/kubby.app/Contents/Info.plist
+file build/bin/kubby.app/Contents/MacOS/kubby
+lipo -archs build/bin/kubby.app/Contents/MacOS/kubby
+du -sh build/bin/kubby.app
+```
+
+`file` must report a Mach-O arm64 executable, `lipo` must report `arm64`, and the
+bundle's `Info.plist` must be valid. To retain a transferable artifact, package
+the entire `.app` before checksumming; do not upload only `Contents/MacOS/kubby`:
+
+```bash
+ditto -c -k --sequesterRsrc --keepParent build/bin/kubby.app build/bin/kubby-macos-arm64.zip
+shasum -a 256 build/bin/kubby-macos-arm64.zip
+```
 
 Record the retained artifact's target, size, timestamp, and SHA-256 in the build
 report. Do not claim GUI behaviour from a headless check.
@@ -253,6 +302,13 @@ WebView2 rendering, cluster connection, and the changed UI workflow. Native
 dialog click automation is unreliable on this machine, so record the manual
 check rather than claiming it from a headless session.
 
+Before a macOS release, open `kubby.app` from Finder on an Apple Silicon Mac
+and visually check startup, WebKit rendering, file picker, kubeconfig connection,
+Cmd shortcuts, clipboard, Logs, Terminal, and Port Forward. Exercise a confirmed
+write only on a disposable cluster. A macOS CI build or browser test does not
+replace this native check. Record the macOS version and the result for each
+workflow; until this check passes, mark the bundle as an unverified preview.
+
 For Kubernetes-backed behaviour, use the corresponding read-only `kubby-cli`
 command described in [`../src/kubby/docs/verification.md`](../src/kubby/docs/verification.md).
 
@@ -260,6 +316,11 @@ command described in [`../src/kubby/docs/verification.md`](../src/kubby/docs/ver
 
 This section is the release checklist. Complete sections 1–8 first; a successful
 `go build`, frontend bundle, or cross-build alone is not release readiness.
+The asset staging and upload commands below currently cover only Windows. Do not
+attach a macOS bundle to a stable release through that Windows-only procedure.
+Before distributing macOS builds outside a small test group, add a documented
+Developer ID signing, Apple notarization, staple, Gatekeeper verification, and
+artifact upload procedure, then complete the native checks in section 8.
 
 ### 9.1 Freeze and audit the release commit
 

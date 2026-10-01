@@ -97,7 +97,8 @@ RBAC probes and API errors describe what it may access afterwards.
 
 ## Recent connections
 
-`recent.go` persists to `%AppData%/kubby/recent.json`.
+`recent.go` persists to `kubby/recent.json` under `os.UserConfigDir()`
+(`%AppData%` on Windows, `~/Library/Application Support` on macOS).
 
 Kubeconfigs are not passive data. Before creating a transport, `New` and
 `NewFromContent` validate only the selected context and reject exec/auth-provider

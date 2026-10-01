@@ -18,7 +18,7 @@ A **personal Kubernetes desktop app**: open it, load a `kubeconfig`, and immedia
 
 The canonical dependency and full-build procedure is maintained at the
 repository level in [`../../docs/BUILD.md`](../../docs/BUILD.md). It covers
-native PowerShell, WSL/Linux, Windows cross-builds, verification, and artifact
+native PowerShell, WSL/Linux, macOS, Windows cross-builds, verification, and artifact
 cleanup. Build commands are intentionally not duplicated here.
 
 After preparing the environment from that guide, use `wails dev` for the local
@@ -82,7 +82,7 @@ failing pods keep the next debugging step close by.
 
 **Reporting a problem.** **⚙ Settings → About** shows the exact build you are running, and **Copy diagnostics** puts a report on your clipboard: version, platform, the connected cluster's Kubernetes version and capabilities (nodes, API groups, CRD kinds, whether metrics-server is there), the AI provider in use, and the last error shown. Kubby never reads the configured API key or kubeconfig content into that report and redacts common credential patterns, but a free-form server error can still contain resource-derived details. The report is headed **review before sharing**; inspect it before posting. The same information from the CLI: `kubby-cli --version` and `kubby-cli diagnostics`.
 
-**Navigate fast.** Multi-cluster dropdown (+ Add cluster, disconnect), **Command palette (Ctrl+K)** for views/namespaces/clusters/actions and **global resource search** (type a name, jump straight to it), **Live** auto-refresh, **dark mode** (Nord theme), and recent-connection reconnect on Welcome.
+**Navigate fast.** Multi-cluster dropdown (+ Add cluster, disconnect), **Command palette (Ctrl/Cmd+K)** for views/namespaces/clusters/actions and **global resource search** (type a name, jump straight to it), **Live** auto-refresh, **dark mode** (Nord theme), and recent-connection reconnect on Welcome.
 
 **Traffic flow** (Network → Traffic flow): where a request actually ends up. Each path is laid out in lanes — **Route → Service → Pods** — with the host/path rules, the service type and ports, and every backing pod's readiness. Summary tiles count entry points, routed vs. internal services, endpoint pods, and **broken paths**; a hop that goes nowhere (Service missing, selector matching nothing, no ready Pod) is flagged at the hop that breaks. Filter by entry point/host/service/pod name, or tick **Only show broken paths**. Every node opens its drawer.
 
@@ -119,7 +119,7 @@ Open any resource and pick the **Ask AI** tab. It is a conversation about *that*
 
 **Answer language** is a setting too: match the question (default), always English, or always Vietnamese.
 
-The config — including the key — is stored only on this machine at `%AppData%/kubby/ai.json`. Kubby requests mode `0600` where the OS supports Unix permission bits; on Windows, confidentiality depends on the inherited ACL of your user profile. Ollama endpoints must resolve to loopback and AI requests never follow redirects; other resource evidence goes only to the provider you chose. Answers can still be wrong: verify before acting on one.
+The config — including the key — is stored only on this machine at `kubby/ai.json` under the OS user config directory (`%AppData%` on Windows; `~/Library/Application Support` on macOS). Kubby requests mode `0600` where the OS supports Unix permission bits; on Windows, confidentiality depends on the inherited ACL of your user profile. Ollama endpoints must resolve to loopback and AI requests never follow redirects; other resource evidence goes only to the provider you chose. Answers can still be wrong: verify before acting on one.
 
 ## `kubby-cli` (developer aid)
 
