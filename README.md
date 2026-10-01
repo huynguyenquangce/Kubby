@@ -15,7 +15,7 @@ command.
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Agent--less-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
 ![Platforms](https://img.shields.io/badge/Builds-Windows%20%7C%20Linux-4C566A?style=flat-square)
 
-[Build Kubby](docs/BUILD.md) · [Product specification](docs/SPECIFICATION.md) · [Architecture](src/kubby/ARCHITECTURE.md) · [Developer verification](src/kubby/docs/verification.md)
+[Product website](https://kubby-landing.vercel.app/) · [Build Kubby](docs/BUILD.md) · [Product specification](docs/SPECIFICATION.md) · [Architecture](src/kubby/ARCHITECTURE.md) · [Developer verification](src/kubby/docs/verification.md)
 
 </div>
 
