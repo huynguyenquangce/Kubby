@@ -359,5 +359,5 @@ test('Why Pending leads with the verdict and keeps the simulation limits visible
 test('a view change abandons the previous screen reads before starting new ones', () => {
     // Awaited, so the reads started below are never the ones cancelled.
     assert.match(mainJS, /viewLoadsInFlight > 0[\s\S]*?CancelViewReads\(\)/);
-    assert.match(mainJS, /const p = abandoned\.then\(\(\) => doRefresh\(scope\)\)/);
+    assert.match(mainJS, /const p = abandoned\.then\(\(\) => isCurrentViewRequest\(scope\) \? doRefresh\(scope\) : undefined\)/);
 });

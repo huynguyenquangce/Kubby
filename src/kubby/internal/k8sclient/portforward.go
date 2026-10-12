@@ -3,31 +3,38 @@ package k8sclient
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
-	"net/url"
 	"sort"
 	"sync"
+	"time"
 
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	streamspdy "k8s.io/apimachinery/pkg/util/httpstream/spdy"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 )
 
 // PortForwardSession is one active local→pod forward. Close() stops it.
 type PortForwardSession struct {
-	LocalPort  int
-	RemotePort int
-	PodName    string
-	Namespace  string
-	stopCh     chan struct{}
-	closeOnce  sync.Once
+	LocalPort       int
+	RemotePort      int
+	PodName         string
+	Namespace       string
+	stopCh          chan struct{}
+	closeOnce       sync.Once
+	cancelHandshake context.CancelFunc
 }
 
 // Close tears down the forward.
 func (s *PortForwardSession) Close() {
 	s.closeOnce.Do(func() {
+		if s.cancelHandshake != nil {
+			s.cancelHandshake()
+		}
 		if s.stopCh != nil {
 			close(s.stopCh)
 		}
@@ -118,13 +125,44 @@ func StartPortForward(ctx context.Context, c *Cluster, kind, namespace, name str
 		Resource("pods").Namespace(namespace).Name(podName).
 		SubResource("portforward").URL()
 
-	transport, upgrader, err := spdy.RoundTripperFor(c.Rest)
+	// SPDY's raw ReadResponse does not observe request cancellation after Dial.
+	// Track the underlying socket so cancellation also unblocks header reads.
+	handshakeCtx, cancelHandshake := context.WithCancel(context.Background())
+	config := rest.CopyConfig(c.Rest)
+	originalDial := config.Dial
+	config.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		var conn net.Conn
+		var err error
+		if originalDial != nil {
+			conn, err = originalDial(ctx, network, address)
+		} else {
+			conn, err = (&net.Dialer{Timeout: 30 * time.Second}).DialContext(ctx, network, address)
+		}
+		if err != nil {
+			return nil, err
+		}
+		stop := context.AfterFunc(handshakeCtx, func() { _ = conn.Close() })
+		return &portForwardConn{Conn: conn, stop: stop}, nil
+	}
+	base, err := rest.TransportFor(config)
 	if err != nil {
+		cancelHandshake()
 		return nil, nil, nil, err
 	}
-	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, http.MethodPost, &url.URL{
-		Scheme: reqURL.Scheme, Host: reqURL.Host, Path: reqURL.Path,
+	upgrader, err := streamspdy.NewRoundTripperWithConfig(streamspdy.RoundTripperConfig{
+		UpgradeTransport: base, PingPeriod: 5 * time.Second,
 	})
+	if err != nil {
+		cancelHandshake()
+		return nil, nil, nil, err
+	}
+	transport, err := rest.HTTPWrappersForConfig(config, upgrader)
+	if err != nil {
+		cancelHandshake()
+		return nil, nil, nil, err
+	}
+	// Startup belongs to the caller; a ready tunnel belongs to its manager.
+	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: &portForwardTransport{base: transport, ctx: handshakeCtx}}, http.MethodPost, reqURL)
 
 	stopCh := make(chan struct{})
 	readyCh := make(chan struct{})
@@ -133,16 +171,39 @@ func StartPortForward(ctx context.Context, c *Cluster, kind, namespace, name str
 	ports := []string{fmt.Sprintf("%d:%d", localPort, remotePort)}
 	fw, err := portforward.New(dialer, ports, stopCh, readyCh, nil, nil)
 	if err != nil {
+		cancelHandshake()
 		return nil, nil, nil, err
 	}
 
 	session := &PortForwardSession{
-		RemotePort: remotePort, PodName: podName, Namespace: namespace, stopCh: stopCh,
+		RemotePort: remotePort, PodName: podName, Namespace: namespace, stopCh: stopCh, cancelHandshake: cancelHandshake,
 	}
 
 	go func() {
+		defer session.Close()
 		// Always send the result (nil on clean Close) so readers unblock.
 		errCh <- fw.ForwardPorts()
+	}()
+
+	go func() {
+		timer := time.NewTimer(15 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-readyCh: // startup ownership ends; keep the established tunnel alive
+		case <-stopCh:
+		case <-ctx.Done():
+			select {
+			case <-readyCh:
+			default:
+				session.Close()
+			}
+		case <-timer.C:
+			select {
+			case <-readyCh:
+			default:
+				session.Close()
+			}
+		}
 	}()
 
 	// Fill in the actually-bound local port once ready, then re-signal readiness.
@@ -161,3 +222,22 @@ func StartPortForward(ctx context.Context, c *Cluster, kind, namespace, name str
 
 	return session, proxyReady, errCh, nil
 }
+
+// spdy.NewDialer creates a request without context. Bind the HTTP upgrade to
+// the session's cancellable startup context at the transport boundary.
+type portForwardTransport struct {
+	base http.RoundTripper
+	ctx  context.Context
+}
+
+func (t *portForwardTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return t.base.RoundTrip(req.WithContext(t.ctx))
+}
+
+// Release the cancellation registration on normal transport close too.
+type portForwardConn struct {
+	net.Conn
+	stop func() bool
+}
+
+func (c *portForwardConn) Close() error { c.stop(); return c.Conn.Close() }

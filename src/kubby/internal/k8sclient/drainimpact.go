@@ -102,7 +102,7 @@ func blockingBudget(pdb *policyv1.PodDisruptionBudget, pods []*corev1.Pod) *Drai
 		return nil
 	}
 	selector, err := metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
-	if err != nil || selector.Empty() {
+	if err != nil {
 		return nil
 	}
 	covered := 0

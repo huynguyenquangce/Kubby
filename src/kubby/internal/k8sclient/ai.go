@@ -41,7 +41,7 @@ const (
 
 var (
 	bearerSecretPattern   = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
-	keyValueSecretPattern = regexp.MustCompile(`(?i)\b(password|passwd|token|api[_-]?key|client[_-]?secret|authorization)\s*[:=]\s*("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)`)
+	keyValueSecretPattern = regexp.MustCompile(`(?i)\b(password|passwd|token|api[_-]?key|client[_-]?secret|authorization)[\\"']*\s*[:=]\s*("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)`)
 	uriSecretPattern      = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://)[^/\s:@]+:[^@\s/]+@`)
 	sensitiveYAMLKey      = regexp.MustCompile(`(?i)(^|[./_-])(([a-z0-9]+[_-])?(password|passwd|token|secret)|api[_-]?key|client[_-]?secret|authorization|auth|credentials?|private[_-]?key|access[_-]?key|secret[_-]?key|database[_-]?url|db[_-]?url|connection[_-]?string)$`)
 	camelKeyBoundary      = regexp.MustCompile(`([a-z0-9])([A-Z])`)
@@ -185,6 +185,13 @@ func redactDiagnosticYAML(text string) string {
 				}
 				doc[field] = redacted
 			}
+		}
+	}
+	// kubectl stores a second, serialized copy of the original manifest here.
+	// Drop it before redaction: opaque JSON can carry Secret and env values.
+	if metadata, ok := doc["metadata"].(map[string]interface{}); ok {
+		if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
+			delete(annotations, "kubectl.kubernetes.io/last-applied-configuration")
 		}
 	}
 	redactLiteralEnvValues(doc)

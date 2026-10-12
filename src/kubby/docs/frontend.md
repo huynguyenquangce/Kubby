@@ -448,3 +448,14 @@ npx esbuild src/main.js --bundle --outfile=NUL   # syntax + imports resolve
 plus a script cross-checking every `$('id')` in `main.js` against the ids present
 in `index.html`. Both have caught real breakage. Behavioural checks need a human
 looking at the window.
+
+## Resource table ownership
+
+Bulk selection uses the logical filtered rows, including matching rows outside
+the rendered viewport; detached non-matches are never selected by Select all.
+Virtual tables retain their comparator across paging and refresh. Sorting uses
+full quantities/durations instead of numeric prefixes; resource names remain text.
+When a focused row moves outside the rendered window, focus transfers to the table
+without scrolling, keeping the DOM bounded. Traffic canvases and their cached
+snapshot/policies clear immediately when the connection or namespace changes.
+Loader failures must call `viewError` so freshness cannot announce success.

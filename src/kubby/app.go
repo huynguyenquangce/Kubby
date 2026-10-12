@@ -32,9 +32,12 @@ type App struct {
 	connectionEpoch    uint64
 	portForwardStarter portForwardStarter
 	execStarter        execStarter
+	logStreamer        logStreamer
+	logEmitter         func(string, any)
 	logMu              sync.Mutex
 	logCancel          context.CancelFunc // cancels the active log stream, if any
-	logEpoch           uint64             // invalidates callbacks from an older stream
+	logStreamID        string
+	logEpoch           uint64 // invalidates callbacks from an older stream
 	pfMu               sync.Mutex
 	pfSessions         map[string]*portForwardEntry
 	pfPending          map[string]*pendingPortForward
@@ -43,7 +46,8 @@ type App struct {
 	execMu             sync.Mutex
 	execSess           *k8sclient.ExecSession // the active exec session, if any
 	execCancel         context.CancelFunc     // also cancels shell discovery before a session exists
-	execEpoch          uint64                 // invalidates callbacks from an older shell
+	execSessionID      string
+	execEpoch          uint64 // invalidates callbacks from an older shell
 	recentMu           sync.Mutex
 	recentPath         func() (string, error)
 	helmMu             sync.Mutex
@@ -63,6 +67,8 @@ type drawerRead struct {
 }
 
 type portForwardStarter func(context.Context, *k8sclient.Cluster, string, string, string, int, int) (*k8sclient.PortForwardSession, <-chan struct{}, <-chan error, error)
+type logStreamer func(context.Context, *k8sclient.Cluster, string, string, string, func([]string)) error
+
 type execStarter func(context.Context, *k8sclient.Cluster, string, string, string, string, int, int, func(string), func(error)) (*k8sclient.ExecSession, string, error)
 
 type clusterEntry struct {
@@ -80,6 +86,7 @@ func NewApp() *App {
 		clusters:           map[string]*clusterEntry{},
 		portForwardStarter: k8sclient.StartPortForward,
 		execStarter:        k8sclient.StartExec,
+		logStreamer:        k8sclient.StreamLogs,
 		recentPath:         recentFilePath,
 		helmOps:            map[uint64]context.CancelFunc{},
 		drawerReads:        map[string]*drawerRead{},
@@ -95,8 +102,8 @@ func (a *App) shutdown(context.Context) {
 	a.cancelAllDrawerSnapshots()
 	a.cancelViewReads()
 	a.cancelHelmOperations()
-	a.StopLogStream()
-	a.StopExec()
+	a.stopAllLogStreams()
+	a.stopExec()
 	a.stopAllPortForwards()
 }
 
@@ -178,8 +185,8 @@ func (a *App) storeVerifiedCluster(name string, cluster *k8sclient.Cluster) *clu
 	// Invalidate all lifecycle state before publishing the replacement active
 	// connection. New starts cannot interleave because they also reserve through
 	// transitionMu.
-	a.StopLogStream()
-	a.StopExec()
+	a.stopAllLogStreams()
+	a.stopExec()
 	a.stopAllPortForwards()
 	a.cancelHelmOperations()
 	a.cancelAllDrawerSnapshots()
@@ -245,8 +252,8 @@ func (a *App) SwitchCluster(id string) error {
 		return fmt.Errorf("connection %q is not connected", id)
 	}
 	// Stop anything tied to the previous cluster.
-	a.StopLogStream()
-	a.StopExec()
+	a.stopAllLogStreams()
+	a.stopExec()
 	a.stopAllPortForwards()
 	a.cancelHelmOperations()
 	a.cancelAllDrawerSnapshots()
@@ -273,8 +280,8 @@ func (a *App) DisconnectCluster(id string) string {
 		return activeID
 	}
 	if id == activeID {
-		a.StopLogStream()
-		a.StopExec()
+		a.stopAllLogStreams()
+		a.stopExec()
 		a.stopAllPortForwards()
 		a.cancelHelmOperations()
 		a.cancelAllDrawerSnapshots()
@@ -874,7 +881,9 @@ func (a *App) ChartDetails(repo, chartName string) (*k8sclient.ChartDetail, erro
 	return k8sclient.ChartDetails(a.ctx, repo, chartName)
 }
 func (a *App) ChartDefaultValues(repoURL, repoName, chartName, version string) (string, error) {
-	return k8sclient.ChartDefaultValues(repoURL, repoName, chartName, version)
+	ctx, cancel := context.WithTimeout(a.ctx, 30*time.Second)
+	defer cancel()
+	return k8sclient.ChartDefaultValues(ctx, repoURL, repoName, chartName, version)
 }
 func (a *App) HelmInstallPreview(namespace, releaseName, repoURL, repoName, chartName, version, valuesYAML string) (*k8sclient.HelmDiff, error) {
 	ctx, cluster, done, err := a.beginHelmOperation("")
@@ -932,13 +941,13 @@ func (a *App) ListHelmRepos() ([]k8sclient.HelmRepo, error) {
 	return k8sclient.ListHelmRepos()
 }
 func (a *App) AddHelmRepo(name, url, username, password string) error {
-	return k8sclient.AddHelmRepo(name, url, username, password)
+	return k8sclient.AddHelmRepo(a.ctx, name, url, username, password)
 }
 func (a *App) RemoveHelmRepo(name string) error {
 	return k8sclient.RemoveHelmRepo(name)
 }
 func (a *App) UpdateHelmRepos() error {
-	return k8sclient.UpdateHelmRepos()
+	return k8sclient.UpdateHelmRepos(a.ctx)
 }
 func (a *App) BrowseHelmRepo(name string) ([]k8sclient.ChartSearchResult, error) {
 	return k8sclient.BrowseHelmRepo(name)
@@ -1314,20 +1323,50 @@ func (a *App) StartLogStream(namespace, name, container, streamID string) error 
 	epoch := a.logEpoch
 	ctx, cancel := context.WithCancel(a.ctx)
 	a.logCancel = cancel
+	a.logStreamID = streamID
 	a.logMu.Unlock()
 	a.transitionMu.Unlock()
 
 	go func() {
-		err := k8sclient.StreamLogs(ctx, cluster, namespace, name, container, func(lines []string) {
+		defer cancel()
+		err := a.logStreamer(ctx, cluster, namespace, name, container, func(lines []string) {
 			if a.isCurrentLogStream(epoch) {
-				wailsruntime.EventsEmit(a.ctx, "loglines", LogStreamBatch{StreamID: streamID, Lines: lines})
+				a.emitLogEvent("loglines", LogStreamBatch{StreamID: streamID, Lines: lines})
 			}
 		})
-		if err != nil && ctx.Err() == nil && a.isCurrentLogStream(epoch) {
-			wailsruntime.EventsEmit(a.ctx, "logerror", LogStreamError{StreamID: streamID, Message: err.Error()})
+		naturalEnd := ctx.Err() == nil
+		if !a.finishLogStream(epoch) || !naturalEnd {
+			return
+		}
+		if err != nil {
+			a.emitLogEvent("logerror", LogStreamError{StreamID: streamID, Message: err.Error()})
+		} else {
+			a.emitLogEvent("logclosed", LogStreamError{StreamID: streamID})
 		}
 	}()
 	return nil
+}
+
+func (a *App) emitLogEvent(name string, payload any) {
+	if a.logEmitter != nil {
+		a.logEmitter(name, payload)
+		return
+	}
+	wailsruntime.EventsEmit(a.ctx, name, payload)
+}
+
+// Completion can release only its own stream; old EOF/cancellation must never
+// clear a replacement stream or announce its completion.
+func (a *App) finishLogStream(epoch uint64) bool {
+	a.logMu.Lock()
+	defer a.logMu.Unlock()
+	if a.logEpoch != epoch || a.logCancel == nil {
+		return false
+	}
+	a.logCancel()
+	a.logCancel = nil
+	a.logStreamID = ""
+	return true
 }
 
 func (a *App) isCurrentLogStream(epoch uint64) bool {
@@ -1337,9 +1376,23 @@ func (a *App) isCurrentLogStream(epoch uint64) bool {
 }
 
 // StopLogStream cancels the active log stream, if any.
-func (a *App) StopLogStream() {
+func (a *App) StopLogStream(streamID string) {
 	a.logMu.Lock()
 	defer a.logMu.Unlock()
+	if streamID == "" || a.logStreamID != streamID {
+		return
+	}
+	a.stopLogStreamLocked()
+}
+
+func (a *App) stopAllLogStreams() {
+	a.logMu.Lock()
+	defer a.logMu.Unlock()
+	a.stopLogStreamLocked()
+}
+
+func (a *App) stopLogStreamLocked() {
+	a.logStreamID = ""
 	a.logEpoch++
 	if a.logCancel != nil {
 		a.logCancel()
@@ -1357,7 +1410,7 @@ func (a *App) SaveTextToFile(defaultName, content string) (string, error) {
 	if err != nil || path == "" {
 		return "", err
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := writePrivateText(path, content); err != nil {
 		return "", err
 	}
 	return path, nil
@@ -1379,7 +1432,7 @@ func (a *App) SaveIncidentReport(reportJSON string) (string, error) {
 	if err != nil || path == "" {
 		return "", err
 	}
-	if err := os.WriteFile(path, []byte(k8sclient.FormatIncidentMarkdown(&report)), 0o644); err != nil {
+	if err := writePrivateText(path, redactDiagnosticsError(k8sclient.FormatIncidentMarkdown(&report), loadAIConfig().APIKey)); err != nil {
 		return "", err
 	}
 	return path, nil
@@ -1748,6 +1801,7 @@ func (a *App) StartExec(sessionID, namespace, pod, container, shell string, cols
 	execCtx, execCancel := context.WithCancel(a.ctx)
 	a.execSess = nil
 	a.execCancel = execCancel
+	a.execSessionID = sessionID
 	a.execEpoch++
 	epoch := a.execEpoch
 	a.execMu.Unlock()
@@ -1781,6 +1835,7 @@ func (a *App) StartExec(sessionID, namespace, pod, container, shell string, cols
 			cancel := a.execCancel
 			a.execSess = nil
 			a.execCancel = nil
+			a.execSessionID = ""
 			a.execEpoch++
 			a.execMu.Unlock()
 			if cancel != nil {
@@ -1796,6 +1851,7 @@ func (a *App) StartExec(sessionID, namespace, pod, container, shell string, cols
 		a.execMu.Lock()
 		if a.execEpoch == epoch {
 			a.execCancel = nil
+			a.execSessionID = ""
 			a.execEpoch++
 		}
 		a.execMu.Unlock()
@@ -1815,8 +1871,12 @@ func (a *App) StartExec(sessionID, namespace, pod, container, shell string, cols
 }
 
 // ExecWrite forwards keystrokes to the active exec session's stdin.
-func (a *App) ExecWrite(data string) error {
+func (a *App) ExecWrite(sessionID, data string) error {
 	a.execMu.Lock()
+	if sessionID == "" || sessionID != a.execSessionID {
+		a.execMu.Unlock()
+		return nil
+	}
 	session := a.execSess
 	a.execMu.Unlock()
 	if session == nil {
@@ -1826,8 +1886,12 @@ func (a *App) ExecWrite(data string) error {
 }
 
 // ExecResize propagates xterm's measured dimensions to the active remote PTY.
-func (a *App) ExecResize(cols, rows int) {
+func (a *App) ExecResize(sessionID string, cols, rows int) {
 	a.execMu.Lock()
+	if sessionID == "" || sessionID != a.execSessionID {
+		a.execMu.Unlock()
+		return
+	}
 	session := a.execSess
 	a.execMu.Unlock()
 	if session != nil {
@@ -1836,12 +1900,27 @@ func (a *App) ExecResize(cols, rows int) {
 }
 
 // StopExec ends the active exec session, if any.
-func (a *App) StopExec() {
+func (a *App) StopExec(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	a.stopExecOwned(sessionID)
+}
+
+// Connection transitions own all sessions, including pending shell discovery.
+func (a *App) stopExec() { a.stopExecOwned("") }
+
+func (a *App) stopExecOwned(sessionID string) {
 	a.execMu.Lock()
+	if sessionID != "" && sessionID != a.execSessionID {
+		a.execMu.Unlock()
+		return
+	}
 	session := a.execSess
 	cancel := a.execCancel
 	a.execSess = nil
 	a.execCancel = nil
+	a.execSessionID = ""
 	a.execEpoch++
 	a.execMu.Unlock()
 	if cancel != nil {
@@ -1850,4 +1929,23 @@ func (a *App) StopExec() {
 	if session != nil {
 		session.Close()
 	}
+}
+
+// Tighten an existing export before replacing its sensitive contents.
+func writePrivateText(path, text string) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err = file.Chmod(0600); err != nil {
+		return err
+	}
+	if err = file.Truncate(0); err != nil {
+		return err
+	}
+	if _, err = file.WriteString(text); err != nil {
+		return err
+	}
+	return file.Close()
 }

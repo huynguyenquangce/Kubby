@@ -29,7 +29,7 @@ nothing.
 `ExplainScheduling(namespace, name)` returns one report, and the UI renders it in
 the order the answer is read:
 
-1. **Verdict + headline** — `unschedulable`, `fits`, `scheduled` or `unknown`.
+1. **Verdict + headline** — `blocked`, `unschedulable`, `fits`, `scheduled` or `unknown`.
 2. **The scheduler's own message**, from the `PodScheduled=False` condition. It
    is the authority; everything below is Kubby explaining it. Where the
    simulation disagrees (verdict `fits` while the Pod sits Pending) the report
@@ -136,3 +136,13 @@ go run ./cmd/kubby-cli why-pending <pod> -n <ns>
 
 On a disposable cluster, [`../testdata/manual/scheduling.yaml`](../testdata/manual/scheduling.yaml)
 creates Pending Pods for five distinct causes in `kubby-demo-sched`.
+
+Init phases are evaluated in declaration order: an ordinary init container adds
+only restartable sidecars declared before it. Later sidecars cannot reserve
+resources during an earlier phase. The same calculation feeds existing-Pod
+node usage so node fit and requested-resource totals cannot diverge.
+
+Known global PVC blockers lead `blocked` even when node constraints fit or no
+nodes can be evaluated. `NodesFit` remains node-local feasibility. A StorageClass
+read failure carries an unknown-binding warning, never an assumed Immediate
+blocker. WaitForFirstConsumer is still expected Pending state.

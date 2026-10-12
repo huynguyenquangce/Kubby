@@ -1,0 +1,948 @@
+[
+  {
+    "command": "kubby-cli --version",
+    "exit": 0,
+    "seconds": 0.035,
+    "bytes": 65,
+    "status": "pass",
+    "summary": [
+      "Kubby 0.5.1-dev (8a882b6-dirty, 2026-10-01) go1.26.9 linux/amd64"
+    ]
+  },
+  {
+    "command": "kubby-cli diagnostics",
+    "exit": 0,
+    "seconds": 0.163,
+    "bytes": 239,
+    "status": "pass",
+    "summary": [
+      "reachable   true",
+      "server      v1.36.1 (linux/amd64)",
+      "nodes       1",
+      "api groups  23",
+      "CRD kinds   3",
+      "metrics     available (1 node(s) reporting)"
+    ]
+  },
+  {
+    "command": "kubby-cli get pods -n default",
+    "exit": 0,
+    "seconds": 0.045,
+    "bytes": 984,
+    "status": "pass",
+    "summary": [
+      "NAMESPACE  NAME                                               STATUS   RESTARTS  IP           NODE                     AGE",
+      "default    argocd-application-controller-0                    Running  47        10.244.0.8   kubby-dev-control-plane  62d"
+    ]
+  },
+  {
+    "command": "kubby-cli get pods -n kube-system",
+    "exit": 0,
+    "seconds": 0.103,
+    "bytes": 1220,
+    "status": "pass",
+    "summary": [
+      "NAMESPACE    NAME                                             STATUS   RESTARTS  IP          NODE                     AGE",
+      "kube-system  coredns-589f44dc88-9t9tr                         Running  48        10.244.0.2  kubby-dev-control-plane  64d"
+    ]
+  },
+  {
+    "command": "kubby-cli get pods -n kubby-demo-sched",
+    "exit": 0,
+    "seconds": 0.04,
+    "bytes": 928,
+    "status": "pass",
+    "summary": [
+      "NAMESPACE         NAME                           STATUS         RESTARTS  IP           NODE                     AGE",
+      "kubby-demo-sched  missing-claim                  Unschedulable  0                                               22d"
+    ]
+  },
+  {
+    "command": "kubby-cli get pods -n kubby-demo-hygiene",
+    "exit": 0,
+    "seconds": 0.04,
+    "bytes": 432,
+    "status": "pass",
+    "summary": [
+      "NAMESPACE           NAME                       STATUS   RESTARTS  IP           NODE                     AGE",
+      "kubby-demo-hygiene  claim-holder               Running  21        10.244.0.18  kubby-dev-control-plane  22d"
+    ]
+  },
+  {
+    "command": "kubby-cli get namespaces",
+    "exit": 0,
+    "seconds": 0.039,
+    "bytes": 216,
+    "status": "pass",
+    "summary": [
+      "NAME                STATUS",
+      "default             Active"
+    ]
+  },
+  {
+    "command": "kubby-cli get hpas -n default",
+    "exit": 0,
+    "seconds": 0.041,
+    "bytes": 63,
+    "status": "pass",
+    "summary": [
+      "NAMESPACE  NAME  TARGET  REPLICAS  RANGE  METRICS  STATUS  AGE"
+    ]
+  },
+  {
+    "command": "kubby-cli get pdbs -n default",
+    "exit": 0,
+    "seconds": 0.044,
+    "bytes": 55,
+    "status": "pass",
+    "summary": [
+      "NAMESPACE  NAME  BUDGET  ALLOWED  HEALTHY  STATUS  AGE"
+    ]
+  },
+  {
+    "command": "kubby-cli get networkpolicies -n default",
+    "exit": 0,
+    "seconds": 0.039,
+    "bytes": 50,
+    "status": "pass",
+    "summary": [
+      "NAMESPACE  NAME  POD-SELECTOR  TYPES  EFFECT  AGE"
+    ]
+  },
+  {
+    "command": "kubby-cli overview",
+    "exit": 0,
+    "seconds": 0.048,
+    "bytes": 91,
+    "status": "pass",
+    "summary": [
+      "1 nodes, 7 namespaces, 27 pods, 12 deployments, 3 failing · 8 top pods, 15 events · 18ms"
+    ]
+  },
+  {
+    "command": "kubby-cli counts",
+    "exit": 0,
+    "seconds": 0.098,
+    "bytes": 882,
+    "status": "pass",
+    "summary": [
+      "27 tallies in 64ms (namespace=\"\", cluster-scoped=true)",
+      "  clusterrolebindings      66"
+    ]
+  },
+  {
+    "command": "kubby-cli counts -n default",
+    "exit": 0,
+    "seconds": 0.051,
+    "bytes": 872,
+    "status": "pass",
+    "summary": [
+      "27 tallies in 21ms (namespace=\"default\", cluster-scoped=true)",
+      "  clusterrolebindings      66"
+    ]
+  },
+  {
+    "command": "kubby-cli counts -n kubby-demo-sched --cluster=false",
+    "exit": 0,
+    "seconds": 0.048,
+    "bytes": 689,
+    "status": "pass",
+    "summary": [
+      "20 tallies in 17ms (namespace=\"kubby-demo-sched\", cluster-scoped=false)",
+      "  configmaps                1"
+    ]
+  },
+  {
+    "command": "kubby-cli ns-summary default",
+    "exit": 0,
+    "seconds": 0.061,
+    "bytes": 310,
+    "status": "pass",
+    "summary": [
+      "Pods           7 (errors 0)",
+      "Deployments    6 (errors 0)"
+    ]
+  },
+  {
+    "command": "kubby-cli ns-summary kubby-demo-hygiene",
+    "exit": 0,
+    "seconds": 0.058,
+    "bytes": 308,
+    "status": "pass",
+    "summary": [
+      "Pods           3 (errors 0)",
+      "Deployments    2 (errors 0)"
+    ]
+  },
+  {
+    "command": "kubby-cli ns-summary kubby-demo-sched",
+    "exit": 0,
+    "seconds": 0.048,
+    "bytes": 308,
+    "status": "pass",
+    "summary": [
+      "Pods           7 (errors 3)",
+      "Deployments    1 (errors 0)"
+    ]
+  },
+  {
+    "command": "kubby-cli node-pods kubby-dev-control-plane",
+    "exit": 0,
+    "seconds": 0.044,
+    "bytes": 2102,
+    "status": "pass",
+    "summary": [
+      "NAMESPACE           NAME                                               STATUS   READY",
+      "default             argocd-application-controller-0                    Running  1/1"
+    ]
+  },
+  {
+    "command": "kubby-cli search argocd",
+    "exit": 0,
+    "seconds": 0.134,
+    "bytes": 3189,
+    "status": "pass",
+    "summary": [
+      "60 hits",
+      "KIND            NAMESPACE  NAME"
+    ]
+  },
+  {
+    "command": "kubby-cli search missing-claim",
+    "exit": 0,
+    "seconds": 0.121,
+    "bytes": 74,
+    "status": "pass",
+    "summary": [
+      "1 hits",
+      "KIND  NAMESPACE         NAME"
+    ]
+  },
+  {
+    "command": "kubby-cli search default",
+    "exit": 0,
+    "seconds": 0.136,
+    "bytes": 444,
+    "status": "pass",
+    "summary": [
+      "9 hits",
+      "KIND            NAMESPACE           NAME"
+    ]
+  },
+  {
+    "command": "kubby-cli search unlikely-kubby-nonexistent-audit",
+    "exit": 0,
+    "seconds": 0.145,
+    "bytes": 29,
+    "status": "pass",
+    "summary": [
+      "0 hits",
+      "KIND  NAMESPACE  NAME"
+    ]
+  },
+  {
+    "command": "kubby-cli custom-kinds",
+    "exit": 0,
+    "seconds": 0.102,
+    "bytes": 270,
+    "status": "pass",
+    "summary": [
+      "3 custom kind(s) in 68ms (3 shown, 0 over the cap)",
+      "  AppProjects              AppProject.argoproj.io             namespaced"
+    ]
+  },
+  {
+    "command": "kubby-cli list-custom Application.argoproj.io -n default",
+    "exit": 0,
+    "seconds": 0.042,
+    "bytes": 12,
+    "status": "pass",
+    "summary": [
+      "0 object(s)"
+    ]
+  },
+  {
+    "command": "kubby-cli list-custom ApplicationSet.argoproj.io -n default",
+    "exit": 0,
+    "seconds": 0.044,
+    "bytes": 12,
+    "status": "pass",
+    "summary": [
+      "0 object(s)"
+    ]
+  },
+  {
+    "command": "kubby-cli list-custom AppProject.argoproj.io -n default",
+    "exit": 0,
+    "seconds": 0.046,
+    "bytes": 84,
+    "status": "pass",
+    "summary": [
+      "1 object(s)",
+      "  default              default                                  62d    "
+    ]
+  },
+  {
+    "command": "kubby-cli drawer Pod coredns-589f44dc88-9t9tr -n kube-system",
+    "exit": 0,
+    "seconds": 0.038,
+    "bytes": 1599,
+    "status": "pass",
+    "summary": {
+      "kind": "Pod",
+      "name": "coredns-589f44dc88-9t9tr",
+      "namespace": "kube-system",
+      "events": 2,
+      "relation": false,
+      "nodePods": 0,
+      "namespaceInfo": 0,
+      "sectionErrors": []
+    }
+  },
+  {
+    "command": "kubby-cli drawer Pod too-much-memory -n kubby-demo-sched",
+    "exit": 0,
+    "seconds": 0.039,
+    "bytes": 1881,
+    "status": "pass",
+    "summary": {
+      "kind": "Pod",
+      "name": "too-much-memory",
+      "namespace": "kubby-demo-sched",
+      "events": 2,
+      "relation": false,
+      "nodePods": 0,
+      "namespaceInfo": 0,
+      "sectionErrors": []
+    }
+  },
+  {
+    "command": "kubby-cli drawer Deployment argocd-server -n default",
+    "exit": 0,
+    "seconds": 0.049,
+    "bytes": 2099,
+    "status": "pass",
+    "summary": {
+      "kind": "Deployment",
+      "name": "argocd-server",
+      "namespace": "default",
+      "events": 0,
+      "relation": true,
+      "nodePods": 0,
+      "namespaceInfo": 0,
+      "sectionErrors": []
+    }
+  },
+  {
+    "command": "kubby-cli drawer Service argocd-server -n default",
+    "exit": 0,
+    "seconds": 0.038,
+    "bytes": 1551,
+    "status": "pass",
+    "summary": {
+      "kind": "Service",
+      "name": "argocd-server",
+      "namespace": "default",
+      "events": 0,
+      "relation": true,
+      "nodePods": 0,
+      "namespaceInfo": 0,
+      "sectionErrors": []
+    }
+  },
+  {
+    "command": "kubby-cli drawer Ingress argocd-server -n default",
+    "exit": 0,
+    "seconds": 0.039,
+    "bytes": 1477,
+    "status": "pass",
+    "summary": {
+      "kind": "Ingress",
+      "name": "argocd-server",
+      "namespace": "default",
+      "events": 0,
+      "relation": true,
+      "nodePods": 0,
+      "namespaceInfo": 0,
+      "sectionErrors": []
+    }
+  },
+  {
+    "command": "kubby-cli drawer Node kubby-dev-control-plane -n default",
+    "exit": 0,
+    "seconds": 0.044,
+    "bytes": 8593,
+    "status": "pass",
+    "summary": {
+      "kind": "Node",
+      "name": "kubby-dev-control-plane",
+      "namespace": "default",
+      "events": 1,
+      "relation": false,
+      "nodePods": 24,
+      "namespaceInfo": 0,
+      "sectionErrors": []
+    }
+  },
+  {
+    "command": "kubby-cli drawer Namespace kubby-demo-hygiene -n default",
+    "exit": 0,
+    "seconds": 0.049,
+    "bytes": 1756,
+    "status": "pass",
+    "summary": {
+      "kind": "Namespace",
+      "name": "kubby-demo-hygiene",
+      "namespace": "default",
+      "events": 0,
+      "relation": false,
+      "nodePods": 0,
+      "namespaceInfo": 11,
+      "sectionErrors": []
+    }
+  },
+  {
+    "command": "kubby-cli drawer AppProject.argoproj.io default -n default",
+    "exit": 0,
+    "seconds": 0.042,
+    "bytes": 690,
+    "status": "pass",
+    "summary": {
+      "kind": "AppProject",
+      "name": "default",
+      "namespace": "default",
+      "events": 0,
+      "relation": false,
+      "nodePods": 0,
+      "namespaceInfo": 0,
+      "sectionErrors": []
+    }
+  },
+  {
+    "command": "kubby-cli yaml Namespace kubby-demo-sched",
+    "exit": 0,
+    "seconds": 0.035,
+    "bytes": 449,
+    "status": "pass",
+    "summary": {
+      "kind": "Namespace",
+      "managedFieldsPresent": false,
+      "statusPresent": false
+    }
+  },
+  {
+    "command": "kubby-cli yaml AppProject.argoproj.io default -n default",
+    "exit": 0,
+    "seconds": 0.038,
+    "bytes": 365,
+    "status": "pass",
+    "summary": {
+      "kind": "AppProject",
+      "managedFieldsPresent": false,
+      "statusPresent": false
+    }
+  },
+  {
+    "command": "kubby-cli events Pod too-much-memory -n kubby-demo-sched",
+    "exit": 0,
+    "seconds": 0.038,
+    "bytes": 420,
+    "status": "pass",
+    "summary": [
+      "TYPE     REASON            AGE  MESSAGE",
+      "Warning  FailedScheduling  1h   0/1 nodes are available: 1 Insufficient memory. no new claims to deallocate, preemption: 0/1 nodes are available: 1 Preemption is not helpful for scheduling."
+    ]
+  },
+  {
+    "command": "kubby-cli logs coredns-589f44dc88-9t9tr -n kube-system --tail 10",
+    "exit": 0,
+    "seconds": 0.047,
+    "bytes": 1654,
+    "status": "pass",
+    "summary": {
+      "lines": 10,
+      "content": "suppressed"
+    }
+  },
+  {
+    "command": "kubby-cli logs coredns-589f44dc88-9t9tr -n kube-system --tail 10 --previous",
+    "exit": 0,
+    "seconds": 0.037,
+    "bytes": 598,
+    "status": "pass",
+    "summary": {
+      "lines": 10,
+      "content": "suppressed"
+    }
+  },
+  {
+    "command": "kubby-cli containers coredns-589f44dc88-9t9tr -n kube-system",
+    "exit": 0,
+    "seconds": 0.033,
+    "bytes": 141,
+    "status": "pass",
+    "summary": [
+      "CONTAINER  READY  STATE    RESTARTS  LAST-EXIT          AGO  PREVIOUS-LOGS",
+      "coredns    true   Running  48        Unknown, exit 255  1h   true"
+    ]
+  },
+  {
+    "command": "kubby-cli structure",
+    "exit": 0,
+    "seconds": 0.048,
+    "bytes": 93,
+    "status": "pass",
+    "summary": [
+      "1 entry points, 15 internal services, 11 unexposed workloads · 27 pods, 3 unhealthy · 19ms"
+    ]
+  },
+  {
+    "command": "kubby-cli netflows",
+    "exit": 0,
+    "seconds": 0.042,
+    "bytes": 3045,
+    "status": "pass",
+    "summary": [
+      "1 entry point(s) (1 Ingress, 0 Istio Gateway), 15 internal service(s), 1 routed service(s), 11 endpoint pod(s), 2 warning(s)"
+    ]
+  },
+  {
+    "command": "kubby-cli structure -n default",
+    "exit": 0,
+    "seconds": 0.043,
+    "bytes": 91,
+    "status": "pass",
+    "summary": [
+      "1 entry points, 11 internal services, 0 unexposed workloads · 7 pods, 0 unhealthy · 15ms"
+    ]
+  },
+  {
+    "command": "kubby-cli netflows -n default",
+    "exit": 0,
+    "seconds": 0.041,
+    "bytes": 2363,
+    "status": "pass",
+    "summary": [
+      "1 entry point(s) (1 Ingress, 0 Istio Gateway), 11 internal service(s), 1 routed service(s), 7 endpoint pod(s), 1 warning(s)"
+    ]
+  },
+  {
+    "command": "kubby-cli structure -n kubby-demo-hygiene",
+    "exit": 0,
+    "seconds": 0.042,
+    "bytes": 90,
+    "status": "pass",
+    "summary": [
+      "0 entry points, 2 internal services, 2 unexposed workloads · 3 pods, 0 unhealthy · 16ms"
+    ]
+  },
+  {
+    "command": "kubby-cli netflows -n kubby-demo-hygiene",
+    "exit": 0,
+    "seconds": 0.043,
+    "bytes": 412,
+    "status": "pass",
+    "summary": [
+      "0 entry point(s) (0 Ingress, 0 Istio Gateway), 2 internal service(s), 0 routed service(s), 1 endpoint pod(s), 1 warning(s)"
+    ]
+  },
+  {
+    "command": "kubby-cli checks",
+    "exit": 0,
+    "seconds": 0.074,
+    "bytes": 539,
+    "status": "pass",
+    "summary": [
+      "== Admission webhooks: 0 critical, 0 warning",
+      "== Certificates: 0 critical, 0 warning (cert-manager installed: false)",
+      "== Stuck deletions: 0 critical, 0 warning (62 resource types scanned, 0 failed)"
+    ]
+  },
+  {
+    "command": "kubby-cli hygiene",
+    "exit": 0,
+    "seconds": 0.047,
+    "bytes": 4896,
+    "status": "pass",
+    "summary": [
+      "== Cluster hygiene: 16 item(s) in all namespaces",
+      ""
+    ]
+  },
+  {
+    "command": "kubby-cli checks -n kubby-demo-hygiene",
+    "exit": 0,
+    "seconds": 0.057,
+    "bytes": 539,
+    "status": "pass",
+    "summary": [
+      "== Admission webhooks: 0 critical, 0 warning",
+      "== Certificates: 0 critical, 0 warning (cert-manager installed: false)",
+      "== Stuck deletions: 0 critical, 0 warning (34 resource types scanned, 0 failed)"
+    ]
+  },
+  {
+    "command": "kubby-cli hygiene -n kubby-demo-hygiene",
+    "exit": 0,
+    "seconds": 0.041,
+    "bytes": 3069,
+    "status": "pass",
+    "summary": [
+      "== Cluster hygiene: 5 item(s) in namespace kubby-demo-hygiene",
+      "-- Unreferenced ConfigMaps (1) [unused-configmap]",
+      "-- Unreferenced Secrets (1) [unused-secret]",
+      "-- Claims no Pod mounts (0) [unused-pvc]",
+      "-- Services with no ready endpoint (1) [service-without-endpoints]",
+      "-- Old empty ReplicaSets (1) [old-replicaset]",
+      "-- Jobs that finished long ago (0) [finished-job]",
+      "-- Pods left in a finished state (0) [finished-pod]",
+      "-- Images that are not pinned (1) [unpinned-image]"
+    ],
+    "semantic_assertions": {
+      "orphan-config": true,
+      "orphan-secret": true,
+      "dead-service": true,
+      "used-config-excluded": true,
+      "registry-secret-excluded": true,
+      "stateful-pvc-excluded": true,
+      "live-service-excluded": true,
+      "mounted-pvc-excluded": true
+    }
+  },
+  {
+    "command": "kubby-cli sizing",
+    "exit": 0,
+    "seconds": 0.041,
+    "bytes": 6295,
+    "status": "pass",
+    "summary": [
+      "note: metrics-server returned 24 of 27 live container metrics (88% coverage), so aggregate usage and downsizing advice are withheld.",
+      "27 pods, 27 containers · requests CPU 1.77 / mem 902.0Gi · usage CPU — / mem —"
+    ]
+  },
+  {
+    "command": "kubby-cli sizing -n kube-system",
+    "exit": 0,
+    "seconds": 0.039,
+    "bytes": 2362,
+    "status": "pass",
+    "summary": [
+      "9 pods, 9 containers · requests CPU 1.05 / mem 490Mi · usage CPU 105m / mem 779Mi",
+      "allocatable over 1 ready node(s): CPU 12.00 / mem 6.7Gi — requests are 8% of CPU, 7% of memory"
+    ]
+  },
+  {
+    "command": "kubby-cli sizing -n kubby-demo-sched",
+    "exit": 0,
+    "seconds": 0.039,
+    "bytes": 2579,
+    "status": "pass",
+    "summary": [
+      "note: metrics-server returned 4 of 7 live container metrics (57% coverage), so aggregate usage and downsizing advice are withheld.",
+      "7 pods, 7 containers · requests CPU 100m / mem 900.0Gi · usage CPU — / mem —"
+    ]
+  },
+  {
+    "command": "kubby-cli why-pending too-much-memory -n kubby-demo-sched",
+    "exit": 0,
+    "seconds": 0.051,
+    "bytes": 1558,
+    "status": "pass",
+    "summary": [
+      "kubby-demo-sched/too-much-memory — Pending (unschedulable)",
+      "No node fits: 0/1 nodes are available: 1 insufficient memory.",
+      "requests: cpu=100m memory=900.0Gi"
+    ],
+    "semantic_assertion": true
+  },
+  {
+    "command": "kubby-cli why-pending wrong-labels -n kubby-demo-sched",
+    "exit": 0,
+    "seconds": 0.044,
+    "bytes": 1708,
+    "status": "pass",
+    "summary": [
+      "kubby-demo-sched/wrong-labels — Pending (unschedulable)",
+      "No node fits: 0/1 nodes are available: 1 labels do not match nodeselector or node affinity.",
+      "  [critical] The scheduler reports: Unschedulable — 0/1 nodes are available: 1 node(s) didn't match Pod's node affinity/selector. no new claims to deallocate, preemption: 0/1 nodes are available: 1 Preemption is not helpful for scheduling."
+    ],
+    "semantic_assertion": true
+  },
+  {
+    "command": "kubby-cli why-pending missing-claim -n kubby-demo-sched",
+    "exit": 0,
+    "seconds": 0.062,
+    "bytes": 1388,
+    "status": "pass",
+    "summary": [
+      "kubby-demo-sched/missing-claim — Pending (blocked)",
+      "Storage blocks scheduling: PersistentVolumeClaim claim-that-does-not-exist does not exist.",
+      "  [critical] The scheduler reports: Unschedulable — 0/1 nodes are available: persistentvolumeclaim \"claim-that-does-not-exist\" not found. not found"
+    ],
+    "semantic_assertion": true
+  },
+  {
+    "command": "kubby-cli why-pending no-toleration -n kubby-demo-sched",
+    "exit": 0,
+    "seconds": 0.047,
+    "bytes": 311,
+    "status": "pass",
+    "summary": [
+      "kubby-demo-sched/no-toleration — Running (scheduled)",
+      "Scheduling is done: this Pod runs on kubby-dev-control-plane.",
+      "note: Read-only: this explains the cluster, it never schedules or evicts anything."
+    ],
+    "semantic_assertion": true
+  },
+  {
+    "command": "kubby-cli investigate Pod too-much-memory -n kubby-demo-sched",
+    "exit": 0,
+    "seconds": 0.037,
+    "bytes": 1878,
+    "status": "pass",
+    "summary": [
+      "- State: critical",
+      "- Summary: Pod cannot be scheduled"
+    ]
+  },
+  {
+    "command": "kubby-cli investigate Pod missing-claim -n kubby-demo-sched",
+    "exit": 0,
+    "seconds": 0.037,
+    "bytes": 1566,
+    "status": "pass",
+    "summary": [
+      "- State: critical",
+      "- Summary: Pod cannot be scheduled"
+    ]
+  },
+  {
+    "command": "kubby-cli investigate Pod coredns-589f44dc88-9t9tr -n kube-system",
+    "exit": 0,
+    "seconds": 0.038,
+    "bytes": 1665,
+    "status": "pass",
+    "summary": [
+      "- State: warning",
+      "- Summary: Unhealthy"
+    ]
+  },
+  {
+    "command": "kubby-cli investigate Deployment argocd-server -n default",
+    "exit": 0,
+    "seconds": 0.042,
+    "bytes": 547,
+    "status": "pass",
+    "summary": [
+      "- State: healthy",
+      "- Summary: No warning Events are currently retained for this resource."
+    ]
+  },
+  {
+    "command": "kubby-cli netpol-check coredns-589f44dc88-9t9tr Service/kube-dns -n kube-system --port 53 --protocol UDP",
+    "exit": 0,
+    "seconds": 0.041,
+    "bytes": 907,
+    "status": "pass",
+    "summary": [
+      "ALLOWED: NetworkPolicy allows kube-system/coredns-589f44dc88-9t9tr to reach Service kube-system/kube-dns."
+    ],
+    "limitation_present": true
+  },
+  {
+    "command": "kubby-cli netpol-check coredns-589f44dc88-9t9tr Pod/coredns-589f44dc88-9t9tr -n kube-system --port 53",
+    "exit": 0,
+    "seconds": 0.039,
+    "bytes": 636,
+    "status": "pass",
+    "summary": [
+      "ALLOWED: NetworkPolicy allows kube-system/coredns-589f44dc88-9t9tr to reach Pod kube-system/coredns-589f44dc88-9t9tr."
+    ],
+    "limitation_present": true
+  },
+  {
+    "command": "kubby-cli netpol-check floating-666f5b4dd7-95j9d Service/dead-service -n kubby-demo-hygiene --port 80",
+    "exit": 0,
+    "seconds": 0.039,
+    "bytes": 342,
+    "status": "pass",
+    "summary": [
+      "UNKNOWN: No Pod matches Service dead-service's selector, so the connection has nowhere to go regardless of policy."
+    ],
+    "limitation_present": true
+  },
+  {
+    "command": "kubby-cli can-i Pod -n default",
+    "exit": 0,
+    "seconds": 0.037,
+    "bytes": 202,
+    "status": "pass",
+    "summary": {
+      "answered": true,
+      "denied": 0,
+      "verbs": 9
+    }
+  },
+  {
+    "command": "kubby-cli can-i Deployment -n default",
+    "exit": 0,
+    "seconds": 0.04,
+    "bytes": 140,
+    "status": "pass",
+    "summary": {
+      "answered": true,
+      "denied": 0,
+      "verbs": 7
+    }
+  },
+  {
+    "command": "kubby-cli can-i Node -n default",
+    "exit": 0,
+    "seconds": 0.039,
+    "bytes": 131,
+    "status": "pass",
+    "summary": {
+      "answered": true,
+      "denied": 0,
+      "verbs": 6
+    }
+  },
+  {
+    "command": "kubby-cli can-i AppProject.argoproj.io -n default",
+    "exit": 0,
+    "seconds": 0.039,
+    "bytes": 140,
+    "status": "pass",
+    "summary": {
+      "answered": true,
+      "denied": 0,
+      "verbs": 6
+    }
+  },
+  {
+    "command": "kubby-cli drain-impact kubby-dev-control-plane",
+    "exit": 0,
+    "seconds": 0.049,
+    "bytes": 567,
+    "status": "pass",
+    "summary": {
+      "node": "kubby-dev-control-plane",
+      "evict": 18,
+      "daemonSetPods": 2,
+      "mirrorPods": 4,
+      "unmanaged": 2,
+      "blockingBudgets": 0
+    }
+  },
+  {
+    "command": "kubby-cli plan-drain kubby-dev-control-plane",
+    "exit": 0,
+    "seconds": 0.039,
+    "bytes": 941,
+    "status": "pass",
+    "summary": {
+      "permitted": true,
+      "denied": 0,
+      "unknown": 0,
+      "requirements": 7,
+      "verbs": [
+        "create",
+        "list",
+        "patch"
+      ]
+    }
+  },
+  {
+    "command": "kubby-cli plan-apply -f /tmp/kubby-readonly-plan-apply.yaml",
+    "exit": 0,
+    "seconds": 0.038,
+    "bytes": 335,
+    "status": "pass",
+    "summary": {
+      "permitted": true,
+      "denied": 0,
+      "unknown": 0,
+      "requirements": 2,
+      "verbs": [
+        "patch"
+      ]
+    }
+  },
+  {
+    "command": "kubby-cli plan-helm uninstall argocd -n default",
+    "exit": 0,
+    "seconds": 0.144,
+    "bytes": 1861,
+    "status": "pass",
+    "summary": {
+      "permitted": true,
+      "denied": 0,
+      "unknown": 0,
+      "requirements": 15,
+      "verbs": [
+        "delete",
+        "get",
+        "list",
+        "update"
+      ]
+    }
+  },
+  {
+    "command": "kubby-cli plan-helm test argocd -n default",
+    "exit": 0,
+    "seconds": 0.059,
+    "bytes": 437,
+    "status": "pass",
+    "summary": {
+      "permitted": true,
+      "denied": 0,
+      "unknown": 0,
+      "requirements": 3,
+      "verbs": [
+        "get",
+        "list",
+        "update"
+      ]
+    }
+  },
+  {
+    "command": "kubby-cli helm-resources argocd -n default",
+    "exit": 0,
+    "seconds": 0.211,
+    "bytes": 5753,
+    "status": "pass",
+    "summary": {
+      "resources": 59,
+      "status_counts": {
+        "healthy": 0,
+        "pending": 0,
+        "degraded": 0,
+        "missing": 0,
+        "forbidden": 0,
+        "unknown": 0
+      }
+    }
+  },
+  {
+    "command": "kubby-cli rollout argocd-server -n default",
+    "exit": 0,
+    "seconds": 0.04,
+    "bytes": 114,
+    "status": "pass",
+    "summary": [
+      "REVISION  CURRENT  IMAGES                            AGE",
+      "1         true     quay.io/argoproj/argocd:v2.14.11  62d"
+    ]
+  },
+  {
+    "command": "kubby-cli repo-list",
+    "exit": 0,
+    "seconds": 0.026,
+    "bytes": 0,
+    "status": "pass",
+    "summary": {
+      "lines": 0,
+      "urls": "suppressed"
+    }
+  }
+]

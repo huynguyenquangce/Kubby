@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"kubby/internal/k8sclient"
 	"net"
 	"net/http"
 	"net/url"
@@ -134,7 +135,12 @@ func mergeAIConfig(current, next AIConfig) (AIConfig, error) {
 // callAI dispatches a system prompt plus the full conversation to the configured
 // provider. The resource context lives in the system prompt, so every follow-up
 // question is answered against the same snapshot the thread started with.
-func callAI(ctx context.Context, cfg AIConfig, system string, msgs []AIMessage) (string, error) {
+func callAI(ctx context.Context, cfg AIConfig, system string, msgs []AIMessage) (answer string, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			resultErr = fmt.Errorf("%s", redactDiagnosticsError(resultErr.Error(), cfg.APIKey))
+		}
+	}()
 	if len(msgs) == 0 {
 		return "", fmt.Errorf("no question to send")
 	}
@@ -211,7 +217,14 @@ func postJSON(ctx context.Context, client *http.Client, url string, body any, he
 		return nil, fmt.Errorf("the AI response exceeded the 2 MiB safety limit")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("the AI returned HTTP %d: %s", resp.StatusCode, truncateErr(string(data)))
+		message := string(data)
+		for _, header := range []string{"Authorization", "x-api-key"} {
+			secret := strings.TrimPrefix(headers[header], "Bearer ")
+			if secret != "" {
+				message = strings.ReplaceAll(message, secret, "[REDACTED]")
+			}
+		}
+		return nil, fmt.Errorf("the AI returned HTTP %d: %s", resp.StatusCode, truncateErr(k8sclient.RedactSensitiveText(message)))
 	}
 	return data, nil
 }

@@ -92,23 +92,22 @@ func effectivePodRequests(pod *corev1.Pod) corev1.ResourceList {
 	for i := range pod.Spec.Containers {
 		addResources(total, pod.Spec.Containers[i].Resources.Requests)
 	}
+	initPeak := corev1.ResourceList{}
 	for i := range pod.Spec.InitContainers {
 		init := &pod.Spec.InitContainers[i]
+		phase := corev1.ResourceList{}
 		if init.RestartPolicy != nil && *init.RestartPolicy == corev1.ContainerRestartPolicyAlways {
 			addResources(total, init.Resources.Requests)
 			addResources(sidecars, init.Resources.Requests)
+			addResources(phase, sidecars)
+		} else {
+			addResources(phase, init.Resources.Requests)
+			// Only preceding sidecars have started during this init phase.
+			addResources(phase, sidecars)
 		}
+		maxResources(initPeak, phase)
 	}
-	for i := range pod.Spec.InitContainers {
-		init := &pod.Spec.InitContainers[i]
-		if init.RestartPolicy != nil && *init.RestartPolicy == corev1.ContainerRestartPolicyAlways {
-			continue
-		}
-		phase := corev1.ResourceList{}
-		addResources(phase, init.Resources.Requests)
-		addResources(phase, sidecars)
-		maxResources(total, phase)
-	}
+	maxResources(total, initPeak)
 	addResources(total, pod.Spec.Overhead)
 	return total
 }
@@ -670,6 +669,7 @@ func (spread compiledSpread) rejects(node *corev1.Node) (NodeFitReason, bool) {
 // volumeConstraints are the node restrictions a Pod inherits from its volumes.
 type volumeConstraints struct {
 	nodeAffinity []volumeNodeAffinity
+	blockers     []string
 }
 
 type volumeNodeAffinity struct {
@@ -691,12 +691,14 @@ func analyzeVolumes(report *SchedulingReport, pod *corev1.Pod, in *schedulingInp
 	for _, name := range names {
 		claim := in.claims[name]
 		if claim == nil {
+			constraints.blockers = append(constraints.blockers, fmt.Sprintf("PersistentVolumeClaim %s does not exist", name))
 			report.Findings = append(report.Findings, CheckFinding{SeverityCritical,
 				fmt.Sprintf("PersistentVolumeClaim %s does not exist", name),
 				"A Pod whose claim is missing is never scheduled; create the claim or fix the volume reference."})
 			continue
 		}
 		if claim.DeletionTimestamp != nil {
+			constraints.blockers = append(constraints.blockers, fmt.Sprintf("PersistentVolumeClaim %s is being deleted", name))
 			report.Findings = append(report.Findings, CheckFinding{SeverityCritical,
 				fmt.Sprintf("PersistentVolumeClaim %s is being deleted", name),
 				"The Pod cannot use a claim that is terminating."})
@@ -709,16 +711,24 @@ func analyzeVolumes(report *SchedulingReport, pod *corev1.Pod, in *schedulingInp
 					volumeNodeAffinity{volume: volume.Name, selector: volume.Spec.NodeAffinity.Required})
 			}
 		case corev1.ClaimPending:
+			if claim.Spec.StorageClassName != nil && *claim.Spec.StorageClassName != "" && in.classes[*claim.Spec.StorageClassName] == nil {
+				report.Findings = append(report.Findings, CheckFinding{SeverityWarning, fmt.Sprintf("PersistentVolumeClaim %s is Pending; binding mode is unknown", name), "Its StorageClass could not be read, so Kubby cannot tell whether this claim must bind before scheduling."})
+				continue
+			}
 			if waitsForConsumer(claim, in.classes) {
 				report.Findings = append(report.Findings, CheckFinding{SeverityInfo,
 					fmt.Sprintf("PersistentVolumeClaim %s binds once the Pod is scheduled", name),
 					"Its StorageClass uses volumeBindingMode WaitForFirstConsumer, so a Pending claim here is expected and is not what blocks scheduling."})
 				continue
 			}
+			constraints.blockers = append(constraints.blockers, fmt.Sprintf("PersistentVolumeClaim %s is Pending and must bind before scheduling", name))
 			report.Findings = append(report.Findings, CheckFinding{SeverityCritical,
 				fmt.Sprintf("PersistentVolumeClaim %s is Pending", name),
 				"Its StorageClass binds immediately, so nothing can be scheduled until a volume is provisioned. Its own events say why."})
 		default:
+			if claim.Status.Phase == corev1.ClaimLost {
+				constraints.blockers = append(constraints.blockers, fmt.Sprintf("PersistentVolumeClaim %s is Lost", name))
+			}
 			report.Findings = append(report.Findings, CheckFinding{SeverityWarning,
 				fmt.Sprintf("PersistentVolumeClaim %s is %s", name, claim.Status.Phase),
 				"Only a Bound claim can be mounted."})

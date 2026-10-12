@@ -681,7 +681,7 @@ func FormatIncidentMarkdown(report *IncidentReport) string {
 			fmt.Fprintf(&b, "- %s\n", limitation)
 		}
 	}
-	return b.String()
+	return RedactSensitiveText(b.String())
 }
 
 func fallback(value, fallbackValue string) string {

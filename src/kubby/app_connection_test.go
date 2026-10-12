@@ -235,7 +235,7 @@ func TestStartExecReturnsResolvedShell(t *testing.T) {
 	if resolved != "/bin/bash" {
 		t.Fatalf("resolved shell = %q, want /bin/bash", resolved)
 	}
-	a.StopExec()
+	a.stopExec()
 }
 
 func TestPendingExecShellDiscoveryIsCancelledOnClusterSwitch(t *testing.T) {
@@ -269,5 +269,31 @@ func TestPendingExecShellDiscoveryIsCancelledOnClusterSwitch(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("cluster switch did not cancel pending shell discovery")
+	}
+}
+
+func TestStaleExecStopCannotCancelReplacement(t *testing.T) {
+	a := NewApp()
+	a.storeVerifiedCluster("a", &k8sclient.Cluster{})
+	a.execStarter = func(_ context.Context, _ *k8sclient.Cluster, _, _, _, _ string, _, _ int, _ func(string), _ func(error)) (*k8sclient.ExecSession, string, error) {
+		return &k8sclient.ExecSession{}, "/bin/sh", nil
+	}
+	if _, err := a.StartExec("old", "default", "api", "app", "auto", 80, 24); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.StartExec("new", "default", "api", "app", "auto", 80, 24); err != nil {
+		t.Fatal(err)
+	}
+	a.StopExec("old")
+	if a.execSess == nil || a.execSessionID != "new" {
+		t.Fatal("stale stop cancelled replacement")
+	}
+	if err := a.ExecWrite("old", "discard"); err != nil {
+		t.Fatal(err)
+	}
+	a.ExecResize("old", 120, 40)
+	a.StopExec("new")
+	if a.execSess != nil {
+		t.Fatal("owned stop did not close session")
 	}
 }

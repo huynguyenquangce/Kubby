@@ -19,7 +19,7 @@ Headless validation proves its format and compilation, not GUI behaviour.
 
 Required for every target:
 
-- Go 1.26.6 or newer, matching the security-patched `toolchain` directive in
+- Go 1.26.9 or newer, matching the security-patched `toolchain` directive in
   `src/kubby/go.mod`. Go's toolchain selection can download that patch release
   automatically when an older Go 1.26 command starts the build.
 - Node.js `^20.19.0` or `>=22.12.0`, required by the locked Vite version.
@@ -173,7 +173,7 @@ go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build \
   -ldflags "-X kubby/internal/buildinfo.Version=0.2.0 -X kubby/internal/buildinfo.Commit=abcdef0 -X kubby/internal/buildinfo.Date=2026-08-19"
 ```
 
-The checked-in `0.2.0-dev` value is intentional. Keep the `-dev` suffix in source;
+The checked-in `0.5.1-dev` value is intentional. Keep the `-dev` suffix in source;
 the release ldflags remove it so ordinary local builds cannot masquerade as a tag.
 
 Linux x86-64 on Ubuntu with WebKitGTK 4.1:

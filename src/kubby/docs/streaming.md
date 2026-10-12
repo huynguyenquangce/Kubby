@@ -20,6 +20,7 @@ This is the single most repeated mistake in this area. See
 | Event | Emitted by | Meaning |
 |---|---|---|
 | `loglines` | `StartLogStream` goroutine | one owned batch of log lines |
+| `logclosed` | `StartLogStream` goroutine | owned normal EOF; stop Follow and keep final lines |
 | `logerror` | `StartLogStream` goroutine | an owned stream failure |
 | `exec-output` | exec session | terminal output carrying its frontend session ID |
 | `exec-closed` | exec session | the owned session ended |
@@ -160,3 +161,18 @@ multi-line command through both the button and Ctrl/Cmd+Shift+V, send plain Ctrl
 then run a
 cursor-addressing program such as `top` and resize the drawer/window. A headless
 bundle check cannot prove those WebView/PTY behaviours.
+
+Terminal Write, Resize and Stop take the exact session ID used by Start. A stale
+attach completion can only stop its own session; connection teardown alone may
+stop all sessions through the private backend lifecycle helper.
+
+Port-forward startup owns a separate cancellable upgrade context and a 15-second
+ceiling. SPDY reads response headers directly from its socket, so cancellation
+also closes that socket; attaching a request context alone is insufficient. Once
+ready, a retained tunnel belongs to the manager and survives startup-context
+cancellation. Session Close still closes its socket and cancellation registration.
+
+Normal EOF clears only its own backend cancel slot and emits `logclosed`. The
+frontend flushes pending lines before clearing Follow. `StopLogStream(streamID)`
+accepts only the current owner; cluster transitions use private stop-all. A delayed
+old stop/completion must not terminate a replacement stream.

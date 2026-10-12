@@ -71,3 +71,8 @@ test('Incident Studio visual baseline', async ({ page }) => {
     await expect(page.locator('#incident-summary')).toHaveText('checkout was OOMKilled');
     await expect(page.locator('#drawer')).toHaveScreenshot('incident-studio.png');
 });
+
+// A missing fixture must never be counted as a working feature.
+test.afterEach(async ({ page }) => {
+    expect(await page.evaluate(() => window.__wailsMock?.unexpectedCalls ?? [])).toEqual([]);
+});

@@ -1,6 +1,7 @@
 package k8sclient
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -84,7 +85,7 @@ func TestAddHelmRepoDoesNotHoldConfigLockDuringDownload(t *testing.T) {
 	defer releaseOnce.Do(func() { close(release) })
 
 	addDone := make(chan error, 1)
-	go func() { addDone <- AddHelmRepo("slow", server.URL, "", "") }()
+	go func() { addDone <- AddHelmRepo(context.Background(), "slow", server.URL, "", "") }()
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
@@ -134,7 +135,7 @@ func TestUpdateHelmReposDownloadsIndexesConcurrently(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- UpdateHelmRepos() }()
+	go func() { done <- UpdateHelmRepos(context.Background()) }()
 	seen := map[string]bool{}
 	for len(seen) < 4 {
 		select {

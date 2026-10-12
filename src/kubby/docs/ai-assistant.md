@@ -94,3 +94,11 @@ go run ./cmd/kubby-cli diag Gateway.networking.istio.io <name> -n <ns>
 
 Prints the exact blob the tab would send, plus its stats line — no AI call, no key
 needed. This is the right way to check evidence collection after a change.
+
+The AI manifest drops `kubectl.kubernetes.io/last-applied-configuration` before
+redaction. It is an opaque JSON copy of the original object and can retain Secret
+data or literal environment values even after the live fields are redacted.
+
+Provider errors redact credential patterns and the exact configured key before
+returning to the WebView, including before body truncation. Copy answer uses the
+Wails clipboard runtime and reports success only when its boolean result is true.

@@ -1100,7 +1100,7 @@ func main() {
 		Short: "Fetch a chart's default values.yaml from its repo",
 		Args:  cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			vals, err := k8sclient.ChartDefaultValues(args[0], "", args[1], args[2])
+			vals, err := k8sclient.ChartDefaultValues(cmd.Context(), args[0], "", args[1], args[2])
 			if err != nil {
 				return err
 			}
@@ -1172,7 +1172,7 @@ func main() {
 		Short: "Add a Helm chart repository",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := k8sclient.AddHelmRepo(args[0], args[1], "", ""); err != nil {
+			if err := k8sclient.AddHelmRepo(cmd.Context(), args[0], args[1], "", ""); err != nil {
 				return err
 			}
 			fmt.Println("added")

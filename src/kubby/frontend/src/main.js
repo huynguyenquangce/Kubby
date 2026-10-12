@@ -19,12 +19,14 @@ import {
 import { createRequestScopes } from './request-scope.js';
 import { createSerialWriter, validTerminalSize } from './terminal-io.js';
 import { createFrameScheduler, IncrementalLogView, LineRingBuffer } from './log-buffer.js';
+import { tableSortValue } from './table-sort.js';
 import { lineDiff } from './line-diff.js';
 import { confirmedAction, summarizeLineChanges } from './confirmed-action.js';
 import { overviewHealthModel } from './overview-health.js';
 import { createKeyedRequestOwner } from './keyed-request.js';
 import {
     allTableRows,
+    filteredTableRows,
     appendVirtualRows,
     clearVirtualRows,
     clearVirtualSelections,
@@ -153,7 +155,7 @@ import {
     ExecResize,
     StopExec,
 } from '../wailsjs/go/main/App';
-import { EventsOn, BrowserOpenURL, ClipboardGetText } from '../wailsjs/runtime/runtime';
+import { EventsOn, BrowserOpenURL, ClipboardGetText, ClipboardSetText } from '../wailsjs/runtime/runtime';
 
 const PAGE_TITLES = {
     overview: 'Overview',
@@ -933,12 +935,12 @@ function selectView(view) {
     // specific to check.
     if (createKind) {
         const scopeNamespace = currentNamespace;
-        const ns = NAMESPACED_VIEWS.has(view) ? scopeNamespace : '';
+        const ns = NAMESPACED_VIEWS.has(view) ? (scopeNamespace || 'default') : '';
         const connection = requestScopes.connectionToken();
-        gate($('btn-create'), allowed(accessPeek(createKind, ns), 'create'), denyReason(createKind, ns, 'create'));
+        gate($('btn-create'), allowed(accessPeek(createKind, ns), 'patch'), denyReason(createKind, ns, 'patch'));
         accessSet(createKind, ns).then((set) => {
             if (currentView !== view || currentNamespace !== scopeNamespace || !requestScopes.isCurrentConnection(connection)) return;
-            gate($('btn-create'), allowed(set, 'create'), denyReason(createKind, ns, 'create'));
+            gate($('btn-create'), allowed(set, 'patch'), denyReason(createKind, ns, 'patch'));
         });
     }
     // The instant filter applies to table views only (not the dashboard-style views).
@@ -977,11 +979,11 @@ function refreshCurrentView() {
     // connection for seconds after the user moved on, delaying the screen they
     // did ask for. Abandoning it first is the difference the user feels.
     // Awaited, so the reads started below are never the ones cancelled.
-    const abandoned = viewLoadsInFlight > 0
+    const abandoned = viewLoadsInFlight > 0 || !!renderedViewOwner
         ? Promise.resolve(CancelViewReads()).catch(() => 0)
         : Promise.resolve(0);
     viewLoadsInFlight++;
-    const p = abandoned.then(() => doRefresh(scope));
+    const p = abandoned.then(() => isCurrentViewRequest(scope) ? doRefresh(scope) : undefined);
     p.finally(() => {
         viewLoadsInFlight--;
         if (!isCurrentViewRequest(scope)) return;
@@ -1018,7 +1020,12 @@ function clearRenderedView(view = currentView) {
         $('structure-updated').textContent = '';
         resetStructureInspector();
     }
-	if (view === 'traffic') $('traffic-warnings').hidden = true;
+	if (view === 'traffic') {
+        for (const id of ['traffic-ingress', 'traffic-services', 'flow-summary', 'flow-updated', 'flow-ing-count', 'traffic-svc-count']) $(id).textContent = '';
+        $('traffic-warnings').hidden = true;
+        lastTrafficFlows = null;
+        trafficPodPolicies = {};
+    }
     // The check and cleanup cards carry buttons that open an object by
     // namespace and name. Left on screen during a scope change they would open
     // the previous scope's object, so they go with the scope.
@@ -1414,7 +1421,7 @@ function loadOverview(scope) {
             renderNodeStatus([]);
             renderTopPods([]);
             renderRecentEvents([]);
-            showDashError(err);
+            viewError(scope, err);
         });
 }
 
@@ -2558,7 +2565,7 @@ function loadClusterStructure(scope) {
             $('structure-internal').innerHTML = '';
             $('structure-unexposed').innerHTML = '';
             $('structure-updated').textContent = '';
-            showDashError(err);
+            viewError(scope, err);
         });
 }
 
@@ -2768,7 +2775,7 @@ function loadTraffic(scope) {
             $('flow-summary').innerHTML = '';
             $('flow-updated').textContent = '';
 			$('traffic-warnings').hidden = true;
-            showDashError(err);
+            viewError(scope, err);
         });
 }
 
@@ -3323,6 +3330,15 @@ EventsOn('loglines', (batch) => {
     logRenderScheduler.request();
 });
 
+EventsOn('logclosed', (completion) => {
+    if (!following || !completion || completion.streamId !== activeLogStreamID) return;
+    flushLiveLogLines();
+    following = false;
+    activeLogStreamID = '';
+    $('logs-follow').checked = false;
+    logRenderScheduler.cancel();
+});
+
 EventsOn('logerror', (failure) => {
     if (!following || !failure || failure.streamId !== activeLogStreamID) return;
     following = false;
@@ -3438,12 +3454,13 @@ function startFollow() {
 }
 
 function stopFollow() {
+    const streamID = activeLogStreamID;
     activeLogStreamID = '';
     logRenderScheduler.cancel();
     pendingLiveLogLines = [];
     if (following) {
         following = false;
-        StopLogStream();
+        StopLogStream(streamID);
     }
     const cb = $('logs-follow');
     if (cb) cb.checked = false;
@@ -3529,7 +3546,7 @@ $('logs-search').addEventListener('input', () => {
 });
 
 $('btn-logs-reload').addEventListener('click', () => {
-    if (following) { StopLogStream(); startFollow(); }
+    if (following) { stopFollow(); startFollow(); }
     else loadStaticLogs();
 });
 
@@ -3539,7 +3556,7 @@ $('logs-container').addEventListener('change', () => {
         $('logs-follow').disabled = false;
     }
     renderLogsRestartHint();
-    if (following) { StopLogStream(); startFollow(); }
+    if (following) { stopFollow(); startFollow(); }
     else loadStaticLogs();
 });
 
@@ -3628,7 +3645,7 @@ function createTerminal() {
     });
     execTerminal.onResize(({ cols, rows }) => {
         const size = validTerminalSize(cols, rows);
-        if (execConnected && size) ExecResize(size.cols, size.rows);
+        if (execConnected && size) ExecResize(execSessionID, size.cols, size.rows);
     });
     execResizeObserver = new ResizeObserver(() => {
         if (!$('dpanel-terminal').hidden) requestAnimationFrame(fitTerminal);
@@ -3823,11 +3840,11 @@ async function startTerminal(scope = activeDrawerScope) {
     setTerminalStatus('connecting', shell === 'auto' ? 'Finding shell and attaching…' : `Attaching via ${shell}…`);
     StartExec(sessionID, ref.namespace, ref.name, container, shell, size.cols, size.rows)
         .then((resolvedShell) => {
-            if (!isCurrentDrawerRequest(scope) || inputEpoch !== execInputEpoch) { StopExec(); return; }
+            if (!isCurrentDrawerRequest(scope) || inputEpoch !== execInputEpoch) { StopExec(sessionID); return; }
             const activeShell = typeof resolvedShell === 'string' && resolvedShell ? resolvedShell : shell;
             execConnected = true;
             execWriter = createSerialWriter(
-                (data) => inputEpoch === execInputEpoch ? ExecWrite(data) : Promise.resolve(),
+                (data) => inputEpoch === execInputEpoch ? ExecWrite(sessionID, data) : Promise.resolve(),
                 (err) => {
                     if (inputEpoch === execInputEpoch) setTerminalStatus('error', `Input failed: ${errMsg(err)}`);
                 },
@@ -3839,7 +3856,7 @@ async function startTerminal(scope = activeDrawerScope) {
             $('btn-term-paste').disabled = false;
             $('term-container').disabled = false;
             $('term-shell').disabled = false;
-            ExecResize(terminal.cols, terminal.rows);
+            ExecResize(sessionID, terminal.cols, terminal.rows);
             terminal.focus();
         })
         .catch((err) => {
@@ -3860,8 +3877,9 @@ $('term-shell').addEventListener('change', () => startTerminal());
 
 function stopExec() {
     const hadSession = execConnected || execAcceptOutput;
+    const sessionID = execSessionID;
     resetTerminalUI({ preserveOutput: hadSession });
-    if (hadSession) StopExec();
+    if (hadSession) StopExec(sessionID);
     setTerminalStatus('', 'Disconnected by user');
     setTerminalPlaceholder('Session disconnected', 'Select Retry whenever you want to attach again.');
 }
@@ -4375,8 +4393,8 @@ function openCreateModal(view) {
 	if (!kind) { openImportModal(); return; }
 	const ns = NAMESPACED_VIEWS.has(view) ? (currentNamespace || 'default') : '';
 	const set = accessPeek(kind, ns);
-	if (!allowed(set, 'create')) {
-		showError(denyReason(kind, ns, 'create'));
+	if (!allowed(set, 'patch')) {
+		showError(denyReason(kind, ns, 'patch'));
 		return;
 	}
 	openYamlApplyModal({
@@ -4645,7 +4663,7 @@ function loadChecks(scope) {
             checksReport = null;
             $('checks-summary').innerHTML = '';
             for (const tab of Object.keys(CHECK_TABS)) $(`checks-${tab}-list`).innerHTML = '';
-            showDashError(err);
+            viewError(scope, err);
         });
 }
 
@@ -4841,7 +4859,7 @@ function loadHygiene(scope) {
             $('hygiene-summary').innerHTML = '';
             $('hygiene-groups').innerHTML = '';
             $('hygiene-empty').hidden = true;
-            showDashError(err);
+            viewError(scope, err);
         });
 }
 
@@ -4978,9 +4996,9 @@ function openSchedulingModal(ref) {
 }
 
 function renderScheduling(box, report) {
-    const tone = { unschedulable: 'err', fits: 'warn', scheduled: 'ok', unknown: 'warn' }[report.verdict] ?? 'warn';
+    const tone = { blocked: 'err', unschedulable: 'err', fits: 'warn', scheduled: 'ok', unknown: 'warn' }[report.verdict] ?? 'warn';
     const label = {
-        unschedulable: 'No node fits', fits: 'A node does fit', scheduled: 'Already scheduled', unknown: 'Cannot tell',
+        blocked: 'Storage blocks scheduling', unschedulable: 'No node fits', fits: 'A node does fit', scheduled: 'Already scheduled', unknown: 'Cannot tell',
     }[report.verdict] ?? report.verdict;
     const requests = (report.requests ?? []).map((request) => `${request.resource} ${request.request}`);
     box.innerHTML = `
@@ -5057,6 +5075,7 @@ function loadSizing(scope) {
             $('sz-bars').innerHTML = `<p class="error">${esc(errMsg(err))}</p>`;
             $('sz-ns-body').innerHTML = '';
             $('sz-cont-body').innerHTML = '';
+            viewError(scope, err);
         });
 }
 
@@ -5713,7 +5732,7 @@ document.addEventListener('change', (e) => {
     if (!e.target.classList.contains('select-all')) return;
     const checked = e.target.checked;
     const body = e.target.closest('table').querySelector('tbody');
-    allTableRows(body).map((row) => row.querySelector('.row-check')).filter(Boolean).forEach((cb) => {
+    filteredTableRows(body).map((row) => row.querySelector('.row-check')).filter(Boolean).forEach((cb) => {
         const tr = cb.closest('tr');
         if (tr.hidden) return;
         cb.checked = checked;
@@ -5777,23 +5796,14 @@ function sortTable(th) {
     (th.querySelector('.sort-button') || th).appendChild(ind);
 
     const compare = (a, b) => {
-        const av = cellSortValue(a, idx), bv = cellSortValue(b, idx);
+        const column = th.textContent;
+        const av = tableSortValue(a.children[idx]?.textContent ?? '', column), bv = tableSortValue(b.children[idx]?.textContent ?? '', column);
         if (typeof av === 'number' && typeof bv === 'number') return asc ? av - bv : bv - av;
         return asc ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
     };
     if (sortVirtualRows(tbody, compare)) return;
     rows.sort(compare);
     for (const r of rows) tbody.appendChild(r);
-}
-
-function cellSortValue(tr, idx) {
-    const td = tr.children[idx];
-    if (!td) return '';
-    const t = td.textContent.trim();
-    // Numeric-ish (5.89m, 287Mi, ages like 12h) → sort by leading number.
-    const num = parseFloat(t.replace(/[^0-9.\-].*$/, ''));
-    if (/^[0-9]/.test(t) && !Number.isNaN(num)) return num;
-    return t.toLowerCase();
 }
 
 // ============ Command palette (Ctrl+K) ============
@@ -5964,13 +5974,18 @@ document.addEventListener('keydown', (e) => {
 
 // ---- External-link helper (opens the system browser via Wails runtime) ----
 
+function safeExternalURL(raw) {
+    try {const u=new URL(raw);return ["https:","http:"].includes(u.protocol)&&!u.username&&!u.password ? u.href : "";} catch {return "";}
+}
+
 function extLink(url, text) {
+    url=safeExternalURL(url);
     if (!url) return '';
     return `<button type="button" class="ext-link mono" data-url="${esc(url)}" title="Open in browser">${esc(text || url)} ↗</button>`;
 }
 document.addEventListener('click', (e) => {
     const el = e.target.closest('.ext-link');
-    if (el && el.dataset.url) { e.preventDefault(); BrowserOpenURL(el.dataset.url); }
+    if (el && el.dataset.url) { e.preventDefault(); const url=safeExternalURL(el.dataset.url);if(url) BrowserOpenURL(url); }
 });
 
 // Render a line diff (reusing lineDiff) into an element.
@@ -6725,6 +6740,13 @@ function openChartInstallModal(chart) {
             chart.repoURL, repoName, chartName, previewInput.version, previewInput.values)
             .then((diff) => {
                 if (!isCurrentModalRequest(scope) || reqId !== previewReqId) return;
+                if (nameInput.value.trim() !== previewInput.name
+                    || (namespaceInput.value.trim() || 'default') !== previewInput.namespace
+                    || versionSelect.value.trim() !== previewInput.version
+                    || valuesEditor.getValue() !== previewInput.values) {
+                    invalidatePreview('Inputs changed while previewing — preview again before installing.');
+                    return;
+                }
                 if (!diff.chartDigest) throw new Error('Preview did not return a chart digest.');
                 const denied = deniedPermissionReasons(diff.permissions);
                 renderDiffInto(pre, diff.current, diff.proposed);
@@ -7077,9 +7099,11 @@ function renderAIThread() {
 
     box.querySelectorAll('.ai-copy').forEach((b) => {
         b.addEventListener('click', () => {
-            navigator.clipboard?.writeText(aiThread[+b.dataset.i].content);
-            b.textContent = 'Copied';
-            setTimeout(() => { b.textContent = 'Copy'; }, 1200);
+            ClipboardSetText(aiThread[+b.dataset.i].content).then((ok) => {
+                if (!ok) throw new Error('Could not copy the answer to the clipboard.');
+                b.textContent = 'Copied';
+                setTimeout(() => { b.textContent = 'Copy'; }, 1200);
+            }).catch((err) => showError(errMsg(err)));
         });
     });
     $('btn-ai-reset').hidden = false;

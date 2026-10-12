@@ -56,7 +56,7 @@ cd ..
 | `internal/k8sclient/drawer_test.go` | one concurrent Details snapshot carries required detail plus best-effort Events/relationship expansions without duplicate API actions |
 | `internal/k8sclient/custom_integration_test.go` | fake discovery and dynamic clients prove group-qualified CRDs flow from sidebar discovery through namespaced listing/status |
 | `internal/k8sclient/permissionplan_test.go` | permission-plan deduplication, explicit deny, unknown-is-allowed, and page-limit/token invariants |
-| `frontend/src/virtual-table.test.js` | virtual table accessibility, paging callback, detached sort and selection contracts |
+| `frontend/src/virtual-table.test.js`, `table-sort.test.js` | behavioral filtered selection, persistent paging/refresh sort, bounded focus retention, quantity/duration keys |
 | `frontend/e2e/accessibility.spec.js` | narrow light/dark accessible names, duplicate IDs, viewport containment, table row counts, modal inertness and focus trapping |
 
 None of the unit/browser tests need a cluster. The Playwright suite needs its
@@ -77,7 +77,7 @@ Every bug report starts with "which build". `internal/buildinfo` is the single
 answer for both binaries:
 
 ```powershell
-go run ./cmd/kubby-cli --version        # Kubby 0.2.0-dev go1.26.6 windows/amd64
+go run ./cmd/kubby-cli --version        # Kubby 0.5.1-dev go1.26.9 windows/amd64
 go run ./cmd/kubby-cli diagnostics      # + the connected cluster's capabilities
 ```
 
@@ -355,7 +355,27 @@ untested: `documentStarts` and `parseApplyFailures` in `editor.js`, and
 `collapseDiff` in `main.js`.
 
 `k8s.io/client-go/kubernetes/fake` + `dynamic/fake` + `metadata/fake` now cover
-the first end-to-end custom-resource discovery/listing path. Extending that
-synthetic-cluster layer to `SidebarCounts`, `NetworkTopology`, `istioFlows` and
-`ApplyYAML` would cover cases that still require hand-building CRDs on a kind
-cluster.
+the first end-to-end custom-resource discovery/listing path. Extend the synthetic-cluster layer to additional `SidebarCounts`, `istioFlows`
+and `ApplyYAML` cases; `NetworkTopology` already has fake-client coverage.
+
+`internal/k8sclient/audit_regression_test.go` additionally covers serialized AI
+manifest copies, null/empty/expression PDB selectors, ordered init reservations,
+concurrent cached page metrics, credential transport and bounded HTTP bodies,
+and SPDY cancellation plus ready-tunnel longevity. App connection tests cover
+stale session Stop/Write/Resize. Browser regressions exercise filtered bulk
+delete identities, delayed Traffic scope changes, patch-only Create permissions
+and failed-loader freshness. Native Windows Terminal, Traffic and table focus
+checks remain manual even when these suites pass.
+
+Release preparation adds App log EOF/stale-stop regressions, provider HTTP
+contracts, incident-export redaction, bounded Helm defaults, unknown-binding
+scheduling tests and `frontend/e2e/release-flows.spec.js`. The browser mock rejects
+undefined methods; both zoom matrices cover every documented display/zoom point.
+Playwright uses two workers locally and in CI to bound browser resource pressure.
+
+`TestReleaseDisposableLifecycle` is opt-in via `KUBBY_RELEASE_TEST_KUBECONFIG`
+and requires the fixed `kind-kubby-dev` lab context. It creates a unique namespace,
+uses its existing Redis image with PullPolicy Never, tests namespaced writes, PTY,
+tunnel, logs, restricted in-memory RBAC and a local synthetic Helm lifecycle, then
+waits for namespace cleanup. It never mutates existing workloads or cordons a node.
+Only run it when disposable cluster writes are explicitly authorized.
