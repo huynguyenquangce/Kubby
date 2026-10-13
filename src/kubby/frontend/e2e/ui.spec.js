@@ -8,7 +8,9 @@ const zoomMatrix = [
     ['1920×1080 at 150%', 1280, 720],
     ['1920×1080 at 175%', 1097, 617],
     ['1920×1080 at 200%', 960, 540],
+    ['1366×768 at 80%', 1708, 960],
     ['1366×768 at 100%', 1366, 768],
+    ['1366×768 at 125%', 1093, 614],
     ['1366×768 at 150%', 911, 512],
     ['1366×768 at 175%', 781, 438],
     ['1366×768 at 200%', 683, 384],
@@ -58,6 +60,20 @@ async function openNavView(page, target) {
         await section.locator('.nav-group').click();
     }
     await navItem.click();
+}
+
+for (const modifier of ['Control', 'Meta']) {
+    test(`FR-28: ${modifier}+K opens command search and Escape restores focus`, async ({ page }) => {
+        await connectDashboard(page);
+        const trigger = page.locator('#btn-command-palette');
+        await trigger.focus();
+        await page.keyboard.press(`${modifier}+k`);
+        await expect(page.locator('#palette')).toBeVisible();
+        await expect(page.locator('#palette-input')).toBeFocused();
+        await page.keyboard.press('Escape');
+        await expect(page.locator('#palette')).toBeHidden();
+        await expect(trigger).toBeFocused();
+    });
 }
 
 test('FR-28/FR-38: compact Command Palette trigger is bounded and uses keyboard-only focus emphasis', async ({ page }) => {
@@ -275,10 +291,12 @@ const criticalSurfaceMatrix = [
     ['781 px at 175% zoom', 781, 438],
     ['911 px at 150% zoom', 911, 512],
     ['960 px compact desktop', 960, 540],
+    ['1093 px at 125% zoom on 1366', 1093, 614],
     ['1097 px at 175% zoom', 1097, 617],
     ['1280 px at 150% zoom', 1280, 720],
     ['1366 px desktop', 1366, 768],
     ['1536 px at 125% zoom', 1536, 864],
+    ['1708 px at 80% zoom on 1366', 1708, 960],
     ['1920 px desktop', 1920, 1080],
     ['2400 px at 80% zoom', 2400, 1350],
 ];
@@ -458,7 +476,7 @@ test('FR-21/FR-38: Pod Terminal auto-attaches Bash-first and keeps session contr
     await page.locator('#btn-term-paste').click();
     await expect.poll(() => page.evaluate(() => window.__wailsMock.calls
         .filter((call) => call.method === 'ExecWrite')
-        .some((call) => call.args[0] === 'printf clipboard-ready'))).toBe(true);
+        .some((call) => call.args[1] === 'printf clipboard-ready'))).toBe(true);
 
     await page.locator('#term-shell').selectOption('/bin/sh');
     await expect.poll(() => page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'StartExec').length)).toBe(2);
@@ -634,19 +652,25 @@ test('FR-31: late Settings data preserves fields the user already edited', async
     await expect(page.locator('#ai-model')).toHaveValue('my-local-draft');
 });
 
-test('FR-5: every built-in navigation target renders without a browser exception', async ({ page }) => {
-    const pageErrors = collectPageErrors(page);
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await connectDashboard(page);
-    const targets = await page.locator('.nav-item[data-view]').evaluateAll((items) => items.map((item) => item.dataset.view));
-
-    for (const target of targets) {
-        await openNavView(page, target);
-        await expect(page.locator(`#view-${target}`)).toBeVisible();
-        await expect(page.locator('#dash-error')).toBeHidden();
-    }
-    expect(pageErrors).toEqual([]);
-});
+for (const [group, targets] of Object.entries({
+    cluster: ['overview', 'nodes', 'namespaces', 'sizing', 'checks', 'hygiene'],
+    workloads: ['pods', 'deployments', 'statefulsets', 'daemonsets', 'jobs', 'cronjobs', 'hpas', 'pdbs'],
+    network: ['services', 'ingresses', 'networkpolicies', 'traffic'],
+    configuration: ['configmaps', 'secrets', 'pvcs', 'pvs', 'storageclasses'],
+    accessAndEcosystem: ['serviceaccounts', 'roles', 'rolebindings', 'clusterroles', 'clusterrolebindings', 'crds', 'helm', 'resourcequotas', 'limitranges'],
+})) {
+    test(`FR-5: ${group} navigation renders without a browser exception`, async ({ page }) => {
+        const pageErrors = collectPageErrors(page);
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await connectDashboard(page);
+        for (const target of targets) {
+            await openNavView(page, target);
+            await expect(page.locator(`#view-${target}`)).toBeVisible();
+            await expect(page.locator('#dash-error')).toBeHidden();
+        }
+        expect(pageErrors).toEqual([]);
+    });
+}
 
 test('FR-23/24/25: Helm workspace keeps release, catalog, and repository context together', async ({ page }) => {
     const pageErrors = collectPageErrors(page);
@@ -1065,4 +1089,92 @@ test('FR-6: a namespace created outside Kubby after connecting appears in the pi
     await expect(page.locator('#namespace-options')).toContainText('kubby-demo-hygiene');
     await expect(page.locator('#namespace-options')).not.toContainText('payments');
     expect(pageErrors).toEqual([]);
+});
+
+test('audit: filtered select-all excludes invisible resource identities from bulk delete', async ({ page }) => {
+    await connectDashboard(page);
+    await openNavView(page, 'pods');
+    await page.locator('#view-filter').fill('api-');
+    await expect(page.locator('#pods-body tr:not(.virtual-spacer)')).toHaveCount(1);
+    await page.locator('#view-pods .select-all').check();
+    await expect(page.locator('#bulk-count')).toHaveText('1 selected');
+    await page.locator('#bulk-delete').click();
+    await expect(page.locator('#dialog')).toContainText('Delete 1 selected');
+    await page.locator('#dialog-ok').click();
+    await expect.poll(() => page.evaluate(() => window.__wailsMock.calls.filter((call) => call.method === 'DeleteResourceOwned').map((call) => call.args[3])))
+        .toEqual(['api-6df7fdd9f8-4zj8g']);
+});
+
+test('audit: Traffic removes previous owner buttons while the next namespace loads', async ({ page }) => {
+    await connectDashboard(page, { overrides: { NetworkFlows: { ingresses: [{ name: 'old-entry', namespace: 'default', kind: 'Ingress', services: [] }], services: [], podPolicies: {} } } });
+    await openNavView(page, 'traffic');
+    await expect(page.locator('#traffic-ingress [data-kind]').first()).toBeVisible();
+    await page.evaluate(() => window.__wailsMock.setResponse('NetworkFlows', { __deferred: 'next-traffic' }));
+    await page.locator('#namespace-toggle').click();
+    await page.locator('#namespace-search').fill('payments');
+    await page.locator('#namespace-options [role="option"]').filter({ hasText: 'payments' }).click();
+    await expect(page.locator('#view-status')).toContainText('Loading');
+    await expect(page.locator('#traffic-ingress [data-kind], #traffic-services [data-kind]')).toHaveCount(0);
+    await page.evaluate(() => window.__wailsMock.resolveDeferred('next-traffic', { ingresses: [], services: [], podPolicies: {} }));
+});
+
+for (const [view, binding] of [['sizing', 'Sizing'], ['checks', 'ClusterChecks'], ['hygiene', 'ClusterHygiene']]) {
+    test(`audit: ${view} failure cannot report current freshness`, async ({ page }) => {
+        await connectDashboard(page, { overrides: { [binding]: { __error: 'synthetic read failure' } } });
+        await openNavView(page, view);
+        await expect(page.locator('#view-status')).toHaveAttribute('data-state', 'error');
+        await expect(page.locator('#view-status')).not.toContainText('Updated just now');
+    });
+}
+
+test('audit: Create uses patch permission at the actual default namespace', async ({ page }) => {
+    await connectDashboard(page, { overrides: { CanI: { verbs: { get: true, list: true, patch: true, create: false } } } });
+    await openNavView(page, 'pods');
+    await expect(page.locator('#btn-create')).toBeEnabled();
+    await page.locator('#btn-create').click();
+    await expect(page.locator('#modal')).toBeVisible();
+    await expect(page.locator('#modal-yaml')).toContainText('namespace: default');
+    const probes=await page.evaluate(()=>window.__wailsMock.calls.filter(c=>c.method==='CanI'&&c.args[0]==='Pod').map(c=>c.args));
+    expect(probes).toContainEqual(['Pod','default']);
+});
+
+
+test('audit: stale Terminal attach completion only stops its own session', async ({ page }) => {
+    await connectDashboard(page, { overrides: { StartExec: { __deferred: 'old-exec' } } });
+    await openNavView(page, 'pods');
+    await page.locator('#pods-body tr', { hasText: 'api-6df7fdd9f8-4zj8g' }).click();
+    await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => window.__wailsMock.calls.filter((c) => c.method === 'StartExec').length)).toBe(1);
+    const oldID = await page.evaluate(() => window.__wailsMock.calls.find((c) => c.method === 'StartExec').args[0]);
+    await page.locator('#drawer-close').click();
+    await page.evaluate(() => window.__wailsMock.setResponse('StartExec', '/bin/bash'));
+    await page.locator('#pods-body tr', { hasText: 'checkout-7b8d9f-2kw7p' }).click();
+    await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+    await expect(page.locator('#btn-term-start')).toHaveText('Reconnect');
+    const newID = await page.evaluate(() => window.__wailsMock.calls.filter((c) => c.method === 'StartExec').at(-1).args[0]);
+    expect(newID).not.toBe(oldID);
+    await page.evaluate(() => window.__wailsMock.resolveDeferred('old-exec', '/bin/bash'));
+    await expect.poll(() => page.evaluate(() => window.__wailsMock.calls.filter((c) => c.method === 'StopExec').at(-1)?.args[0])).toBe(oldID);
+    await expect(page.locator('#term-session-label')).toContainText('checkout');
+    await expect(page.locator('#btn-term-stop')).toBeVisible();
+});
+
+test('audit: leaving a view cancels a pending second page after first-page completion', async ({ page }) => {
+    const pods = Array.from({ length: 200 }, (_, i) => ({ namespace: 'default', name: `pod-${i}`, status: 'Running', ready: '1/1', age: '1m' }));
+    await connectDashboard(page, { overrides: { PodsPage: { pods, metrics: [], page: { continue: 'next', remaining: 1 } } } });
+    await openNavView(page, 'pods');
+    await expect(page.locator('#view-status')).toContainText('Updated just now');
+    await page.evaluate(() => window.__wailsMock.setResponse('PodsPage', { __deferred: 'second-page' }));
+    await page.locator('#pods-load-more').evaluate((button) => button.click());
+    await expect.poll(() => page.evaluate(() => window.__wailsMock.calls.filter((c) => c.method === 'PodsPage').length)).toBeGreaterThan(1);
+    const before = await page.evaluate(() => window.__wailsMock.calls.filter((c) => c.method === 'CancelViewReads').length);
+    await openNavView(page, 'nodes');
+    await expect.poll(() => page.evaluate(() => window.__wailsMock.calls.filter((c) => c.method === 'CancelViewReads').length)).toBeGreaterThan(before);
+    await page.evaluate(() => window.__wailsMock.resolveDeferred('second-page', { pods: [], metrics: [], page: {} }));
+    await expect(page.locator('#nodes-body')).toContainText('kubby-worker');
+});
+
+// A missing fixture must never be counted as a working feature.
+test.afterEach(async ({ page }) => {
+    expect(await page.evaluate(() => window.__wailsMock?.unexpectedCalls ?? [])).toEqual([]);
 });

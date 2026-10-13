@@ -670,3 +670,72 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   and accent treatment regardless of their role. Fix: top-align the panels,
   soften the global control palette, and use quiet/soft variants for the
   resource-local actions.
+
+- [2026-10-08] AI evidence retained serialized Secret/env values in the kubectl
+  last-applied annotation because redaction treated it as opaque text. Drop that
+  redundant annotation before preview/transmission; sentinel tests cover copies.
+- [2026-10-08] Bulk Select all used every stored virtual row and the DOM hidden
+  flag, while filtering detached nonmatches. Select logical filtered rows so
+  resources outside the filter cannot enter confirmed bulk deletion.
+- [2026-10-08] Traffic retained actionable old-scope canvases and Terminal stale
+  attach completions called unqualified Stop. Clear Traffic state on scope
+  transition and require exact session IDs for Terminal Write/Resize/Stop.
+- [2026-10-08] PDB trees reversed null/empty selectors and drain previews dropped
+  empty selectors. Preserve policy/v1 null=none and empty=all semantics.
+- [2026-10-08] Why Pending added all sidecars to earlier init phases, overstating
+  both a pending Pod's requests and existing node reservations. Accumulate init
+  phases in declaration order and share the result with node usage.
+- [2026-10-08] Table sorting discarded units and appended/refreshed unsorted rows
+  under a sorted header. Parse full quantities/durations and retain comparator
+  across paging/refresh. Focus retention mounted the complete span to a distant
+  row; transfer focus instead to keep virtualization bounded.
+- [2026-10-08] Create probed create despite dispatching SSA PATCH, and used an
+  empty namespace while the template used default. Probe patch in the actual
+  target namespace; the multi-document planner remains authoritative.
+- [2026-10-08] Sizing/Checks/Cleanup swallowed loader failures without setting
+  error freshness, allowing Updated just now on failure. Route errors through
+  viewError while preserving owning-scope guards.
+- [2026-10-08] Repository Add/Update used the SDK's unbounded index downloader
+  outside Kubby's credential/redirect policy. Use the bounded cancellable HTTP
+  helper, require HTTPS for hosted credentials and reject URL userinfo.
+- [2026-10-08] Closing a pending port-forward only closed a stop channel that
+  SPDY could not observe during raw header reads. Cancel and close its startup
+  socket; ready tunnels survive startup cancellation and remain manager-owned.
+- [2026-10-08] Pods pagination sequentially fetched a full metrics list for each
+  page. Fetch concurrently and reuse an immutable short-lived metrics index.
+  Navigation's cancellation counter omitted Load more; cancel outstanding reads
+  from a rendered prior view regardless of first-page completion.
+- [2026-10-08] The lockfile retained source-map-js 1.2.1 with an indexed-map DoS
+  advisory. Update the transitive build dependency to patched 1.2.2.
+
+- [2026-10-12] Why Pending selected its overall fits headline from node capacity
+  while ignoring known PVC blockers; missing/Pending-Immediate/Lost/terminating
+  claims now lead a blocked verdict. Unknown StorageClass reads remain unknown.
+- [2026-10-12] Normal log EOF had no completion event, leaving Follow checked;
+  unowned Stop could cancel a replacement stream. Emit owned EOF, retain final
+  buffered lines, release its own slot and require an exact ID for Stop.
+- [2026-10-12] AI provider error bodies echoed keys before redaction, incident
+  exports serialized raw credential-shaped messages, and defaults downloads
+  bypassed hardened Helm transport. Redact at return/export boundaries and share
+  bounded contextual chart acquisition; default exports to private permissions.
+- [2026-10-12] AI Copy assumed page clipboard availability and reported success
+  before its result. Use Wails runtime and await true; web chart links now reject
+  non-web schemes and embedded URL credentials.
+- [2026-10-12] One navigation test shared a 30-second budget across 32 views;
+  split bounded groups and reject missing mock responses instead of treating
+  undefined bridge methods as successful empty data.
+- [2026-10-12] A late Helm install preview re-enabled Install after namespace,
+  version or values changed during its request. Recheck all captured inputs before
+  approval; the exact-input write guard remains the final boundary.
+- [2026-10-12] Deployment rollback used one Get/Update while its controller also
+  updated status/annotations, producing real resource-version conflicts. Retry
+  from a fresh read and require the original UID so replacement workloads remain
+  protected; synthetic-conflict tests and disposable cluster checks cover it.
+
+- [2026-10-13] The macOS branch inherited a main-only push trigger, so its native
+  packaging gate did not run on branch pushes; merging the patched toolchain also
+  left the macOS job pinned to Go 1.26.6. Enable branch/manual triggers and align
+  the Mac job to Go 1.26.9, with native Go checks before packaging.
+- [2026-10-13] Darwin plists advertised macOS 11 although the Go 1.26 runtime
+  requires macOS 12. Align both development/production minimum system versions
+  and the build prerequisites to 12 so unsupported hosts are rejected honestly.

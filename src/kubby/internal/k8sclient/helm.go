@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -331,7 +332,15 @@ func fetchHelmHTTP(ctx context.Context, options *action.ChartPathOptions, target
 	if err != nil {
 		return nil, err
 	}
+	if (options.Username != "" || options.Password != "" || options.CertFile != "" || options.KeyFile != "") && targetURL.Scheme != "https" {
+		host := targetURL.Hostname()
+		ip := net.ParseIP(host)
+		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return nil, fmt.Errorf("authenticated Helm sources require HTTPS")
+		}
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	defer transport.CloseIdleConnections()
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: options.InsecureSkipTLSverify} // #nosec G402 -- explicit user repository option
 	if options.CaFile != "" {
 		pem, err := os.ReadFile(options.CaFile)
@@ -488,16 +497,8 @@ func verifyTextDigest(expected, text, label string) error {
 // ChartDefaultValues downloads a chart from its repo and returns its raw
 // values.yaml — the authoritative defaults to pre-fill the install editor.
 // Needs no cluster connection (only internet to the chart repo).
-func ChartDefaultValues(repoURL, repoName, chartName, version string) (string, error) {
-	cpo := action.ChartPathOptions{}
-	if err := configureChartSource(&cpo, repoURL, version, repoName); err != nil {
-		return "", err
-	}
-	chartPath, err := cpo.LocateChart(chartName, cli.New())
-	if err != nil {
-		return "", err
-	}
-	ch, err := loader.Load(chartPath)
+func ChartDefaultValues(ctx context.Context, repoURL, repoName, chartName, version string) (string, error) {
+	ch, _, err := locateAndLoadChart(ctx, &action.Install{}, repoURL, repoName, chartName, version)
 	if err != nil {
 		return "", err
 	}

@@ -65,9 +65,9 @@ export function DrainImpact(arg1:string):Promise<k8sclient.DrainImpact>;
 
 export function DrainNodeOwned(arg1:string,arg2:string):Promise<void>;
 
-export function ExecResize(arg1:number,arg2:number):Promise<void>;
+export function ExecResize(arg1:string,arg2:number,arg3:number):Promise<void>;
 
-export function ExecWrite(arg1:string):Promise<void>;
+export function ExecWrite(arg1:string,arg2:string):Promise<void>;
 
 export function ExplainPodScheduling(arg1:string,arg2:string):Promise<k8sclient.SchedulingReport>;
 
@@ -251,9 +251,9 @@ export function StartLogStream(arg1:string,arg2:string,arg3:string,arg4:string):
 
 export function StartPortForward(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number,arg7:boolean):Promise<main.PortForwardInfo>;
 
-export function StopExec():Promise<void>;
+export function StopExec(arg1:string):Promise<void>;
 
-export function StopLogStream():Promise<void>;
+export function StopLogStream(arg1:string):Promise<void>;
 
 export function StopPortForward(arg1:string):Promise<void>;
 

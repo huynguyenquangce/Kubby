@@ -136,3 +136,14 @@ The install command performs the same pinned preview/install sequence as the UI.
 Use a disposable local kind cluster for it because it writes resources. The rest
 of the Helm surface is exercised through the GUI; one small chart is enough to
 cover list → resources → values → history → rollback.
+
+Repository Add/Update indexes use the same cancellable, bounded HTTP helper as
+chart acquisition, including the 20 MiB index ceiling and redirect policy.
+Credential-bearing non-loopback endpoints require HTTPS; URL userinfo is rejected.
+Downloaded indexes are parsed in a temporary directory before cache publication;
+HTTP failures must not echo a raw URL containing userinfo or query credentials.
+
+Chart defaults use the same contextual bounded acquisition path as preview and
+install, including saved credential transport policy. Do not use the SDK getter
+directly for a values download. External chart/repository links permit only
+HTTP(S) URLs without embedded credentials.

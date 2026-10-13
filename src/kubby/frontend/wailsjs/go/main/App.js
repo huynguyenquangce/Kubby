@@ -126,12 +126,12 @@ export function DrainNodeOwned(arg1, arg2) {
   return window['go']['main']['App']['DrainNodeOwned'](arg1, arg2);
 }
 
-export function ExecResize(arg1, arg2) {
-  return window['go']['main']['App']['ExecResize'](arg1, arg2);
+export function ExecResize(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ExecResize'](arg1, arg2, arg3);
 }
 
-export function ExecWrite(arg1) {
-  return window['go']['main']['App']['ExecWrite'](arg1);
+export function ExecWrite(arg1, arg2) {
+  return window['go']['main']['App']['ExecWrite'](arg1, arg2);
 }
 
 export function ExplainPodScheduling(arg1, arg2) {
@@ -498,12 +498,12 @@ export function StartPortForward(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['main']['App']['StartPortForward'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
-export function StopExec() {
-  return window['go']['main']['App']['StopExec']();
+export function StopExec(arg1) {
+  return window['go']['main']['App']['StopExec'](arg1);
 }
 
-export function StopLogStream() {
-  return window['go']['main']['App']['StopLogStream']();
+export function StopLogStream(arg1) {
+  return window['go']['main']['App']['StopLogStream'](arg1);
 }
 
 export function StopPortForward(arg1) {

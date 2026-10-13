@@ -3,10 +3,12 @@ package k8sclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -236,5 +238,40 @@ func TestHelmHTTPURLRejectsEmbeddedCredentials(t *testing.T) {
 	}
 	if safe := safeHelmHTTPURL(parsed); strings.Contains(safe, "token") || strings.Contains(safe, "secret") {
 		t.Fatalf("safe URL leaked its query: %q", safe)
+	}
+}
+
+func TestChartDefaultsUseBoundedCancellableTransport(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/large.tgz" {
+			w.Header().Set("Content-Length", fmt.Sprint(maxHelmChartBytes+1))
+			return
+		}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	_, err := ChartDefaultValues(context.Background(), "", "", server.URL+"/large.tgz", "")
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("defaults skipped size limit: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	_, err = ChartDefaultValues(ctx, "", "", server.URL+"/wait.tgz", "")
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("defaults ignored cancellation: %v", err)
+	}
+}
+
+func TestChartDefaultsRejectLegacyPlaintextCredentials(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "repositories.yaml")
+	t.Setenv("HELM_REPOSITORY_CONFIG", file)
+	// Synthetic legacy config bypasses Add validation to exercise existing configs.
+	data := []byte("apiVersion: v1\nrepositories:\n- name: legacy\n  url: http://charts.example.test\n  username: synthetic\n  password: synthetic-noncredential\n")
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ChartDefaultValues(context.Background(), "http://charts.example.test", "legacy", "chart", "1.0.0")
+	if err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatal("legacy plaintext credential endpoint not rejected")
 	}
 }

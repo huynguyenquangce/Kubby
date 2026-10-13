@@ -54,3 +54,8 @@ for (const theme of ['light', 'dark']) {
         expect(pageErrors).toEqual([]);
     });
 }
+
+// A missing fixture must never be counted as a working feature.
+test.afterEach(async ({ page }) => {
+    expect(await page.evaluate(() => window.__wailsMock?.unexpectedCalls ?? [])).toEqual([]);
+});

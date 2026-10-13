@@ -3,6 +3,7 @@ const DEFAULT_OVERSCAN = 10;
 const VIRTUALIZE_AT = 80;
 
 const states = new Map();
+const comparators = new WeakMap();
 
 function scrollOwner(body) {
     return body.closest('.content') || document.scrollingElement;
@@ -38,12 +39,15 @@ function render(state) {
 
         const activeRow = document.activeElement?.closest?.('tr');
         const activeIndex = filtered.indexOf(activeRow);
-        if (activeIndex >= 0) {
-            start = Math.min(start, activeIndex);
-            end = Math.max(end, activeIndex + 1);
+        if (activeIndex >= 0 && (activeIndex < start || activeIndex >= end)) {
+            // Keep the viewport bounded; hand focus to the table before detaching
+            // a distant row rather than mounting every intervening row.
+            table.tabIndex = -1;
+            table.focus({ preventScroll: true });
         }
     }
 
+    const focused = document.activeElement;
     const fragment = document.createDocumentFragment();
     if (useWindow && start > 0) fragment.appendChild(makeSpacer(body, start * rowHeight));
     for (let i = start; i < end; i++) {
@@ -54,6 +58,7 @@ function render(state) {
     }
     if (useWindow && end < filtered.length) fragment.appendChild(makeSpacer(body, (filtered.length - end) * rowHeight));
     body.replaceChildren(fragment);
+    if (body.contains(focused) && document.activeElement !== focused) focused.focus({ preventScroll: true });
     table.setAttribute('aria-rowcount', String(filtered.length + 1));
     state.start = start;
     state.end = end;
@@ -89,6 +94,8 @@ export function setVirtualRows(body, rows, options = {}) {
     state.onScroll = () => schedule(state);
     owner?.addEventListener('scroll', state.onScroll, { passive: true });
     states.set(body, state);
+    if (comparators.has(body)) state.rows.sort(comparators.get(body));
+    state.filtered = [...state.rows];
     render(state);
 }
 
@@ -99,7 +106,8 @@ export function appendVirtualRows(body, rows, { hasMore } = {}) {
         return;
     }
     state.rows.push(...rows);
-    state.filtered.push(...rows);
+    if (comparators.has(body)) state.rows.sort(comparators.get(body));
+    state.filtered = state.predicate ? state.rows.filter(state.predicate) : [...state.rows];
     state.hasMore = !!hasMore;
     render(state);
 }
@@ -114,6 +122,7 @@ export function updateVirtualPaging(body, { hasMore, onNearEnd } = {}) {
 export function filterVirtualRows(body, predicate) {
     const state = states.get(body);
     if (!state) return null;
+    state.predicate = predicate;
     state.filtering = !!predicate;
     state.filtered = predicate ? state.rows.filter(predicate) : [...state.rows];
     render(state);
@@ -123,6 +132,7 @@ export function filterVirtualRows(body, predicate) {
 export function sortVirtualRows(body, compare) {
     const state = states.get(body);
     if (!state) return false;
+    comparators.set(body, compare);
     state.rows.sort(compare);
     const visible = new Set(state.filtered);
     state.filtered = state.rows.filter((row) => visible.has(row));
@@ -132,6 +142,12 @@ export function sortVirtualRows(body, compare) {
 
 export function allTableRows(body) {
     return states.get(body)?.rows ?? [...body.querySelectorAll('tr:not(.virtual-spacer)')];
+}
+
+// Selection follows the logical filter, including matching rows outside the
+// rendered window, and never includes detached non-matches.
+export function filteredTableRows(body) {
+    return states.get(body)?.filtered ?? allTableRows(body).filter((row) => !row.hidden);
 }
 
 export function clearVirtualRows(body) {

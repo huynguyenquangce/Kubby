@@ -74,7 +74,7 @@ func PDBTree(ctx context.Context, c *Cluster, namespace, name string) (*Relation
 		Children: []*RelationNode{},
 	}
 	selector, err := metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
-	if err != nil || selector.Empty() {
+	if err != nil || pdb.Spec.Selector == nil {
 		root.Status += " · selects no Pods"
 		return root, nil
 	}

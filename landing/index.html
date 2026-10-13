@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f7faff">
+    <meta name="description" content="Kubby is a personal Kubernetes desktop workbench. See cluster health, investigate incidents with evidence, and make safer changes without an in-cluster agent.">
+    <title>Kubby — Understand your cluster. Fix with confidence.</title>
+    <link rel="icon" href="./assets/kubby-mark.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="shell header-inner">
+        <a class="brand" href="#top" aria-label="Kubby home">
+          <img src="./assets/kubby-mark.svg" alt="" width="32" height="32">
+          <span>Kubby</span>
+        </a>
+        <nav class="desktop-nav" aria-label="Main navigation">
+          <a href="#features">Features</a>
+          <a href="#workflow">How it works</a>
+          <a href="https://github.com/huynguyenquangce/Kubby" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+        </nav>
+        <a class="button button-primary header-cta" href="#download">Download Kubby <span aria-hidden="true">↗</span></a>
+        <details class="mobile-nav">
+          <summary>Menu <span aria-hidden="true">☰</span></summary>
+          <nav aria-label="Mobile navigation">
+            <a href="#features">Features</a>
+            <a href="#workflow">How it works</a>
+            <a href="#download">Download</a>
+            <a href="https://github.com/huynguyenquangce/Kubby" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
+          </nav>
+        </details>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="hero-glow" aria-hidden="true"></div>
+        <div class="shell hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow"><span class="eyebrow-line"></span> Personal Kubernetes workbench</p>
+            <h1 id="hero-title">Understand your cluster. <span>Fix with confidence.</span></h1>
+            <p class="hero-lede">See the evidence, find the cause, and make safer changes from one desktop app.</p>
+            <div class="hero-actions">
+              <a class="button button-primary button-large" href="#download">Download Kubby <span aria-hidden="true">↓</span></a>
+              <a class="button button-outline button-large" href="https://github.com/huynguyenquangce/Kubby" target="_blank" rel="noopener noreferrer">View on GitHub <span aria-hidden="true">↗</span></a>
+            </div>
+            <p class="hero-note"><span class="note-dot" aria-hidden="true"></span> Runs locally. Uses your kubeconfig. No in-cluster agent.</p>
+          </div>
+          <div class="hero-visual">
+            <div class="app-window">
+              <div class="window-bar" aria-hidden="true">
+                <span class="window-dots"><i></i><i></i><i></i></span>
+                <span class="window-title">Kubby · Cluster overview</span>
+              </div>
+              <img class="app-screenshot" src="./assets/kubby-overview.png" alt="Kubby overview showing failing Pods, their next investigation steps, live resource usage, and cluster navigation" width="1903" height="1010" fetchpriority="high">
+            </div>
+            <div class="screenshot-caption"><span class="caption-mark"></span> A clear view of what needs attention</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="pillars" aria-label="What Kubby helps you do">
+        <div class="shell pillar-grid">
+          <div class="pillar"><span class="pillar-icon pillar-blue" aria-hidden="true">◎</span><div><h2>Observe</h2><p>See health, resources, and capacity in one focused view.</p></div></div>
+          <div class="pillar"><span class="pillar-icon pillar-violet" aria-hidden="true">⌕</span><div><h2>Diagnose</h2><p>Follow the evidence behind a failing workload.</p></div></div>
+          <div class="pillar"><span class="pillar-icon pillar-teal" aria-hidden="true">↗</span><div><h2>Operate</h2><p>Take guided action with explicit confirmation.</p></div></div>
+        </div>
+      </section>
+
+      <section class="section workflow-section" id="workflow" aria-labelledby="workflow-title">
+        <div class="shell">
+          <div class="section-head">
+            <p class="section-kicker">A better troubleshooting loop</p>
+            <h2 id="workflow-title">From signal to recovery, without losing context.</h2>
+            <p>Kubby brings the objects, events, logs, and next steps together so you can work through an incident deliberately.</p>
+          </div>
+          <div class="workflow-grid">
+            <article class="workflow-card"><span class="step-number">01</span><div class="step-art step-art-observe" aria-hidden="true"><span class="art-row"><i></i><b></b><em></em></span><span class="art-row"><i></i><b></b><em></em></span><span class="art-row"><i></i><b></b><em></em></span></div><h3>Spot what changed</h3><p>An issue-first overview points to unhealthy Pods and the next useful question.</p></article>
+            <article class="workflow-card"><span class="step-number">02</span><div class="step-art step-art-diagnose" aria-hidden="true"><span class="art-event">Warning event</span><span class="art-line"></span><span class="art-event art-event-blue">Related workload</span><span class="art-line"></span><span class="art-event art-event-teal">Actionable finding</span></div><h3>Understand the evidence</h3><p>Incident Studio connects events, logs, ownership, and service readiness in one report.</p></article>
+            <article class="workflow-card"><span class="step-number">03</span><div class="step-art step-art-operate" aria-hidden="true"><span class="art-check">✓</span><span>Review the change</span><span class="art-confirm">Confirm action</span></div><h3>Make a safer change</h3><p>Preview supported changes, confirm writes, and watch the resource recover.</p></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section feature-section" id="features" aria-labelledby="features-title">
+        <div class="shell">
+          <div class="section-head section-head-center">
+            <p class="section-kicker">Built for the real work</p>
+            <h2 id="features-title">Everything close to the problem.</h2>
+            <p>A desktop workspace for exploring your cluster, understanding failures, and acting on them.</p>
+          </div>
+          <div class="feature-grid">
+            <article class="feature-card feature-lead">
+              <div class="feature-copy"><span class="feature-tag">Incident Studio</span><h3>Evidence first. Answers you can trace.</h3><p>Investigate a failing resource through ranked findings, a timeline, and related objects. Ask AI with a preview of exactly what gets sent when you want another perspective.</p><a class="text-link" href="https://github.com/huynguyenquangce/Kubby#what-is-included" target="_blank" rel="noopener noreferrer">Explore the capabilities <span aria-hidden="true">↗</span></a></div>
+              <div class="evidence-panel" aria-label="Illustration of the evidence workflow"><div class="evidence-top"><span class="evidence-live"></span> Incident evidence <span class="evidence-time">one snapshot</span></div><div class="evidence-item"><span class="evidence-symbol evidence-red">!</span><div><strong>Resource state</strong><small>Identify the failing container</small></div></div><div class="evidence-item"><span class="evidence-symbol evidence-violet">≡</span><div><strong>Events &amp; logs</strong><small>Read the messages in context</small></div></div><div class="evidence-item"><span class="evidence-symbol evidence-green">✓</span><div><strong>Next action</strong><small>Review and verify recovery</small></div></div></div>
+            </article>
+            <article class="feature-card"><span class="feature-icon">▦</span><h3>Explore every resource</h3><p>Browse built-in and discovered custom resources, inspect YAML and events, and follow relationships without memorizing commands.</p></article>
+            <article class="feature-card"><span class="feature-icon">⌁</span><h3>Follow traffic paths</h3><p>Trace routes from Ingress or Istio Gateway through Services to their Pods, with broken hops called out.</p></article>
+            <article class="feature-card"><span class="feature-icon">◈</span><h3>Run health checks</h3><p>Find broken admission webhooks, expiring certificates, and deletions stuck behind finalizers.</p></article>
+            <article class="feature-card"><span class="feature-icon">▤</span><h3>Keep tools together</h3><p>Follow logs, open a Pod terminal, forward a port, and manage Helm releases in the same workspace.</p></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section download-section" id="download" aria-labelledby="download-title">
+        <div class="shell download-panel">
+          <div><p class="section-kicker">Get started</p><h2 id="download-title">Your cluster, a little clearer.</h2><p>Bring an existing kubeconfig. Kubby runs on your machine and talks directly to your cluster.</p><div class="download-actions"><a class="button button-primary button-large" href="https://github.com/huynguyenquangce/Kubby/releases" target="_blank" rel="noopener noreferrer">Download Windows preview <span aria-hidden="true">↗</span></a><a class="button button-outline button-large" href="https://github.com/huynguyenquangce/Kubby#build-kubby" target="_blank" rel="noopener noreferrer">Build from source <span aria-hidden="true">↗</span></a></div><p class="availability">Windows x86-64 preview available · Linux build instructions available · macOS support in progress</p></div>
+          <div class="download-decoration" aria-hidden="true"><span class="decor-ring ring-one"></span><span class="decor-ring ring-two"></span><img src="./assets/kubby-mark.svg" alt="" width="126" height="126"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-inner"><a class="brand" href="#top"><img src="./assets/kubby-mark.svg" alt="" width="26" height="26"><span>Kubby</span></a><p>Personal, agent-less Kubernetes management.</p><div><a href="https://github.com/huynguyenquangce/Kubby" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://github.com/huynguyenquangce/Kubby/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a></div></div></footer>
+  </body>
+</html>

@@ -20,7 +20,7 @@ Headless validation proves its format and compilation, not GUI behaviour.
 
 Required for every target:
 
-- Go 1.26.6 or newer, matching the security-patched `toolchain` directive in
+- Go 1.26.9 or newer, matching the security-patched `toolchain` directive in
   `src/kubby/go.mod`. Go's toolchain selection can download that patch release
   automatically when an older Go 1.26 command starts the build.
 - Node.js `^20.19.0` or `>=22.12.0`, required by the locked Vite version.
@@ -28,10 +28,44 @@ Required for every target:
 - Wails CLI v2.13.0, matching `src/kubby/go.mod`.
 
 Native Windows builds also require WebView2. Windows 11 normally provides it.
-Native macOS builds require macOS 11 or later, Xcode Command Line Tools
+Native macOS builds require macOS 12 Monterey or later, Xcode Command Line Tools
 (`xcode-select --install`), and an Apple Silicon host for the initial
 `darwin/arm64` target. The bundle identifier and minimum version are in
-`src/kubby/build/darwin/Info.plist`.
+`src/kubby/build/darwin/Info.plist`. Go 1.26 requires macOS 12 or newer
+([Go minimum requirements](https://go.dev/wiki/MinimumRequirements)).
+
+### Set up a MacBook for development
+
+The initial supported MacBook target is Apple Silicon (M1 or newer). Install
+Xcode Command Line Tools once, then install Go and Node.js satisfying the
+versions above using their official installers or your existing package manager.
+Do not attempt to cross-build the macOS desktop shell from WSL: it needs Apple's
+SDK and native toolchain. A Linux CLI build does not validate the macOS app.
+
+Clone the repository to a local directory on the Mac, then select the branch:
+
+```bash
+git clone https://github.com/huynguyenquangce/Kubby.git
+cd Kubby
+git switch feat/macos-support
+cd src/kubby
+```
+
+Continue with sections 2–6 in order. For development after dependency preparation,
+use `go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 dev`; for a packaged
+build use the macOS command in section 5. Open the complete `.app` from Finder
+for the manual checks in section 8. Kubernetes and Helm clients are bundled;
+a reachable cluster and a supported kubeconfig are needed to connect, but no
+separate `kubectl` or `helm` binary is required to use the app.
+
+The Quality gates workflow runs on pushes to `feat/macos-support`, pull requests,
+and manual dispatch. Its `macos-build` job uses an Apple Silicon `macos-15` runner,
+runs native Go checks, builds the app, validates the bundle and arm64 executable,
+and uploads an unsigned ZIP plus SHA-256 checksum for seven days. Download the
+artifact for the intended commit from GitHub Actions, extract it, verify the
+checksum, and unpack the app. This preview has no Developer ID signature or
+notarization; use a local build for development if Gatekeeper rejects it. Stable
+distribution remains gated by the signing procedure and native checks below.
 
 Browser UI checks require Playwright's pinned Chromium. After `npm ci`, install
 it once per machine. On Windows or macOS use `npx playwright install chromium`;
@@ -195,7 +229,7 @@ go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build \
   -ldflags "-X kubby/internal/buildinfo.Version=0.2.0 -X kubby/internal/buildinfo.Commit=abcdef0 -X kubby/internal/buildinfo.Date=2026-08-19"
 ```
 
-The checked-in `0.2.0-dev` value is intentional. Keep the `-dev` suffix in source;
+The checked-in `0.5.1-dev` value is intentional. Keep the `-dev` suffix in source;
 the release ldflags remove it so ordinary local builds cannot masquerade as a tag.
 
 Linux x86-64 on Ubuntu with WebKitGTK 4.1:

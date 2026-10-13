@@ -288,3 +288,9 @@ Not yet addressed — worth knowing before blaming something else:
   dynamic xterm/FitAddon chunks load only when a Terminal tab opens, and the
   drawer scope is rechecked after loading. Splitting CodeMirror needs a separate
   Welcome lifecycle change and native WebView smoke coverage.
+
+Pods pages fetch Pod rows and optional metrics concurrently. Because metrics has
+no pagination, a five-second immutable metrics index is shared per connection
+and namespace; concurrent fetches coalesce and waiting callers can cancel. Only
+the page's metrics cross the bridge. Navigation cancels reads from a previously
+rendered view even when only a Load more request is outstanding.

@@ -72,14 +72,16 @@ type Cluster struct {
 	// Health checks list every resource type for the stuck-deletion scan, so
 	// their report is cached briefly per scope; the API server certificate is
 	// read by a TLS handshake cached for longer. See healthchecks.go.
-	checksMu       sync.Mutex
-	checksCache    map[string]checksCacheEntry
-	hygieneMu      sync.Mutex
-	hygieneCache   map[string]hygieneCacheEntry
-	apiCertMu      sync.Mutex
-	apiCert        *x509.Certificate
-	apiCertErr     error
-	apiCertExpires time.Time
+	checksMu         sync.Mutex
+	checksCache      map[string]checksCacheEntry
+	hygieneMu        sync.Mutex
+	hygieneCache     map[string]hygieneCacheEntry
+	podPageMetricsMu sync.Mutex
+	podPageMetrics   map[string]*podPageMetricsEntry
+	apiCertMu        sync.Mutex
+	apiCert          *x509.Certificate
+	apiCertErr       error
+	apiCertExpires   time.Time
 }
 
 // New builds a Cluster from a kubeconfig file path + chosen context.

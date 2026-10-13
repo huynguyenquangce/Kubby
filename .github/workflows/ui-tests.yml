@@ -2,8 +2,9 @@ name: Quality gates
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/macos-support]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,7 +25,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.6'
+          go-version: '1.26.9'
           cache-dependency-path: src/kubby/go.sum
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -99,7 +100,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.6'
+          go-version: '1.26.9'
           cache-dependency-path: src/kubby/go.sum
       - name: Install pinned kind
         shell: bash
@@ -124,7 +125,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.6'
+          go-version: '1.26.9'
           cache-dependency-path: src/kubby/go.sum
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -164,7 +165,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.6'
+          go-version: '1.26.9'
           cache-dependency-path: src/kubby/go.sum
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -174,6 +175,15 @@ jobs:
           cache-dependency-path: src/kubby/frontend/package-lock.json
       - name: Confirm Apple Silicon host
         run: test "$(uname -m)" = arm64
+      - name: Prepare embedded frontend and check backend on macOS
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+          cd ..
+          go test ./...
+          go build ./...
+          go vet ./...
       - name: Build complete macOS application
         run: go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build -platform darwin/arm64 -trimpath
       - name: Reject stale generated bindings
@@ -182,6 +192,8 @@ jobs:
         shell: bash
         run: |
           plutil -lint build/bin/kubby.app/Contents/Info.plist
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' build/bin/kubby.app/Contents/Info.plist)" = 12.0.0
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' build/bin/kubby.app/Contents/Info.plist)" = io.github.huynguyenquangce.kubby
           file build/bin/kubby.app/Contents/MacOS/kubby | grep -q 'Mach-O 64-bit executable arm64'
           test "$(lipo -archs build/bin/kubby.app/Contents/MacOS/kubby)" = arm64
           ditto -c -k --sequesterRsrc --keepParent build/bin/kubby.app build/bin/kubby-macos-arm64.zip

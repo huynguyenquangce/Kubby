@@ -13,6 +13,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 )
 
 // ScaleDeployment sets the replica count of a deployment.
@@ -128,9 +129,18 @@ func RollbackDeployment(ctx context.Context, c *Cluster, namespace, name string,
 		// Copy the target RS's template onto the deployment (drop the hash label).
 		tmpl := rs.Spec.Template.DeepCopy()
 		delete(tmpl.Labels, "pod-template-hash")
-		dep.Spec.Template = *tmpl
-		_, err = c.Clientset.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{})
-		return err
+		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			current, err := c.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			if current.UID != dep.UID {
+				return fmt.Errorf("deployment changed during rollback; reload before trying again")
+			}
+			current.Spec.Template = *tmpl.DeepCopy()
+			_, err = c.Clientset.AppsV1().Deployments(namespace).Update(ctx, current, metav1.UpdateOptions{})
+			return err
+		})
 	}
 	return fmt.Errorf("revision %d not found", revision)
 }

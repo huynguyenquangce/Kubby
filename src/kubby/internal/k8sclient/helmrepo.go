@@ -1,6 +1,7 @@
 package k8sclient
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/cli"
-	"helm.sh/helm/v3/pkg/getter"
 	"helm.sh/helm/v3/pkg/repo"
 )
 
@@ -83,7 +84,7 @@ func writeHelmRepoFile(f *repo.File, path string) error {
 // cache. Once both files have been downloaded and the index has parsed, the
 // global repository mutex makes the index rename the publication commit point;
 // Browse therefore sees either the old complete index or the new one.
-func downloadHelmRepoIndex(settings *cli.EnvSettings, entry *repo.Entry) error {
+func downloadHelmRepoIndex(ctx context.Context, settings *cli.EnvSettings, entry *repo.Entry) error {
 	if err := os.MkdirAll(settings.RepositoryCache, 0o755); err != nil {
 		return err
 	}
@@ -92,19 +93,40 @@ func downloadHelmRepoIndex(settings *cli.EnvSettings, entry *repo.Entry) error {
 		return err
 	}
 	defer os.RemoveAll(tempCache)
-	r, err := repo.NewChartRepository(entry, getter.All(settings))
+	indexURL, err := repo.ResolveReferenceURL(entry.URL, "index.yaml")
 	if err != nil {
 		return err
 	}
-	r.CachePath = tempCache
-	indexPath, err := r.DownloadIndexFile()
+	options := &action.ChartPathOptions{
+		RepoURL: entry.URL, Username: entry.Username, Password: entry.Password,
+		CertFile: entry.CertFile, KeyFile: entry.KeyFile, CaFile: entry.CAFile,
+		InsecureSkipTLSverify: entry.InsecureSkipTLSverify,
+		PassCredentialsAll:    entry.PassCredentialsAll,
+	}
+	body, err := fetchHelmHTTP(ctx, options, indexURL, maxHelmRepoIndexBytes)
 	if err != nil {
 		return err
 	}
-	if _, err := repo.LoadIndexFile(indexPath); err != nil {
+	indexPath := filepath.Join(tempCache, entry.Name+"-index.yaml")
+	if err := os.WriteFile(indexPath, body, 0o600); err != nil {
+		return err
+	}
+	index, err := repo.LoadIndexFile(indexPath)
+	if err != nil {
 		return fmt.Errorf("downloaded index is invalid: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	charts := make([]string, 0, len(index.Entries))
+	for name := range index.Entries {
+		charts = append(charts, name)
+	}
+	sort.Strings(charts)
 	chartsPath := filepath.Join(tempCache, entry.Name+"-charts.txt")
+	if err := os.WriteFile(chartsPath, []byte(strings.Join(charts, "\n")), 0o600); err != nil {
+		return err
+	}
 
 	helmRepoMu.Lock()
 	defer helmRepoMu.Unlock()
@@ -177,7 +199,7 @@ func ListHelmRepos() ([]HelmRepo, error) {
 // AddHelmRepo adds a repo entry and downloads its index to validate the URL.
 // Reusing a name is an explicit conflict: silently replacing it would also
 // mutate the user's Helm CLI configuration and could discard credentials.
-func AddHelmRepo(name, url, username, password string) error {
+func AddHelmRepo(ctx context.Context, name, url, username, password string) error {
 	name = strings.TrimSpace(name)
 	url = strings.TrimSpace(url)
 	if name == "" || url == "" {
@@ -206,8 +228,8 @@ func AddHelmRepo(name, url, username, password string) error {
 	}()
 
 	entry := &repo.Entry{Name: name, URL: url, Username: username, Password: password}
-	if err := downloadHelmRepoIndex(settings, entry); err != nil {
-		return fmt.Errorf("could not reach repo %q: %w", url, err)
+	if err := downloadHelmRepoIndex(ctx, settings, entry); err != nil {
+		return fmt.Errorf("could not reach repo %q: %w", name, err)
 	}
 
 	helmRepoMu.Lock()
@@ -251,7 +273,7 @@ func RemoveHelmRepo(name string) error {
 }
 
 // UpdateHelmRepos re-downloads the index for every configured repo.
-func UpdateHelmRepos() error {
+func UpdateHelmRepos(ctx context.Context) error {
 	helmRepoMu.Lock()
 	settings := cli.New()
 	f, err := loadOrNewRepoFile(settings.RepositoryConfig)
@@ -269,9 +291,16 @@ func UpdateHelmRepos() error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			semaphore <- struct{}{}
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				failuresMu.Lock()
+				failures = append(failures, ctx.Err().Error())
+				failuresMu.Unlock()
+				return
+			}
 			defer func() { <-semaphore }()
-			downloadErr := downloadHelmRepoIndex(settings, entry)
+			downloadErr := downloadHelmRepoIndex(ctx, settings, entry)
 			if downloadErr != nil {
 				failuresMu.Lock()
 				failures = append(failures, fmt.Sprintf("%s: %v", entry.Name, downloadErr))

@@ -41,6 +41,7 @@ const (
 // still unscheduled — which is real, and usually means the scheduler is
 // mid-cycle or a plugin Kubby does not model rejected it.
 const (
+	SchedulingBlocked       = "blocked"
 	SchedulingScheduled     = "scheduled"
 	SchedulingUnschedulable = "unschedulable"
 	SchedulingFits          = "fits"
@@ -243,6 +244,8 @@ func (in *schedulingInputs) readClaim(ctx context.Context, c *Cluster, namespace
 			in.mu.Lock()
 			in.classes[class.Name] = class
 			in.mu.Unlock()
+		} else {
+			in.warn("StorageClass %s could not be read; volume binding mode is unknown: %v", *claim.Spec.StorageClassName, err)
 		}
 	}
 }
@@ -395,6 +398,10 @@ func simulateScheduling(report *SchedulingReport, pod *corev1.Pod, in *schedulin
 	if len(in.nodes) == 0 {
 		report.Verdict = SchedulingUnknown
 		report.Headline = "No node could be evaluated."
+		if len(volumes.blockers) > 0 {
+			report.Verdict = SchedulingBlocked
+			report.Headline = "Storage blocks scheduling: " + strings.Join(volumes.blockers, "; ") + "."
+		}
 		report.Findings = append(report.Findings, CheckFinding{SeverityWarning, "This connection reported no nodes",
 			"Either the cluster has no nodes, or this token may not list them."})
 		return
@@ -434,6 +441,11 @@ func simulateScheduling(report *SchedulingReport, pod *corev1.Pod, in *schedulin
 	if len(report.Nodes) < len(in.nodes) {
 		report.Warnings = append(report.Warnings,
 			fmt.Sprintf("%d of %d nodes are listed; the counts above cover all of them.", len(report.Nodes), len(in.nodes)))
+	}
+	if len(volumes.blockers) > 0 {
+		report.Verdict = SchedulingBlocked
+		report.Headline = "Storage blocks scheduling: " + strings.Join(volumes.blockers, "; ") + "."
+		return
 	}
 	if report.NodesFit > 0 {
 		report.Verdict = SchedulingFits

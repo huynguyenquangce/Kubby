@@ -54,3 +54,7 @@ credentials or raw application logs. The normal OS save dialog owns the path.
 go run ./cmd/kubby-cli investigate Pod <name> -n <namespace>
 go test ./internal/k8sclient -run Investigation
 ```
+
+The Markdown formatter redacts credential-shaped free-form findings/timeline
+messages at export. App export also redacts the exact configured AI key. Logs
+and incident exports use private file permissions before replacing content.

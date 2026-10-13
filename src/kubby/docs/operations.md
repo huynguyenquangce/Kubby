@@ -17,7 +17,7 @@ Destructive actions use `danger: true`, which turns the OK button red.
 | Action | Kinds | Notes |
 |---|---|---|
 | Scale | Deployment | Modal prefilled with the current replica count; warns when a HorizontalPodAutoscaler targets the Deployment, because the HPA overwrites a manual scale at its next sync |
-| Restart (rolling) | Deployment, StatefulSet, DaemonSet | Patches `kubectl.kubernetes.io/restartedAt`, the same mechanism `kubectl rollout restart` uses |
+| Restart (rolling) | Deployment, StatefulSet, DaemonSet | Patches `kubby.dev/restartedAt`, the same mechanism `kubectl rollout restart` uses |
 | Pause / resume rollout | Deployment | |
 | Rollout history + rollback | Deployment | History from the owned ReplicaSets |
 | Cordon / uncordon | Node | |
@@ -91,3 +91,13 @@ go run ./cmd/kubby-cli rollout <deployment> -n <ns>
 go run ./cmd/kubby-cli cordon <node>   /   uncordon <node>
 go run ./cmd/kubby-cli drain-impact <node>   # read-only: refusing PDBs, unmanaged Pods, emptyDir
 ```
+
+For policy/v1 disruption budgets, a null selector protects no Pods, while `{}`
+protects every Pod in the namespace. Both relationship trees and drain impact
+must preserve that distinction; `selector.Empty()` cannot determine that scope.
+Create/Import both use server-side apply and probe `patch` in the document's
+actual namespace, including the default namespace when no scope is selected.
+
+Deployment rollback retries controller resource-version conflicts after a fresh
+read, preserving other fields. A changed Deployment UID aborts the retry instead
+of applying an old ReplicaSet template to a replacement Deployment.

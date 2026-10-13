@@ -178,3 +178,31 @@ func hasAction(report *IncidentReport, action string) bool {
 	}
 	return false
 }
+
+func TestIncidentExportRedactsAllFreeFormEvidence(t *testing.T) {
+	raw := "password=synthetic-export-secret Bearer synthetic-export-token https://operator:synthetic-export-password@example.test"
+	report := &IncidentReport{Kind: "Pod", Name: "synthetic", Summary: raw, Findings: []IncidentFinding{{Title: raw, Explanation: raw, Evidence: []string{raw}}}, Timeline: []IncidentMoment{{Title: raw, Detail: raw}}, Limitations: []string{raw}}
+	text := FormatIncidentMarkdown(report)
+	for _, value := range []string{"synthetic-export-secret", "synthetic-export-token", "synthetic-export-password"} {
+		if strings.Contains(text, value) {
+			t.Fatal("incident export leaked synthetic credential")
+		}
+	}
+	if !strings.Contains(text, "[REDACTED]") {
+		t.Fatal("no redaction marker")
+	}
+}
+
+func TestIncidentExportRedactsQuotedJSONCredentials(t *testing.T) {
+	for _, message := range []string{
+		`{"password":"synthetic-json-secret","token":"synthetic-json-token"}`,
+		`{"message":"nested \\"password\\":\\"synthetic-json-secret\\", \\"token\\":\\"synthetic-json-token\\""}`,
+	} {
+		text := FormatIncidentMarkdown(&IncidentReport{Kind: "Pod", Name: "synthetic", Summary: message, Timeline: []IncidentMoment{{Detail: message}}})
+		for _, value := range []string{"synthetic-json-secret", "synthetic-json-token"} {
+			if strings.Contains(text, value) {
+				t.Fatal("quoted JSON credential survived export redaction")
+			}
+		}
+	}
+}

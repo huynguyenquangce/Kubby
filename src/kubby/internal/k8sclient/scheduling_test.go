@@ -3,6 +3,9 @@ package k8sclient
 import (
 	"context"
 	"fmt"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	clienttesting "k8s.io/client-go/testing"
 	"strings"
 	"testing"
 
@@ -542,5 +545,86 @@ func TestEffectivePodRequestsCountsInitContainersAndOverhead(t *testing.T) {
 	// Memory: main 1Gi + overhead 64Mi wins over the init container's 256Mi.
 	if want := int64(1024+64) << 20; amounts[corev1.ResourceMemory] != want {
 		t.Fatalf("memory = %d, want %d", amounts[corev1.ResourceMemory], want)
+	}
+}
+
+func TestSchedulingVolumeBlockersLeadVerdictEvenWhenNodeFits(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		phase                   corev1.PersistentVolumeClaimPhase
+		missing, deleting, wait bool
+		blocked                 bool
+	}{
+		{name: "missing", missing: true, blocked: true},
+		{name: "Immediate pending", phase: corev1.ClaimPending, blocked: true},
+		{name: "Lost", phase: corev1.ClaimLost, blocked: true},
+		{name: "terminating bound", phase: corev1.ClaimBound, deleting: true, blocked: true},
+		{name: "WaitForFirstConsumer", phase: corev1.ClaimPending, wait: true},
+		{name: "bound", phase: corev1.ClaimBound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mode := storagev1.VolumeBindingImmediate
+			if tc.wait {
+				mode = storagev1.VolumeBindingWaitForFirstConsumer
+			}
+			class := "storage"
+			pod := schedPod("apps", "api", func(pod *corev1.Pod) {
+				pod.Spec.Volumes = []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data"}}}}
+			})
+			objects := []runtime.Object{schedNode("node-1", "8", "16Gi"), pod, &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: class}, VolumeBindingMode: &mode}}
+			if !tc.missing {
+				pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "apps", Name: "data"}, Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &class}, Status: corev1.PersistentVolumeClaimStatus{Phase: tc.phase}}
+				if tc.deleting {
+					now := metav1.Now()
+					pvc.DeletionTimestamp = &now
+					pvc.Finalizers = []string{"test"}
+				}
+				objects = append(objects, pvc)
+			}
+			report := explain(t, objects, "apps", "api")
+			if report.NodesFit != 1 || !nodeFit(t, report, "node-1").Fits {
+				t.Fatalf("node-local feasibility was lost: %+v", report)
+			}
+			if tc.blocked {
+				if report.Verdict != SchedulingBlocked || !strings.Contains(report.Headline, "PersistentVolumeClaim data") || strings.Contains(report.Headline, "outside these checks") {
+					t.Fatalf("known PVC blocker not leading verdict: %s — %s", report.Verdict, report.Headline)
+				}
+			} else if report.Verdict != SchedulingFits {
+				t.Fatalf("valid storage blocked scheduling: %s — %s", report.Verdict, report.Headline)
+			}
+		})
+	}
+}
+
+func TestMissingClaimBlocksEvenWithoutNodeEvidence(t *testing.T) {
+	pod := schedPod("apps", "api")
+	report := buildSchedulingReport(pod, &schedulingInputs{claims: map[string]*corev1.PersistentVolumeClaim{"missing": nil}})
+	if report.Verdict != SchedulingBlocked || !strings.Contains(report.Headline, "missing") {
+		t.Fatal("known storage blocker disappeared without nodes")
+	}
+	if report.NodesTotal != 0 {
+		t.Fatal("unexpected node evidence")
+	}
+}
+
+func TestUnreadableStorageClassDoesNotInventImmediateBinding(t *testing.T) {
+	class := "unknown-class"
+	pod := schedPod("apps", "api", func(pod *corev1.Pod) {
+		pod.Spec.Volumes = []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data"}}}}
+	})
+	claim := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data", Namespace: "apps"}, Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &class}, Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending}}
+	client := kubefake.NewSimpleClientset(pod, claim, schedNode("node-1", "8", "16Gi"))
+	client.PrependReactor("get", "storageclasses", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "storage.k8s.io", Resource: "storageclasses"}, class, fmt.Errorf("synthetic denial"))
+	})
+	report, err := ExplainScheduling(context.Background(), &Cluster{Clientset: client}, "apps", "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Verdict == SchedulingBlocked {
+		t.Fatal("unreadable binding mode treated as known blocker")
+	}
+	if !strings.Contains(strings.Join(report.Warnings, " "), "binding mode is unknown") {
+		t.Fatal("missing warning for unreadable StorageClass")
 	}
 }

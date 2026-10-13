@@ -1,4 +1,30 @@
 const DEFAULT_FIXTURES = {
+    // Every mocked bridge call has an explicit response. Unexpected methods
+    // reject instead of masquerading as empty data or a successful write.
+    ConnectWithContent: null, ConnectWithPath: null,
+    SwitchCluster: null, CancelDrawerSnapshot: null,
+    ExecWrite: null, ExecResize: null, StopExec: null,
+    StartLogStream: null, StopLogStream: null,
+    StopPortForward: null, CancelPortForwardStart: null,
+    ForgetConnection: null, SaveAIConfig: null, UpdateYAML: null,
+    DeleteResourceOwned: null, ScaleDeploymentOwned: null,
+    RestartDeploymentOwned: null, RestartStatefulSetOwned: null, RestartDaemonSetOwned: null,
+    SetDeploymentPausedOwned: null, SetNodeSchedulableOwned: null,
+    DrainNodeOwned: null, RunCronJobNowOwned: null, RollbackDeploymentOwned: null,
+    HelmInstallOwned: null, HelmUpgradeValuesOwned: null,
+    HelmRollbackOwned: null, HelmUninstallOwned: null,
+    HelmTestOwned: 'Synthetic Helm test passed.',
+    AddHelmRepo: null, RemoveHelmRepo: null, UpdateHelmRepos: null,
+    ListCustomPage: {resources: [], page: {continue:"",remaining:0}},
+    ListDeployments: [], ListServices: [], ListIngresses: [],
+    CopyToClipboard: null, Diagnostics: "Synthetic diagnostics",
+    AIResourceContext: {text: "Synthetic resource evidence", events: 0, logLines: 0, logContainers: 0, hasYAML: false},
+    ListStatefulSets: [], ListDaemonSets: [], ListJobs: [], ListCronJobs: [],
+    ListPVCs: [], ListPersistentVolumes: [], ListStorageClasses: [],
+    ListConfigMaps: [], ListSecrets: [], ListServiceAccounts: [],
+    ListRoles: [], ListRoleBindings: [], ListClusterRoles: [], ListClusterRoleBindings: [],
+    ListCRDs: [], ListResourceQuotas: [], ListLimitRanges: [],
+    RolloutHistory: [],
     RecentConnections: [],
     ContextsFromContent: { contexts: ['kind-kubby-dev'], currentContext: 'kind-kubby-dev' },
     ConnectedClusters: [{ id: 'cluster-1', name: 'kind-kubby-dev', active: true }],
@@ -358,15 +384,18 @@ export async function installWailsMock(page, overrides = {}) {
         const clone = (value) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
         const responses = { ...fixtures, ...responseOverrides };
         const calls = [];
+        const unexpectedCalls = [];
         const listeners = new Map();
         const deferred = new Map();
         const app = new Proxy({}, {
             get(_target, method) {
                 return (...args) => {
                     calls.push({ method: String(method), args: clone(args) });
-                    const response = Object.prototype.hasOwnProperty.call(responses, method)
-                        ? responses[method]
-                        : [];
+                    if (!Object.prototype.hasOwnProperty.call(responses, method)) {
+                        unexpectedCalls.push(String(method));
+                        return Promise.reject(new Error(`Unexpected Wails mock method: ${String(method)}`));
+                    }
+                    const response = responses[method];
                     if (response && typeof response === 'object' && response.__error) {
                         return Promise.reject(new Error(String(response.__error)));
                     }
@@ -382,6 +411,7 @@ export async function installWailsMock(page, overrides = {}) {
 
         window.__wailsMock = {
             calls,
+            unexpectedCalls,
             clipboardText: '',
             setResponse(method, value) { responses[method] = clone(value); },
             resolveDeferred(name, value) {
@@ -423,7 +453,7 @@ export async function installWailsMock(page, overrides = {}) {
             ClipboardSetText(value) {
                 calls.push({ method: 'ClipboardSetText', args: [value] });
                 window.__wailsMock.clipboardText = String(value);
-                return Promise.resolve(true);
+                return Promise.resolve(Object.prototype.hasOwnProperty.call(responses, 'ClipboardSetText') ? responses.ClipboardSetText : true);
             },
             LogPrint() {}, LogTrace() {}, LogDebug() {}, LogInfo() {}, LogWarning() {}, LogError() {}, LogFatal() {},
         };

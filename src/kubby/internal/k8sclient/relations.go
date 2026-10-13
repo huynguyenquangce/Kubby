@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -251,27 +252,32 @@ func ListPodsSnapshot(ctx context.Context, c *Cluster, namespace string) (*PodsS
 }
 
 func ListPodsPage(ctx context.Context, c *Cluster, namespace, continueToken string, limit int64) (*PodsPage, error) {
-	list, err := c.Clientset.CoreV1().Pods(namespace).List(ctx, resourcePageOptions(continueToken, limit))
-	if err != nil {
-		return nil, err
+	var list *corev1.PodList
+	var podErr, metricErr error
+	var index map[string]PodMetric
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		list, podErr = c.Clientset.CoreV1().Pods(namespace).List(ctx, resourcePageOptions(continueToken, limit))
+	}()
+	go func() {
+		defer wg.Done()
+		index, metricErr = cachedPodPageMetrics(ctx, c, namespace)
+	}()
+	wg.Wait()
+	if podErr != nil {
+		return nil, podErr
 	}
-
-	metrics, err := PodMetricsList(ctx, c, namespace)
-	if err != nil {
-		return nil, err
+	if metricErr != nil {
+		return nil, metricErr
 	}
-	if len(metrics) > 0 {
-		wanted := make(map[string]struct{}, len(list.Items))
-		for i := range list.Items {
-			wanted[list.Items[i].Namespace+"\x00"+list.Items[i].Name] = struct{}{}
+	metrics := make([]PodMetric, 0, len(list.Items))
+	for i := range list.Items {
+		pod := &list.Items[i]
+		if metric, ok := index[pod.Namespace+"\x00"+pod.Name]; ok {
+			metrics = append(metrics, metric)
 		}
-		filtered := metrics[:0]
-		for _, metric := range metrics {
-			if _, ok := wanted[metric.Namespace+"\x00"+metric.Name]; ok {
-				filtered = append(filtered, metric)
-			}
-		}
-		metrics = filtered
 	}
 
 	return &PodsPage{
@@ -324,4 +330,60 @@ func podMetricsFrom(items []metricsv1beta1.PodMetrics) []PodMetric {
 		out = append(out, PodMetric{Namespace: pm.Namespace, Name: pm.Name, CPUMilli: cpu, MemMi: mem})
 	}
 	return out
+}
+
+// Metrics has no Kubernetes pagination. Share a five-second immutable index
+// across pages, coalesce concurrent fetches, and allow waiters to cancel.
+type podPageMetricsEntry struct {
+	done    chan struct{}
+	expires time.Time
+	index   map[string]PodMetric
+	err     error
+}
+
+func cachedPodPageMetrics(ctx context.Context, c *Cluster, namespace string) (map[string]PodMetric, error) {
+	if c.Metrics == nil {
+		return nil, nil
+	}
+	c.podPageMetricsMu.Lock()
+	if c.podPageMetrics == nil {
+		c.podPageMetrics = map[string]*podPageMetricsEntry{}
+	}
+	if entry := c.podPageMetrics[namespace]; entry != nil && (entry.expires.IsZero() || time.Now().Before(entry.expires)) {
+		c.podPageMetricsMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-entry.done:
+			if entry.err != nil && ctx.Err() == nil {
+				return cachedPodPageMetrics(ctx, c, namespace)
+			}
+			return entry.index, entry.err
+		}
+	}
+	for key, entry := range c.podPageMetrics {
+		if !entry.expires.IsZero() && time.Now().After(entry.expires) {
+			delete(c.podPageMetrics, key)
+		}
+	}
+	entry := &podPageMetricsEntry{done: make(chan struct{})}
+	c.podPageMetrics[namespace] = entry
+	c.podPageMetricsMu.Unlock()
+	metrics, err := PodMetricsList(ctx, c, namespace)
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	index := make(map[string]PodMetric, len(metrics))
+	for _, metric := range metrics {
+		index[metric.Namespace+"\x00"+metric.Name] = metric
+	}
+	c.podPageMetricsMu.Lock()
+	entry.index, entry.err = index, err
+	entry.expires = time.Now().Add(5 * time.Second)
+	if err != nil {
+		delete(c.podPageMetrics, namespace)
+	}
+	close(entry.done)
+	c.podPageMetricsMu.Unlock()
+	return index, err
 }

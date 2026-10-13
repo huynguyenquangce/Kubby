@@ -122,3 +122,13 @@ spec:
 		t.Fatalf("ordinary camelCase values should remain useful evidence:\n%s", got)
 	}
 }
+
+func TestFreeTextJSONCredentialRedaction(t *testing.T) {
+	input := `status {"password":"synthetic-json-secret", "api_key":"synthetic-json-key", "client-secret":"synthetic-json-client"}`
+	output := RedactSensitiveText(input)
+	for _, value := range []string{"synthetic-json-secret", "synthetic-json-key", "synthetic-json-client"} {
+		if strings.Contains(output, value) {
+			t.Fatal("quoted JSON credential survived text redaction")
+		}
+	}
+}
