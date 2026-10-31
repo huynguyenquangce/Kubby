@@ -1,0 +1,234 @@
+# Builds, smoke-tests and stages a Windows release as a GitHub *draft*.
+#
+# A draft has no tag yet. A maintainer downloads the draft assets, performs the
+# native Windows check from docs/BUILD.md section 8, and only then presses
+# "Publish release"; GitHub creates the tag on the audited commit at that moment.
+# docs/BUILD.md section 9 is the authoritative checklist for this workflow.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version without the v prefix, for example 0.5.1. Must equal wails.json productVersion.
+        required: true
+        type: string
+      prerelease:
+        description: Mark as a preview release. Keep enabled while the binaries are unsigned.
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ inputs.version }}
+  GO_VERSION: '1.26.9'
+  WAILS: github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.identity.outputs.commit }}
+      date: ${{ steps.identity.outputs.date }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Validate release inputs against the source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Releases are cut from main only (got $GITHUB_REF)."; exit 1
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must look like 1.2.3 without a v prefix (got '$VERSION')."; exit 1
+          fi
+          product="$(jq -r '.info.productVersion' src/kubby/wails.json)"
+          if [ "$product" != "$VERSION" ]; then
+            echo "::error::wails.json productVersion is $product, not $VERSION."; exit 1
+          fi
+          if ! grep -q "^var Version = \"$VERSION-dev\"$" src/kubby/internal/buildinfo/buildinfo.go; then
+            echo "::error::internal/buildinfo.Version must be \"$VERSION-dev\" in source."; exit 1
+          fi
+          if [ ! -s "docs/releases/v$VERSION.md" ]; then
+            echo "::error::Release notes docs/releases/v$VERSION.md are missing."; exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::Tag v$VERSION already exists."; exit 1
+          fi
+      - name: Record build identity
+        id: identity
+        shell: bash
+        run: |
+          echo "commit=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(git show -s --format=%cs HEAD)" >> "$GITHUB_OUTPUT"
+
+  quality:
+    needs: preflight
+    uses: ./.github/workflows/ui-tests.yml
+
+  build-windows:
+    needs: [preflight, quality]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: src/kubby
+    env:
+      COMMIT: ${{ needs.preflight.outputs.commit }}
+      DATE: ${{ needs.preflight.outputs.date }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: src/kubby/go.sum
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/kubby/frontend/package-lock.json
+      - name: Ensure NSIS is available
+        run: |
+          if command -v makensis >/dev/null; then exit 0; fi
+          choco install nsis --yes --no-progress
+          echo "C:\\Program Files (x86)\\NSIS" >> "$GITHUB_PATH"
+      - name: Build application and installer
+        run: |
+          set -euo pipefail
+          makensis -VERSION
+          go run "$WAILS" build -platform windows/amd64 -nsis -installscope user -trimpath \
+            -ldflags "-X kubby/internal/buildinfo.Version=$VERSION -X kubby/internal/buildinfo.Commit=$COMMIT -X kubby/internal/buildinfo.Date=$DATE"
+      - name: Reject a build that changed tracked source
+        run: |
+          git -c core.fileMode=false diff --exit-code -- frontend/wailsjs/go/main
+          changed="$(git -c core.fileMode=false status --porcelain --untracked-files=no)"
+          if [ -n "$changed" ]; then echo "::error::The build modified tracked files:"; echo "$changed"; exit 1; fi
+      - name: Stage release assets
+        run: |
+          set -euo pipefail
+          # Wails only warns and exits 0 when makensis is missing; require the file.
+          test -s build/bin/kubby.exe
+          test -s build/bin/kubby-amd64-installer.exe
+          mkdir -p dist
+          cp build/bin/kubby-amd64-installer.exe dist/kubby-windows-amd64-setup.exe
+          cp build/bin/kubby.exe dist/kubby-windows-amd64.exe
+          cd dist
+          for f in kubby-windows-amd64-setup.exe kubby-windows-amd64.exe; do
+            sha256sum "$f" > "$f.sha256"
+            sha256sum -c "$f.sha256"
+          done
+      - name: Smoke-test silent install and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir       = Join-Path $env:LOCALAPPDATA 'Programs\Kubby'
+          $exe       = Join-Path $dir 'kubby.exe'
+          $uninstall = Join-Path $dir 'uninstall.exe'
+          $shortcut  = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Kubby.lnk'
+          $regKey    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\HuyNQ263Kubby'
+          function Fail($message) { Write-Error $message; exit 1 }
+
+          $setup = Start-Process -FilePath 'dist\kubby-windows-amd64-setup.exe' -ArgumentList '/S' -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { Fail "Installer exited with $($setup.ExitCode)" }
+          foreach ($path in @($exe, $uninstall, $shortcut)) {
+            if (-not (Test-Path $path)) { Fail "Installer did not create $path" }
+          }
+          $installed = (Get-FileHash $exe -Algorithm SHA256).Hash
+          $portable  = (Get-FileHash 'dist\kubby-windows-amd64.exe' -Algorithm SHA256).Hash
+          if ($installed -ne $portable) { Fail 'Installed kubby.exe differs from the portable release asset' }
+          $entry = Get-ItemProperty $regKey
+          if ($entry.DisplayVersion -ne $env:VERSION) { Fail "Apps list shows $($entry.DisplayVersion), expected $env:VERSION" }
+          $fileVersion = (Get-Item $exe).VersionInfo.ProductVersion
+          if ($fileVersion -ne $env:VERSION) { Fail "kubby.exe ProductVersion is $fileVersion, expected $env:VERSION" }
+
+          # The NSIS uninstaller relaunches itself from %TEMP% and returns at once.
+          Start-Process -FilePath $uninstall -ArgumentList '/S' -Wait
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Test-Path $dir) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+          foreach ($path in @($dir, $shortcut, $regKey)) {
+            if (Test-Path $path) { Fail "Uninstaller left $path behind" }
+          }
+          Write-Host 'Silent install, payload identity, Apps-list entry and clean uninstall verified.'
+      - name: Upload staged assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubby-v${{ env.VERSION }}-windows-amd64
+          path: src/kubby/dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  draft-release:
+    needs: [preflight, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: v${{ inputs.version }}
+    steps:
+      - name: Check out release notes
+        uses: actions/checkout@v4
+      - name: Download staged assets
+        uses: actions/download-artifact@v4
+        with:
+          name: kubby-v${{ env.VERSION }}-windows-amd64
+          path: dist
+      - name: Verify asset formats and checksums
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          file kubby-windows-amd64.exe | grep -Eq 'PE32\+ executable.*\(GUI\).*x86-64'
+          file kubby-windows-amd64-setup.exe | grep -q 'Nullsoft Installer'
+          sha256sum -c kubby-windows-amd64.exe.sha256 kubby-windows-amd64-setup.exe.sha256
+      - name: Refuse to duplicate an existing release
+        shell: bash
+        run: |
+          # Draft releases are only visible with write access, so check here.
+          existing="$(gh release list --limit 100 --json tagName --jq ".[] | select(.tagName == \"$TAG\") | .tagName")"
+          if [ -n "$existing" ]; then echo "::error::A release or draft for $TAG already exists."; exit 1; fi
+      - name: Create draft release on the built commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=()
+          if [ "${{ inputs.prerelease }}" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" \
+            dist/kubby-windows-amd64-setup.exe \
+            dist/kubby-windows-amd64-setup.exe.sha256 \
+            dist/kubby-windows-amd64.exe \
+            dist/kubby-windows-amd64.exe.sha256 \
+            --draft --target "$GITHUB_SHA" "${flags[@]}" \
+            --title "Kubby $TAG" \
+            --notes-file "docs/releases/$TAG.md"
+      - name: Verify uploaded draft assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          json="$(gh release view "$TAG" --json isDraft,assets)"
+          [ "$(jq -r .isDraft <<<"$json")" = "true" ]
+          for f in dist/*; do
+            name="$(basename "$f")"
+            remote="$(jq -r --arg n "$name" '.assets[] | select(.name == $n and .state == "uploaded") | .size' <<<"$json")"
+            if [ "$remote" != "$(stat -c %s "$f")" ]; then echo "::error::$name is missing or has the wrong size."; exit 1; fi
+          done
+          {
+            echo "### Draft $TAG is ready for the native Windows check"
+            echo
+            echo "Commit: \`$GITHUB_SHA\` (${{ needs.preflight.outputs.commit }}, ${{ needs.preflight.outputs.date }})"
+            echo
+            echo "1. Download \`kubby-windows-amd64-setup.exe\` from the draft and install it on Windows."
+            echo "2. Perform docs/BUILD.md section 8 and check Settings → About shows $VERSION / ${{ needs.preflight.outputs.commit }}."
+            echo "3. Publish the draft. GitHub creates tag $TAG on the commit above."
+          } >> "$GITHUB_STEP_SUMMARY"

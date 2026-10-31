@@ -108,12 +108,38 @@
 
       <section class="section download-section" id="download" aria-labelledby="download-title">
         <div class="shell download-panel">
-          <div><p class="section-kicker">Get started</p><h2 id="download-title">Your cluster, a little clearer.</h2><p>Bring an existing kubeconfig. Kubby runs on your machine and talks directly to your cluster.</p><div class="download-actions"><a class="button button-primary button-large" href="https://github.com/huynguyenquangce/Kubby/releases" target="_blank" rel="noopener noreferrer">Download Windows preview <span aria-hidden="true">↗</span></a><a class="button button-outline button-large" href="https://github.com/huynguyenquangce/Kubby#build-kubby" target="_blank" rel="noopener noreferrer">Build from source <span aria-hidden="true">↗</span></a></div><p class="availability">Windows x86-64 preview available · Linux build instructions available · macOS support in progress</p></div>
+          <div><p class="section-kicker">Get started</p><h2 id="download-title">Your cluster, a little clearer.</h2><p>Bring an existing kubeconfig. Kubby runs on your machine and talks directly to your cluster.</p><div class="download-actions"><a class="button button-primary button-large" id="windows-download" href="https://github.com/huynguyenquangce/Kubby/releases" target="_blank" rel="noopener noreferrer"><span data-download-label>Download for Windows</span> <span aria-hidden="true" data-download-icon>↗</span></a><a class="button button-outline button-large" href="https://github.com/huynguyenquangce/Kubby#build-kubby" target="_blank" rel="noopener noreferrer">Build from source <span aria-hidden="true">↗</span></a></div><p class="availability">Windows 10/11 x86-64 installer, no administrator rights needed · <a href="https://github.com/huynguyenquangce/Kubby/releases" target="_blank" rel="noopener noreferrer">Portable EXE and SHA-256 checksums</a></p><p class="availability">Preview builds are not code-signed yet, so Windows SmartScreen may ask you to confirm: choose More info → Run anyway. Linux build instructions available · macOS support in progress</p></div>
           <div class="download-decoration" aria-hidden="true"><span class="decor-ring ring-one"></span><span class="decor-ring ring-two"></span><img src="./assets/kubby-mark.svg" alt="" width="126" height="126"></div>
         </div>
       </section>
     </main>
 
     <footer class="site-footer"><div class="shell footer-inner"><a class="brand" href="#top"><img src="./assets/kubby-mark.svg" alt="" width="26" height="26"><span>Kubby</span></a><p>Personal, agent-less Kubernetes management.</p><div><a href="https://github.com/huynguyenquangce/Kubby" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://github.com/huynguyenquangce/Kubby/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a></div></div></footer>
+    <script>
+      // Point the Windows button straight at the newest published installer.
+      // Without JavaScript or when the API is unreachable, it keeps linking to
+      // the Releases page. Previews count: GitHub's /releases/latest skips them.
+      (function () {
+        var link = document.getElementById('windows-download');
+        if (!link || !window.fetch) return;
+        var assetName = 'kubby-windows-amd64-setup.exe';
+        fetch('https://api.github.com/repos/huynguyenquangce/Kubby/releases?per_page=20', { headers: { Accept: 'application/vnd.github+json' } })
+          .then(function (response) { return response.ok ? response.json() : []; })
+          .then(function (releases) {
+            for (var i = 0; i < releases.length; i++) {
+              var release = releases[i];
+              if (release.draft) continue;
+              var asset = (release.assets || []).filter(function (a) { return a.name === assetName; })[0];
+              if (!asset || asset.browser_download_url.indexOf('https://github.com/huynguyenquangce/Kubby/releases/download/') !== 0) continue;
+              link.href = asset.browser_download_url;
+              link.removeAttribute('target');
+              link.querySelector('[data-download-label]').textContent = 'Download for Windows · ' + release.tag_name;
+              link.querySelector('[data-download-icon]').textContent = '↓';
+              return;
+            }
+          })
+          .catch(function () {});
+      })();
+    </script>
   </body>
 </html>

@@ -48,6 +48,10 @@ bug-screenshot
 *.dylib
 *.test
 src/kubby/build/bin/
+# Wails rewrites the NSIS helper from its embedded template on every -nsis build
+# and downloads the WebView2 bootstrapper beside it; project.nsi is the source.
+src/kubby/build/windows/installer/wails_tools.nsh
+src/kubby/build/windows/installer/tmp/
 
 # Frontend dependencies and generated bundles
 **/node_modules/

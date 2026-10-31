@@ -30,6 +30,17 @@ Unicode true
 ####
 ## !define REQUEST_EXECUTION_LEVEL "admin"            # Default "admin"  see also https://nsis.sourceforge.io/Docs/Chapter4.html
 ####
+## Kubby installs per user, like most consumer desktop apps: no UAC
+## prompt, a fixed folder under %LOCALAPPDATA%\Programs\Kubby, and Start Menu,
+## Desktop and Apps-list entries for the current user only. The guards accept
+## the same values from `wails build -installscope user` without redefining.
+!ifndef WAILS_INSTALL_SCOPE
+  !define WAILS_INSTALL_SCOPE "user"
+!endif
+!ifndef REQUEST_EXECUTION_LEVEL
+  !define REQUEST_EXECUTION_LEVEL "user"
+!endif
+####
 ## Include the wails tools
 ####
 !include "wails_tools.nsh"
@@ -58,8 +69,11 @@ ManifestDPIAware true
 
 !insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
 # !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
-!insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
+# No directory page: the per-user folder is fixed, so the uninstaller only ever
+# removes a folder that Kubby itself created.
 !insertmacro MUI_PAGE_INSTFILES # Installing page.
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch ${INFO_PRODUCTNAME}"
 !insertmacro MUI_PAGE_FINISH # Finished installation page.
 
 !insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
@@ -94,6 +108,21 @@ Section
 
     SetOutPath $INSTDIR
 
+    # An upgrade cannot replace the executable while Kubby is running. Ask the
+    # user to close it instead of failing with a generic "cannot write" error.
+    retryReplace:
+    ClearErrors
+    IfFileExists "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 replaceReady
+    Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    IfErrors 0 replaceReady
+    IfSilent 0 askClose
+    SetErrorLevel 5
+    Abort "${INFO_PRODUCTNAME} is running. Close it and run the installer again."
+    askClose:
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${INFO_PRODUCTNAME} is running. Close it, then click Retry to continue the update." IDRETRY retryReplace
+    Abort "Installation cancelled because ${INFO_PRODUCTNAME} is still running."
+    replaceReady:
+
     !insertmacro wails.files
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
@@ -110,7 +139,9 @@ Section "uninstall"
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
-    RMDir /r $INSTDIR
+    # Remove only files this installer wrote; a non-recursive RMDir keeps any
+    # foreign file (and its folder) instead of deleting it.
+    Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
@@ -119,4 +150,5 @@ Section "uninstall"
     !insertmacro wails.unassociateCustomProtocols
 
     !insertmacro wails.deleteUninstaller
+    RMDir $INSTDIR
 SectionEnd

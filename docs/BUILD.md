@@ -10,7 +10,16 @@ Run project commands from `src/kubby/` unless a step explicitly says otherwise.
 | Target | Command target | Canonical artifact |
 |---|---|---|
 | Windows x86-64 | `windows/amd64` | `src/kubby/build/bin/kubby.exe` |
+| Windows x86-64 installer | `windows/amd64` with `-nsis` | `src/kubby/build/bin/kubby-amd64-installer.exe` |
 | Linux x86-64 | `linux/amd64` | `src/kubby/build/bin/kubby` |
+
+The installer is what end users download. It installs per user into
+`%LOCALAPPDATA%\Programs\Kubby` without an administrator prompt, adds Start Menu
+and Desktop shortcuts and a **Settings → Apps** entry, offers to launch Kubby,
+and installs the WebView2 runtime when it is missing. Its script is
+`src/kubby/build/windows/installer/project.nsi`. Wails regenerates
+`wails_tools.nsh` and a `tmp/` WebView2 bootstrapper beside it on every installer
+build; both are ignored and are not source.
 
 A cross-built Windows executable still needs a native Windows visual check.
 Headless validation proves its format and compilation, not GUI behaviour.
@@ -27,6 +36,18 @@ Required for every target:
 - Wails CLI v2.13.0, matching `src/kubby/go.mod`.
 
 Native Windows builds also require WebView2. Windows 11 normally provides it.
+
+The Windows installer additionally requires NSIS 3 (`makensis`) on the build
+host. Wails only prints a warning and exits successfully when `makensis` is
+missing, so always confirm the installer file exists (section 6).
+
+```bash
+sudo apt-get install -y nsis        # WSL/Linux cross-build
+```
+
+```powershell
+winget install NSIS.NSIS            # native Windows; then reopen the shell
+```
 
 Browser UI checks require Playwright's pinned Chromium. After `npm ci`, install
 it once per machine. On Windows use `npx playwright install chromium`; on
@@ -163,6 +184,14 @@ Windows x86-64 from WSL:
 go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build -platform windows/amd64
 ```
 
+Add `-nsis` to either Windows command to also produce the installer from the
+same executable. Kubby always installs per user; `project.nsi` fixes that scope,
+so `-installscope user` is accepted but not required:
+
+```bash
+go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build -platform windows/amd64 -nsis
+```
+
 For a tagged release, override all three build identity fields and trim local
 paths. Substitute the version, seven-character commit, and commit date that will
 be tagged; do not build a release from a dirty tree:
@@ -200,6 +229,16 @@ sha256sum build/bin/kubby.exe
 ```
 
 `file` must report a PE32+ Windows GUI x86-64 executable.
+
+For a Windows installer build, also check the installer and its payload:
+
+```bash
+file build/bin/kubby-amd64-installer.exe
+sha256sum build/bin/kubby-amd64-installer.exe
+```
+
+`file` must report a `Nullsoft Installer self-extracting archive`. A missing file
+means `makensis` was not found even if Wails reported success.
 
 For a Linux artifact:
 
@@ -249,7 +288,15 @@ If a custom cache was selected, pass the same `GOCACHE` value to this command.
 
 The full Wails build verifies compilation and packaging. Before a Windows
 release, open `kubby.exe` on native Windows and visually confirm startup,
-WebView2 rendering, cluster connection, and the changed UI workflow. Native
+WebView2 rendering, cluster connection, and the changed UI workflow.
+
+For a release, perform that check through the installer: run
+`kubby-windows-amd64-setup.exe`, confirm there is no administrator prompt, launch
+Kubby from the finish page and from the Start Menu, and finally uninstall it from
+**Settings → Apps** and confirm the shortcuts disappear. Install over an older
+version once with Kubby still running; the installer must ask you to close it and
+continue after **Retry**. Uninstalling intentionally keeps the user's
+`%APPDATA%\kubby` settings (recent kubeconfig paths and AI configuration). Native
 dialog click automation is unreliable on this machine, so record the manual
 check rather than claiming it from a headless session.
 
@@ -258,31 +305,42 @@ command described in [`../src/kubby/docs/verification.md`](../src/kubby/docs/ver
 
 ## 9. Publish a GitHub release
 
-This section is the release checklist. Complete sections 1–8 first; a successful
-`go build`, frontend bundle, or cross-build alone is not release readiness.
+This section is the release checklist. A successful `go build`, frontend bundle,
+or cross-build alone is not release readiness. Releases are built by the
+**Release** GitHub Actions workflow (`.github/workflows/release.yml`) on a native
+Windows runner; section 9.4 is the fallback when Actions is unavailable.
+
+Every release publishes four assets with stable names, which the landing page
+download button depends on:
+
+| Asset | Purpose |
+|---|---|
+| `kubby-windows-amd64-setup.exe` | Installer most users download |
+| `kubby-windows-amd64-setup.exe.sha256` | Installer checksum |
+| `kubby-windows-amd64.exe` | Portable executable, no installation |
+| `kubby-windows-amd64.exe.sha256` | Portable checksum |
 
 ### 9.1 Freeze and audit the release commit
 
-Update the intended version in `wails.json`, prepare user-facing notes under
-`docs/releases/vX.Y.Z.md`, and commit/push every source and documentation change.
-The checked-in `internal/buildinfo.Version` must keep its `-dev` suffix; section 5
-overrides it only in the release binary.
+Update the intended version in `wails.json`, set the checked-in
+`internal/buildinfo.Version` to the same number with its `-dev` suffix, prepare
+user-facing notes under `docs/releases/vX.Y.Z.md`, and commit/push every source
+and documentation change to `main`. The release build overrides the version
+only in the binaries.
 
-Confirm that the exact commit to be tagged is clean and matches `origin/main`:
+Confirm locally that the commit to be released is clean, matches `origin/main`,
+and that the version has not been released before:
 
 ```bash
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/main
-git tag -l vX.Y.Z
 git ls-remote --tags origin refs/tags/vX.Y.Z
+gh release list --limit 20
 ```
 
-`git status --short` must print no changed paths, the two revisions must match,
-and the proposed tag must not already exist. Run the project release-readiness
-audits described in `AGENTS.md`, then repeat the source checks in section 4.
-
-For a release, also review dependency advisories:
+Run the project release-readiness audits described in `AGENTS.md` and review
+dependency advisories:
 
 ```bash
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
@@ -297,97 +355,113 @@ If upstream has no fix, release only after proving the vulnerable path is disabl
 or unreachable, adding a regression test, and disclosing the residual in that
 version's release notes.
 
-### 9.2 Build and stage the assets
+### 9.2 Build a draft with the Release workflow
 
-Record the release version without the `v` prefix, the seven-character commit,
-and the commit date:
-
-```bash
-git rev-parse --short=7 HEAD
-git show -s --format=%cs HEAD
-```
-
-Use those exact values in the release build from section 5. After section 6 has
-verified the new canonical EXE, stage a target-specific copy and checksum:
+Start the workflow from `main`, in the GitHub **Actions → Release → Run workflow**
+page or with the CLI:
 
 ```bash
-cp build/bin/kubby.exe build/bin/kubby-windows-amd64.exe
-
-cd build/bin
-sha256sum kubby-windows-amd64.exe > kubby-windows-amd64.exe.sha256
-sha256sum -c kubby-windows-amd64.exe.sha256
-cd ../..
+gh workflow run release.yml --ref main -f version=X.Y.Z -f prerelease=true
+gh run watch
 ```
 
-Keep `build/bin/kubby.exe` as the canonical local artifact. The release-named copy
-and checksum are upload assets, not source, and remain ignored by Git.
+Keep `prerelease=true` while the binaries are unsigned. The workflow:
 
-The `.sha256` file is the EXE's byte-for-byte fingerprint. It lets someone detect
-an incomplete, corrupted, or changed download. On Windows, calculate the local
-fingerprint and compare it with the value inside the downloaded checksum file:
+1. refuses anything but `main`, a version that differs from `wails.json` or
+   `buildinfo.Version`, missing release notes, or an existing tag;
+2. reruns every Quality gates job (Go, frontend, Playwright, kind smoke) on the
+   same commit;
+3. builds `kubby.exe` and the installer on `windows-latest` with
+   `-trimpath` and release ldflags for the version, seven-character commit, and
+   commit date, and rejects stale bindings or any modified tracked file;
+4. silently installs the installer, checks that the installed `kubby.exe` is
+   byte-identical to the portable asset, checks the Start Menu shortcut, the
+   per-user Apps entry and file version, then silently uninstalls and checks
+   that nothing is left behind;
+5. verifies formats and checksums, refuses to duplicate an existing release or
+   draft, and creates a **draft** release targeting the built commit with the
+   four assets and `docs/releases/vX.Y.Z.md` as notes.
+
+A failed run publishes nothing; fix the cause on `main` and run it again. The
+run's summary lists the commit the draft targets.
+
+The `.sha256` files are byte-for-byte fingerprints. They detect an incomplete,
+corrupted, or changed download. On Windows, compare:
 
 ```powershell
-Get-FileHash .\kubby-windows-amd64.exe -Algorithm SHA256
-Get-Content .\kubby-windows-amd64.exe.sha256
+Get-FileHash .\kubby-windows-amd64-setup.exe -Algorithm SHA256
+Get-Content .\kubby-windows-amd64-setup.exe.sha256
 ```
 
 Matching hashes prove file integrity, not publisher identity. A checksum does not
-replace Authenticode/code signing because an attacker who can replace both release
-assets could publish a matching malicious checksum too.
+replace Authenticode code signing, because an attacker who can replace both
+assets could publish a matching checksum too.
 
-Perform the native Windows checks in section 8 against the release-named EXE.
-In **Settings → About**, the runtime identity must contain the same version,
-commit, date, Go toolchain, and `windows/amd64` target used for the build. Do not
-tag or publish until the human visual check passes.
+### 9.3 Native check, publish, and verify
 
-### 9.3 Tag, upload, and verify
+A draft has no tag yet. Download the draft's installer and portable EXE, verify
+their checksums, and perform the native Windows checks in section 8. In
+**Settings → About**, the runtime identity must show the release version, the
+commit and date from the workflow summary, and `windows/amd64`.
 
-Install and authenticate GitHub CLI once if needed:
+Publish only after that manual gate passes:
 
 ```bash
-gh auth status
-gh auth login
+gh release edit vX.Y.Z --draft=false
 ```
 
-Create an annotated tag only after the manual gate passes, push it, and publish
-the two verified assets. Use `--prerelease` while the Windows binary is unsigned
-or the release is otherwise a preview; omit it only when the project is ready for
-a stable release.
+GitHub creates the tag on the draft's target commit at that moment. Then prove
+the tag and assets:
 
 ```bash
-git tag -a vX.Y.Z -m "Kubby vX.Y.Z"
-git push origin vX.Y.Z
+git fetch --tags origin
+git rev-parse vX.Y.Z^{commit}
+gh release view vX.Y.Z --json name,tagName,isDraft,isPrerelease,url,targetCommitish,assets,publishedAt
+```
 
+The tag must resolve to the audited commit, the release must not be a draft, and
+all four assets must report `uploaded`. Open the landing page and confirm its
+download button now names the new version and links to
+`releases/download/vX.Y.Z/kubby-windows-amd64-setup.exe`.
+
+If the manual gate fails, delete the draft (`gh release delete vX.Y.Z`); no tag
+exists yet, so the version can be rebuilt after the fix.
+
+### 9.4 Manual fallback
+
+Use this only when GitHub Actions cannot run. Complete sections 1–8 on the clean
+release commit with `-nsis` and the release ldflags from section 5, then stage
+the same asset names:
+
+```bash
+cp build/bin/kubby-amd64-installer.exe build/bin/kubby-windows-amd64-setup.exe
+cp build/bin/kubby.exe build/bin/kubby-windows-amd64.exe
+
+cd build/bin
+for f in kubby-windows-amd64-setup.exe kubby-windows-amd64.exe; do
+  sha256sum "$f" > "$f.sha256"
+  sha256sum -c "$f.sha256"
+done
+cd ../..
+```
+
+Install the staged installer on native Windows and perform section 8, then
+create the draft from `src/kubby/` and continue with section 9.3:
+
+```bash
 gh release create vX.Y.Z \
+  build/bin/kubby-windows-amd64-setup.exe \
+  build/bin/kubby-windows-amd64-setup.exe.sha256 \
   build/bin/kubby-windows-amd64.exe \
   build/bin/kubby-windows-amd64.exe.sha256 \
-  --verify-tag \
-  --prerelease \
+  --draft --prerelease --target "$(git rev-parse HEAD)" \
   --title "Kubby vX.Y.Z" \
   --notes-file ../../docs/releases/vX.Y.Z.md
 ```
 
-The command above runs from `src/kubby/`, so the release-notes path intentionally
-walks back to the repository-level `docs/releases/` directory.
-
-Finally, prove the remote tag points to the audited commit and GitHub accepted
-both complete assets:
-
-```bash
-git ls-remote --tags origin refs/tags/vX.Y.Z refs/tags/vX.Y.Z^{}
-gh release view vX.Y.Z --json name,tagName,isDraft,isPrerelease,url,targetCommitish,assets,publishedAt
-
-cd build/bin
-sha256sum -c kubby-windows-amd64.exe.sha256
-cd ../..
-```
-
-The peeled `^{}` tag revision must equal the release commit. The GitHub release
-must not be a draft, both assets must report `uploaded`, the remote EXE size must
-match the verified local file, and the checksum must still pass. Only then is the
-release complete. Run section 7 afterward to remove identified legacy binaries
-and temporary caches without deleting the retained canonical artifact or release
-assets.
+The release-named copies and checksums are upload assets, not source, and remain
+ignored by Git. Run section 7 afterward to remove identified legacy binaries and
+temporary caches.
 
 ## Troubleshooting
 
@@ -401,5 +475,9 @@ assets.
   retry only after network access is available.
 - `esbuild ... EPERM` on a mounted Windows drive: ensure dependency installation
   completes before retrying and do not overlap it with other build processes.
+- `Warning: Cannot create installer: makensis not found`: install NSIS
+  (section 1). Wails still exits 0, so the installer file is simply absent.
+- The installer reports that Kubby is running: close every Kubby window, then
+  choose **Retry**. A silent install (`/S`) exits with code 5 instead.
 - PowerShell cannot find Go or Wails: use WSL cross-build for `windows/amd64`, or
   install the native Windows toolchain before attempting native GUI execution.

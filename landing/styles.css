@@ -145,6 +145,8 @@ button, a, summary { -webkit-tap-highlight-color: transparent; }
 .download-panel p:not(.section-kicker) { max-width: 630px; margin: 0; color: #5c6d88; font-size: 16px; line-height: 1.6; }
 .download-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-block: 26px 17px; }
 .download-panel .availability { font-size: 11px !important; }
+.download-panel .availability + .availability { margin-top: 6px; }
+.download-panel .availability a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .download-decoration { position: relative; display: grid; place-items: center; flex: none; width: 245px; height: 245px; }
 .download-decoration img { position: relative; z-index: 1; filter: drop-shadow(0 19px 18px rgba(45,85,145,.17)); }
 .decor-ring { position: absolute; border: 1px solid #c9dbf8; border-radius: 50%; }
