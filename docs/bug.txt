@@ -731,3 +731,9 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   updated status/annotations, producing real resource-version conflicts. Retry
   from a fresh read and require the original UID so replacement workloads remain
   protected; synthetic-conflict tests and disposable cluster checks cover it.
+- [2026-10-31] The first Release run failed its tracked-source check after a
+  successful Windows build: bindings, Wails runtime files and go.mod showed as
+  modified with no content diff. windows-latest checks out with
+  core.autocrlf=true (CRLF), while Wails and `go mod tidy` rewrite those files
+  with LF, which git status reports as modified. Disable autocrlf before checkout
+  in the Windows release job; the check now also prints the diff on failure.

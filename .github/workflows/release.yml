@@ -85,6 +85,13 @@ jobs:
       COMMIT: ${{ needs.preflight.outputs.commit }}
       DATE: ${{ needs.preflight.outputs.date }}
     steps:
+      # Windows runners default to core.autocrlf=true, so checkout writes CRLF.
+      # Wails and `go mod tidy` rewrite bindings, runtime files and go.mod with
+      # LF, which git status then reports as modified although content matches.
+      # Keep the repository's LF bytes so the tracked-source check stays exact.
+      - name: Keep checkout line endings identical to the repository
+        working-directory: .
+        run: git config --global core.autocrlf false
       - name: Check out source
         uses: actions/checkout@v4
       - name: Set up Go
@@ -113,7 +120,12 @@ jobs:
         run: |
           git -c core.fileMode=false diff --exit-code -- frontend/wailsjs/go/main
           changed="$(git -c core.fileMode=false status --porcelain --untracked-files=no)"
-          if [ -n "$changed" ]; then echo "::error::The build modified tracked files:"; echo "$changed"; exit 1; fi
+          if [ -n "$changed" ]; then
+            echo "::error::The build modified tracked files:"; echo "$changed"
+            git --no-pager -c core.fileMode=false diff --stat
+            git --no-pager -c core.fileMode=false diff | head -200
+            exit 1
+          fi
       - name: Stage release assets
         run: |
           set -euo pipefail
