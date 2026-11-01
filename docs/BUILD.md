@@ -324,8 +324,9 @@ download button depends on:
 
 Update the intended version in `wails.json`, set the checked-in
 `internal/buildinfo.Version` to the same number with its `-dev` suffix, prepare
-user-facing notes under `docs/releases/vX.Y.Z.md`, and commit/push every source
-and documentation change to `main`. The release build overrides the version
+user-facing notes under `docs/releases/vX.Y.Z.md` (published verbatim as the
+release body: title it `# Kubby vX.Y.Z` and leave no "draft" wording), and
+commit/push every source and documentation change to `main`. The release build overrides the version
 only in the binaries.
 
 Confirm locally that the commit to be released is clean, matches `origin/main`,
