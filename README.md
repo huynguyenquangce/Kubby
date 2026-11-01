@@ -106,6 +106,7 @@ A Windows executable can be built natively or cross-built from WSL. A
 cross-built artifact still needs a native Windows visual check before release.
 Releases are built, smoke-tested and drafted by the **Release** GitHub Actions
 workflow; see [section 9 of the build guide](docs/BUILD.md#9-publish-a-github-release).
+Release history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Documentation
 

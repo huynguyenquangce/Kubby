@@ -320,14 +320,33 @@ download button depends on:
 | `kubby-windows-amd64.exe` | Portable executable, no installation |
 | `kubby-windows-amd64.exe.sha256` | Portable checksum |
 
+### 9.0 Choose the version number
+
+Kubby uses `MAJOR.MINOR.PATCH`. Compare `main` with the newest release tag
+(`git log vLATEST..main --oneline`) and take exactly one step:
+
+| Change since the last release | Bump | Example from 0.5.1 |
+|---|---|---|
+| Only bug fixes, security fixes, docs or packaging | PATCH | 0.5.2 |
+| Any new feature, view or user-visible behaviour change | MINOR, PATCH reset | 0.6.0 |
+| Incompatible change once 1.x exists (settings format, removed feature) | MAJOR | 1.0.0 |
+
+While Kubby is `0.x`, breaking changes also take a MINOR bump; `1.0.0` is a
+deliberate stability decision, not an automatic step. A published tag is never
+moved or deleted: a mistake in a release is fixed by the next PATCH. The Release
+workflow rejects any version that is not one of the three next steps after the
+newest tag.
+
 ### 9.1 Freeze and audit the release commit
 
 Update the intended version in `wails.json`, set the checked-in
 `internal/buildinfo.Version` to the same number with its `-dev` suffix, prepare
 user-facing notes under `docs/releases/vX.Y.Z.md` (published verbatim as the
-release body: title it `# Kubby vX.Y.Z` and leave no "draft" wording), and
-commit/push every source and documentation change to `main`. The release build overrides the version
-only in the binaries.
+release body: title it `# Kubby vX.Y.Z` and leave no "draft" wording), move the
+`[Unreleased]` items in `CHANGELOG.md` under a new `## [X.Y.Z] - YYYY-MM-DD`
+heading with a link to those notes and update the compare links at the bottom,
+and commit/push every source and documentation change to `main`. The release
+build overrides the version only in the binaries.
 
 Confirm locally that the commit to be released is clean, matches `origin/main`,
 and that the version has not been released before:
@@ -369,7 +388,9 @@ gh run watch
 Keep `prerelease=true` while the binaries are unsigned. The workflow:
 
 1. refuses anything but `main`, a version that differs from `wails.json` or
-   `buildinfo.Version`, missing release notes, or an existing tag;
+   `buildinfo.Version`, missing release notes or `CHANGELOG.md` entry, an
+   existing tag, or a version that is not the next PATCH, MINOR or MAJOR step
+   after the newest tag (section 9.0);
 2. reruns every Quality gates job (Go, frontend, Playwright, kind smoke) on the
    same commit;
 3. builds `kubby.exe` and the installer on `windows-latest` with
@@ -379,7 +400,9 @@ Keep `prerelease=true` while the binaries are unsigned. The workflow:
    byte-identical to the portable asset, checks the Start Menu shortcut, the
    per-user Apps entry and file version, then silently uninstalls and checks
    that nothing is left behind;
-5. verifies formats and checksums, refuses to duplicate an existing release or
+5. records signed build provenance for the installer and portable EXE
+   (`actions/attest-build-provenance`);
+6. verifies formats, checksums and provenance, refuses to duplicate an existing release or
    draft, and creates a **draft** release targeting the built commit with the
    four assets and `docs/releases/vX.Y.Z.md` as notes.
 
@@ -398,10 +421,23 @@ Matching hashes prove file integrity, not publisher identity. A checksum does no
 replace Authenticode code signing, because an attacker who can replace both
 assets could publish a matching checksum too.
 
+The provenance attestation closes part of that gap: it is signed through
+GitHub's OIDC identity and records the repository, workflow and commit that
+built the file. Anyone can check a downloaded asset with:
+
+```bash
+gh attestation verify kubby-windows-amd64-setup.exe --repo huynguyenquangce/Kubby
+```
+
+The output names the workflow file and commit. Attestation proves where a file
+was built; Windows SmartScreen still treats it as unsigned until Authenticode
+signing is added. Assets released before provenance was added (v0.5.1 and
+earlier) have no attestation.
+
 ### 9.3 Native check, publish, and verify
 
 A draft has no tag yet. Download the draft's installer and portable EXE, verify
-their checksums, and perform the native Windows checks in section 8. In
+their checksums and provenance (section 9.2), and perform the native Windows checks in section 8. In
 **Settings → About**, the runtime identity must show the release version, the
 commit and date from the workflow summary, and `windows/amd64`.
 
@@ -446,7 +482,8 @@ done
 cd ../..
 ```
 
-Install the staged installer on native Windows and perform section 8, then
+Manually built assets carry no provenance attestation; say so in the release
+notes. Install the staged installer on native Windows and perform section 8, then
 create the draft from `src/kubby/` and continue with section 9.3:
 
 ```bash
