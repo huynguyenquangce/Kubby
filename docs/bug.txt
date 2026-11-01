@@ -737,3 +737,10 @@ Bug log — add one line per issue. Resolved items move to the bottom.
   core.autocrlf=true (CRLF), while Wails and `go mod tidy` rewrite those files
   with LF, which git status reports as modified. Disable autocrlf before checkout
   in the Windows release job; the check now also prints the diff on failure.
+- [2026-11-01] The Release smoke test failed with "kubby.exe ProductVersion is ,
+  expected 0.5.1" although the exe carried a VERSIONINFO resource (fixed version
+  0.5.1.0). Root cause: build/windows/info.json (the Wails default template) had no
+  FileVersion string; .NET FileVersionInfo treats a string table without
+  FileVersion as missing, so every string property (ProductVersion, ProductName,
+  CompanyName) read empty in PowerShell. Add
+  FileVersion to the string table; verified with a winres-built test exe.
